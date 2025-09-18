@@ -216,22 +216,86 @@ def attribution_analysis(df):
 
 def calculate_journey_health_score(df_journey, all_journeys_df=None):
     """
-    Calculate a comprehensive Journey Health Score (0-100) using industry-standard
-    percentile-based scoring methodology used by Fortune 500 companies and consulting firms.
+    Calculate a comprehensive Journey Health Score (0-100) using Empirical Bayes methodology
+    with small-sample corrections - the gold standard for BI analytics in enterprise environments.
     
-    Scoring Method: Percentile Ranking with Statistical Quartiles
-    - Uses company's own historical performance as benchmark (not arbitrary values)
-    - Applies statistical distribution for professional BI standards
-    - Suitable for executive, investor, and board presentations
+    Scoring Method: Empirical Bayes Shrinkage + Log-transformed Revenue Per Conversion
+    - Uses Beta-Binomial shrinkage for conversion rates (handles small samples robustly)
+    - Log-transforms Revenue Per Conversion to reduce outlier dominance
+    - Applies statistical smoothing used by major tech companies (Meta, Google, Amazon)
+    - Provides reliable rankings even with sparse data
     """
     try:
         # Initialize scores
         scores = {}
+
+        # --- Data sufficiency guard ---
+        # Avoid labeling very low-activity journeys as 'Good' or 'Excellent'.
+        # Heuristic thresholds (conservative defaults) - adjust as needed:
+        # - min_sent: minimum total messages sent across the journey
+        # - min_conversions: minimum total conversions to consider revenue/conversion metrics meaningful
+        # - min_days: minimum number of reporting days for the journey
+        min_sent = 10
+        min_conversions = 3
+        min_days = 3
+
+        # Compute simple activity metrics for this journey
+        total_sent_j = df_journey['Sent'].sum() if 'Sent' in df_journey.columns else 0
+        total_conversions_j = df_journey['Unique Conversions'].sum() if 'Unique Conversions' in df_journey.columns else 0
+        unique_days = df_journey['Reporting Period Start Date'].nunique() if 'Reporting Period Start Date' in df_journey.columns else len(df_journey)
+
+        if total_sent_j < min_sent or total_conversions_j < min_conversions or unique_days < min_days:
+            # Return explicit Insufficient Data result so the UI can filter or flag these journeys
+            return {
+                'health_score': 0.0,
+                'tier': 'Insufficient Data',
+                'tier_description': 'Insufficient activity to compute reliable score',
+                'component_scores': {'delivery': 0, 'engagement': 0, 'conversion': 0, 'revenue': 0},
+                'recommendations': [
+                    'ℹ️ Insufficient data: Not enough volume or time to compute a reliable health score',
+                    '🔎 Consider increasing the lookback window or aggregating similar journeys for stability'
+                ],
+                'scoring_method': 'Insufficient data guard (volume/time thresholds)'
+            }
         
         # Get baseline data for percentile calculations (use all data if available)
         baseline_df = all_journeys_df if all_journeys_df is not None else df_journey
+
+        # === EMPIRICAL BAYES HELPER FUNCTIONS ===
+        def estimate_beta_prior(successes_array, trials_array):
+            """Estimate Beta prior parameters using method of moments from population data"""
+            # Filter out invalid data
+            valid_mask = (trials_array > 0) & (~np.isnan(successes_array)) & (~np.isnan(trials_array))
+            if not valid_mask.any():
+                return 1.0, 1.0  # Uniform prior fallback
+            
+            rates = successes_array[valid_mask] / trials_array[valid_mask]
+            rates = rates[(rates >= 0) & (rates <= 1)]  # Valid rates only
+            
+            if len(rates) < 2:
+                return 1.0, 1.0  # Uniform prior fallback
+            
+            mean_rate = np.mean(rates)
+            var_rate = np.var(rates, ddof=1)
+            
+            # Ensure variance is positive and not too close to theoretical maximum
+            if var_rate <= 0 or var_rate >= mean_rate * (1 - mean_rate):
+                return 1.0, 1.0  # Uniform prior fallback
+            
+            # Method of moments: alpha = mean * (mean*(1-mean)/var - 1), beta = (1-mean) * (...)
+            scale = mean_rate * (1 - mean_rate) / var_rate - 1.0
+            alpha = max(0.1, mean_rate * scale)
+            beta = max(0.1, (1 - mean_rate) * scale)
+            
+            return alpha, beta
         
-        # Helper function for percentile-based scoring (industry standard)
+        def beta_posterior_mean(successes, trials, alpha_prior, beta_prior):
+            """Calculate posterior mean for Beta-Binomial model"""
+            if trials <= 0:
+                return 0.0
+            return (successes + alpha_prior) / (trials + alpha_prior + beta_prior)
+        
+        # Helper function for percentile-based scoring (now using smoothed values)
         def calculate_percentile_score(value, baseline_values, reverse=False):
             """Convert a value to percentile score (0-100) using statistical ranking"""
             if len(baseline_values) == 0 or pd.isna(value):
@@ -251,92 +315,150 @@ def calculate_journey_health_score(df_journey, all_journeys_df=None):
                 percentile = (clean_values <= value).mean() * 100
             
             return min(max(percentile, 0), 100)  # Ensure 0-100 range
+
+        # === PREPARE POPULATION DATA FOR EMPIRICAL BAYES ===
         
-        # 1. Delivery Performance Score (25% weight)
+        # Collect journey-level data for prior estimation
+        journey_groups = baseline_df.groupby('Journey Name') if 'Journey Name' in baseline_df.columns else [('current', baseline_df)]
+        
+        # Delivery rates (usually high success rate, less smoothing needed)
+        delivery_rates = []
+        delivery_totals = []
+        for name, group in journey_groups:
+            if 'Delivery Rate' in group.columns:
+                rate = group['Delivery Rate'].mean()
+                if not pd.isna(rate):
+                    delivery_rates.append(rate)
+            elif 'Sent' in group.columns and 'Delivered' in group.columns:
+                sent = group['Sent'].sum()
+                delivered = group['Delivered'].sum()
+                if sent > 0:
+                    delivery_rates.append(delivered / sent)
+                    delivery_totals.append(sent)
+        
+        # CTR data for Empirical Bayes
+        ctr_clicks = []
+        ctr_impressions = []
+        for name, group in journey_groups:
+            if 'Unique Clicks' in group.columns and 'Unique Impressions' in group.columns:
+                clicks = group['Unique Clicks'].sum()
+                impressions = group['Unique Impressions'].sum()
+                if impressions > 0:
+                    ctr_clicks.append(clicks)
+                    ctr_impressions.append(impressions)
+        
+        # Conversion data for Empirical Bayes
+        conv_conversions = []
+        conv_clicks = []
+        for name, group in journey_groups:
+            if 'Unique Conversions' in group.columns and 'Unique Clicks' in group.columns:
+                conversions = group['Unique Conversions'].sum()
+                clicks = group['Unique Clicks'].sum()
+                if clicks > 0:
+                    conv_conversions.append(conversions)
+                    conv_clicks.append(clicks)
+        
+        # Revenue Per Conversion data (for log-transformation)
+        rpc_values = []
+        for name, group in journey_groups:
+            if 'Revenue (SAR)' in group.columns and 'Unique Conversions' in group.columns:
+                revenue = group['Revenue (SAR)'].sum()
+                conversions = group['Unique Conversions'].sum()
+                if conversions > 0:
+                    rpc = revenue / conversions
+                    if rpc > 0:  # Only positive RPC values
+                        rpc_values.append(rpc)
+        
+        # Estimate priors
+        ctr_alpha, ctr_beta = estimate_beta_prior(np.array(ctr_clicks), np.array(ctr_impressions))
+        conv_alpha, conv_beta = estimate_beta_prior(np.array(conv_conversions), np.array(conv_clicks))
+
+        # === CALCULATE COMPONENT SCORES WITH EMPIRICAL BAYES ===
+        
+        # 1. Delivery Performance Score (25% weight) - Less smoothing needed
         if 'Delivery Rate' in df_journey.columns and df_journey['Delivery Rate'].notna().any():
             delivery_rate = df_journey['Delivery Rate'].mean()
-            baseline_delivery = baseline_df['Delivery Rate'] if 'Delivery Rate' in baseline_df.columns else pd.Series([delivery_rate])
         elif 'Sent' in df_journey.columns and 'Delivered' in df_journey.columns:
             total_sent = df_journey['Sent'].sum()
             total_delivered = df_journey['Delivered'].sum()
             delivery_rate = (total_delivered / total_sent) if total_sent > 0 else 0
-            # Calculate baseline delivery rates for all journeys
-            if 'Sent' in baseline_df.columns and 'Delivered' in baseline_df.columns:
-                baseline_delivery = baseline_df.groupby('Journey Name').apply(
-                    lambda x: x['Delivered'].sum() / x['Sent'].sum() if x['Sent'].sum() > 0 else 0
-                )
-            else:
-                baseline_delivery = pd.Series([delivery_rate])
         else:
             delivery_rate = 0.8  # Industry average 80%
-            baseline_delivery = pd.Series([delivery_rate])
         
+        baseline_delivery = pd.Series(delivery_rates) if delivery_rates else pd.Series([delivery_rate])
         scores['delivery'] = calculate_percentile_score(delivery_rate, baseline_delivery)
         
-        # 2. Engagement Performance Score (25% weight) 
-        if 'CTR' in df_journey.columns and df_journey['CTR'].notna().any():
-            ctr = df_journey['CTR'].mean()
-            baseline_ctr = baseline_df['CTR'] if 'CTR' in baseline_df.columns else pd.Series([ctr])
-        elif 'Unique Clicks' in df_journey.columns and 'Unique Impressions' in df_journey.columns:
+        # 2. Engagement Performance Score (25% weight) - WITH EMPIRICAL BAYES SMOOTHING
+        # FIXED: Always use aggregate CTR calculation instead of daily average CTR for proper scoring
+        if 'Unique Clicks' in df_journey.columns and 'Unique Impressions' in df_journey.columns:
             total_clicks = df_journey['Unique Clicks'].sum()
             total_impressions = df_journey['Unique Impressions'].sum()
-            ctr = (total_clicks / total_impressions) if total_impressions > 0 else 0
-            # Calculate baseline CTRs
-            if 'Unique Clicks' in baseline_df.columns and 'Unique Impressions' in baseline_df.columns:
-                baseline_ctr = baseline_df.groupby('Journey Name').apply(
-                    lambda x: x['Unique Clicks'].sum() / x['Unique Impressions'].sum() if x['Unique Impressions'].sum() > 0 else 0
-                )
-            else:
-                baseline_ctr = pd.Series([ctr])
+            # Apply Empirical Bayes smoothing to aggregate CTR (more reliable than daily averages)
+            smoothed_ctr = beta_posterior_mean(total_clicks, total_impressions, ctr_alpha, ctr_beta)
         else:
-            ctr = 0.02  # Industry average 2%
-            baseline_ctr = pd.Series([ctr])
+            smoothed_ctr = 0.02  # Industry average 2%
         
-        scores['engagement'] = calculate_percentile_score(ctr, baseline_ctr)
+        # Create baseline of smoothed CTRs for fair comparison
+        baseline_ctr_smoothed = []
+        for clicks, impressions in zip(ctr_clicks, ctr_impressions):
+            baseline_ctr_smoothed.append(beta_posterior_mean(clicks, impressions, ctr_alpha, ctr_beta))
+        baseline_ctr = pd.Series(baseline_ctr_smoothed) if baseline_ctr_smoothed else pd.Series([smoothed_ctr])
         
-        # 3. Conversion Performance Score (30% weight)
+        scores['engagement'] = calculate_percentile_score(smoothed_ctr, baseline_ctr)
+        
+        # 3. Conversion Performance Score (30% weight) - WITH EMPIRICAL BAYES SMOOTHING
+        # FIXED: Use the direct Conversion Rate column when available (more reliable than manual calculation)
         if 'Conversion Rate' in df_journey.columns and df_journey['Conversion Rate'].notna().any():
-            conv_rate = df_journey['Conversion Rate'].mean()
-            baseline_conv = baseline_df['Conversion Rate'] if 'Conversion Rate' in baseline_df.columns else pd.Series([conv_rate])
-        elif 'Unique Conversions' in df_journey.columns and 'Unique Clicks' in df_journey.columns:
-            total_conversions = df_journey['Unique Conversions'].sum()
-            total_clicks = df_journey['Unique Clicks'].sum()
-            conv_rate = (total_conversions / total_clicks) if total_clicks > 0 else 0
-            # Calculate baseline conversion rates
-            if 'Unique Conversions' in baseline_df.columns and 'Unique Clicks' in baseline_df.columns:
-                baseline_conv = baseline_df.groupby('Journey Name').apply(
-                    lambda x: x['Unique Conversions'].sum() / x['Unique Clicks'].sum() if x['Unique Clicks'].sum() > 0 else 0
-                )
+            # Use the provided conversion rate column (already calculated correctly by WebEngage)
+            conv_rate = df_journey['Conversion Rate'].mean() / 100.0  # Convert percentage to decimal
+            # Create baseline from all journeys' conversion rates
+            if 'Conversion Rate' in baseline_df.columns:
+                baseline_conv_values = []
+                for name, group in baseline_df.groupby('Journey Name'):
+                    journey_conv_rate = group['Conversion Rate'].mean() / 100.0
+                    if not pd.isna(journey_conv_rate):
+                        baseline_conv_values.append(journey_conv_rate)
+                baseline_conv = pd.Series(baseline_conv_values)
             else:
                 baseline_conv = pd.Series([conv_rate])
+        elif 'Unique Conversions' in df_journey.columns and 'Unique Clicks' in df_journey.columns:
+            # Fallback: manual calculation (but this may not be reliable for some data)
+            total_conversions = df_journey['Unique Conversions'].sum()
+            total_clicks = df_journey['Unique Clicks'].sum()
+            # Apply Empirical Bayes smoothing for manual calculations
+            conv_rate = beta_posterior_mean(total_conversions, total_clicks, conv_alpha, conv_beta)
+            
+            # Create baseline of smoothed conversion rates
+            baseline_conv_smoothed = []
+            for conversions, clicks in zip(conv_conversions, conv_clicks):
+                baseline_conv_smoothed.append(beta_posterior_mean(conversions, clicks, conv_alpha, conv_beta))
+            baseline_conv = pd.Series(baseline_conv_smoothed) if baseline_conv_smoothed else pd.Series([conv_rate])
         else:
             conv_rate = 0.05  # Industry average 5%
             baseline_conv = pd.Series([conv_rate])
         
         scores['conversion'] = calculate_percentile_score(conv_rate, baseline_conv)
         
-        # 4. Revenue Efficiency Score (20% weight) - Professional BI Standard
-        # Use 'Revenue (SAR)' which represents total send-through attribution
+        # 4. Revenue Efficiency Score (20% weight) - LOG-TRANSFORMED RPC
         if 'Revenue (SAR)' in df_journey.columns and 'Unique Conversions' in df_journey.columns:
             total_revenue = df_journey['Revenue (SAR)'].sum()
             total_conversions = df_journey['Unique Conversions'].sum()
             revenue_per_conversion = (total_revenue / total_conversions) if total_conversions > 0 else 0
             
-            # Calculate baseline revenue per conversion across all journeys (INDUSTRY STANDARD)
-            if 'Revenue (SAR)' in baseline_df.columns and 'Unique Conversions' in baseline_df.columns:
-                baseline_rpc = baseline_df.groupby('Journey Name').apply(
-                    lambda x: x['Revenue (SAR)'].sum() / x['Unique Conversions'].sum() 
-                    if x['Unique Conversions'].sum() > 0 else 0
-                ).replace([np.inf, -np.inf], 0)
-            else:
-                baseline_rpc = pd.Series([revenue_per_conversion])
+            # Log-transform for better distribution (reduces outlier dominance)
+            log_rpc = np.log1p(revenue_per_conversion)  # log(1 + x) handles zero values
             
-            scores['revenue'] = calculate_percentile_score(revenue_per_conversion, baseline_rpc)
+            # Create baseline of log-transformed RPCs
+            baseline_log_rpc = [np.log1p(rpc) for rpc in rpc_values] if rpc_values else [log_rpc]
+            baseline_log_rpc = pd.Series(baseline_log_rpc)
+            
+            scores['revenue'] = calculate_percentile_score(log_rpc, baseline_log_rpc)
         else:
             scores['revenue'] = 50  # Neutral score if no revenue data
         
-        # Calculate weighted final score using industry-standard weights
-        weights = {'delivery': 0.25, 'engagement': 0.25, 'conversion': 0.30, 'revenue': 0.20}
+        # Calculate weighted final score using enterprise-optimized weights
+        # Increased revenue weight slightly to improve sensitivity to business outcomes
+        weights = {'delivery': 0.20, 'engagement': 0.25, 'conversion': 0.30, 'revenue': 0.25}
         final_score = sum(scores[key] * weights[key] for key in scores)
         
         # Professional tier classification (McKinsey/BCG standard)
@@ -390,7 +512,7 @@ def calculate_journey_health_score(df_journey, all_journeys_df=None):
             'tier_description': tier_description,
             'component_scores': scores,
             'recommendations': recommendations,
-            'scoring_method': 'Percentile-based ranking with statistical quartiles (Fortune 500 standard)'
+            'scoring_method': 'Empirical Bayes (Beta-Binomial) + Log(RPC) percentiles'
         }
         
     except Exception as e:
@@ -1339,6 +1461,186 @@ def create_cohort_analysis(df, cohort_period='week'):
     except Exception as e:
         return {'error': str(e)}
 
+def analyze_individual_journey(journey_name, filtered_df):
+    """
+    Detailed analysis of an individual journey - returns comprehensive scoring breakdown.
+    This is the same logic as the debug script but as a reusable function.
+    """
+    try:
+        # Get the specific journey data
+        journey_data = filtered_df[filtered_df['Journey Name'] == journey_name].copy()
+        
+        if journey_data.empty:
+            return {'error': f"Journey '{journey_name}' not found!"}
+        
+        # Calculate the score with detailed breakdown
+        score_result = calculate_journey_health_score(journey_data, filtered_df)
+        
+        # Calculate raw metrics for this journey
+        raw_metrics = {}
+        
+        # Delivery metrics
+        if 'Sent' in journey_data.columns and 'Delivered' in journey_data.columns:
+            total_sent = journey_data['Sent'].sum()
+            total_delivered = journey_data['Delivered'].sum()
+            delivery_rate = (total_delivered / total_sent) if total_sent > 0 else 0
+            raw_metrics['delivery'] = {
+                'total_sent': total_sent,
+                'total_delivered': total_delivered,
+                'delivery_rate': delivery_rate
+            }
+        
+        # Engagement metrics
+        if 'Unique Clicks' in journey_data.columns and 'Unique Impressions' in journey_data.columns:
+            total_clicks = journey_data['Unique Clicks'].sum()
+            total_impressions = journey_data['Unique Impressions'].sum()
+            ctr = (total_clicks / total_impressions) if total_impressions > 0 else 0
+            raw_metrics['engagement'] = {
+                'total_clicks': total_clicks,
+                'total_impressions': total_impressions,
+                'ctr': ctr
+            }
+        
+        # Conversion metrics - Use the Conversion Rate column when available
+        if 'Conversion Rate' in journey_data.columns and journey_data['Conversion Rate'].notna().any():
+            # Use the provided conversion rate column (already calculated correctly by WebEngage)
+            conv_rate = journey_data['Conversion Rate'].mean() / 100.0  # Convert percentage to decimal
+            # Also get the raw numbers for display
+            total_conversions = journey_data['Unique Conversions'].sum() if 'Unique Conversions' in journey_data.columns else 0
+            total_clicks = journey_data['Unique Clicks'].sum() if 'Unique Clicks' in journey_data.columns else 0
+            raw_metrics['conversion'] = {
+                'total_conversions': total_conversions,
+                'total_clicks': total_clicks,
+                'conversion_rate': conv_rate,
+                'source': 'Direct Conversion Rate column'
+            }
+        elif 'Unique Conversions' in journey_data.columns and 'Unique Clicks' in journey_data.columns:
+            # Fallback: manual calculation
+            total_conversions = journey_data['Unique Conversions'].sum()
+            total_clicks = journey_data['Unique Clicks'].sum()
+            conv_rate = (total_conversions / total_clicks) if total_clicks > 0 else 0
+            raw_metrics['conversion'] = {
+                'total_conversions': total_conversions,
+                'total_clicks': total_clicks,
+                'conversion_rate': conv_rate,
+                'source': 'Manual calculation (may be unreliable)'
+            }
+        
+        # Revenue metrics
+        if 'Revenue (SAR)' in journey_data.columns and 'Unique Conversions' in journey_data.columns:
+            total_revenue = journey_data['Revenue (SAR)'].sum()
+            total_conversions = journey_data['Unique Conversions'].sum()
+            rpc = (total_revenue / total_conversions) if total_conversions > 0 else 0
+            log_rpc = np.log1p(rpc)
+            raw_metrics['revenue'] = {
+                'total_revenue': total_revenue,
+                'total_conversions': total_conversions,
+                'revenue_per_conversion': rpc,
+                'log_rpc': log_rpc
+            }
+        
+        # Calculate population percentiles for context
+        journey_groups = filtered_df.groupby('Journey Name')
+        percentiles = {}
+        
+        # Delivery percentiles
+        if 'delivery' in raw_metrics:
+            delivery_rates = []
+            for name, group in journey_groups:
+                if 'Sent' in group.columns and 'Delivered' in group.columns:
+                    sent = group['Sent'].sum()
+                    delivered = group['Delivered'].sum()
+                    if sent > 0:
+                        delivery_rates.append(delivered / sent)
+            
+            if delivery_rates:
+                percentile = (np.array(delivery_rates) <= raw_metrics['delivery']['delivery_rate']).mean() * 100
+                percentiles['delivery'] = percentile
+        
+        # CTR percentiles
+        if 'engagement' in raw_metrics:
+            ctrs = []
+            for name, group in journey_groups:
+                if 'Unique Clicks' in group.columns and 'Unique Impressions' in group.columns:
+                    clicks = group['Unique Clicks'].sum()
+                    impressions = group['Unique Impressions'].sum()
+                    if impressions > 0:
+                        ctrs.append(clicks / impressions)
+            
+            if ctrs:
+                percentile = (np.array(ctrs) <= raw_metrics['engagement']['ctr']).mean() * 100
+                percentiles['engagement'] = percentile
+        
+        # Conversion rate percentiles
+        if 'conversion' in raw_metrics:
+            conv_rates = []
+            # Use the same method as in the scoring function for consistency
+            if 'Conversion Rate' in filtered_df.columns:
+                for name, group in journey_groups:
+                    journey_conv_rate = group['Conversion Rate'].mean() / 100.0
+                    if not pd.isna(journey_conv_rate):
+                        conv_rates.append(journey_conv_rate)
+            else:
+                for name, group in journey_groups:
+                    if 'Unique Conversions' in group.columns and 'Unique Clicks' in group.columns:
+                        conversions = group['Unique Conversions'].sum()
+                        clicks = group['Unique Clicks'].sum()
+                        if clicks > 0:
+                            conv_rates.append(conversions / clicks)
+            
+            if conv_rates:
+                percentile = (np.array(conv_rates) <= raw_metrics['conversion']['conversion_rate']).mean() * 100
+                percentiles['conversion'] = percentile
+        
+        # Revenue per conversion percentiles
+        if 'revenue' in raw_metrics:
+            rpcs = []
+            for name, group in journey_groups:
+                if 'Revenue (SAR)' in group.columns and 'Unique Conversions' in group.columns:
+                    revenue = group['Revenue (SAR)'].sum()
+                    conversions = group['Unique Conversions'].sum()
+                    if conversions > 0:
+                        rpcs.append(revenue / conversions)
+            
+            if rpcs:
+                percentile = (np.array(rpcs) <= raw_metrics['revenue']['revenue_per_conversion']).mean() * 100
+                percentiles['revenue'] = percentile
+        
+        # Component score contributions
+        weights = {'delivery': 0.20, 'engagement': 0.25, 'conversion': 0.30, 'revenue': 0.25}
+        component_contributions = {}
+        for component, score in score_result['component_scores'].items():
+            weight = weights[component]
+            contribution = score * weight
+            component_contributions[component] = {
+                'score': score,
+                'weight': weight,
+                'contribution': contribution
+            }
+        
+        # Summary insights
+        worst_components = sorted(score_result['component_scores'].items(), key=lambda x: x[1])
+        insights = []
+        
+        for component, score in worst_components[:2]:  # Show worst 2 components
+            if score < 40:
+                insights.append(f"🚨 {component.capitalize()} score ({score:.1f}) is critically low")
+            elif score < 60:
+                insights.append(f"⚠️ {component.capitalize()} score ({score:.1f}) is below average")
+        
+        return {
+            'journey_name': journey_name,
+            'data_rows': len(journey_data),
+            'score_result': score_result,
+            'raw_metrics': raw_metrics,
+            'percentiles': percentiles,
+            'component_contributions': component_contributions,
+            'insights': insights
+        }
+        
+    except Exception as e:
+        return {'error': str(e)}
+
 # In the main code, after cleaning
 if uploaded_file is not None:
     @st.cache_data
@@ -1728,48 +2030,67 @@ if uploaded_file is not None:
             if tier_filter != 'All':
                 display_health_df = display_health_df[display_health_df['Tier'] == tier_filter]
             
-            # Format the display dataframe
-            display_health_df_formatted = display_health_df.copy()
-            display_health_df_formatted['Health Score'] = display_health_df_formatted['Health Score'].apply(lambda x: f"{x:.1f}/100")
-            display_health_df_formatted['Revenue (SAR)'] = display_health_df_formatted['Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
-            display_health_df_formatted['Impression-Through Revenue (SAR)'] = display_health_df_formatted['Impression-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
-            display_health_df_formatted['Click-Through Revenue (SAR)'] = display_health_df_formatted['Click-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
-            display_health_df_formatted['Total Conversions'] = display_health_df_formatted['Total Conversions'].apply(format_metric)
-            display_health_df_formatted['Delivery Score'] = display_health_df_formatted['Delivery Score'].apply(lambda x: f"{x:.1f}")
-            display_health_df_formatted['Engagement Score'] = display_health_df_formatted['Engagement Score'].apply(lambda x: f"{x:.1f}")
-            display_health_df_formatted['Conversion Score'] = display_health_df_formatted['Conversion Score'].apply(lambda x: f"{x:.1f}")
-            display_health_df_formatted['Revenue Score'] = display_health_df_formatted['Revenue Score'].apply(lambda x: f"{x:.1f}")
-            
-            # Add tier emojis
+            # Prepare numeric dataframe for display while keeping numeric types so Streamlit sorts correctly
+            numeric_display_df = display_health_df.copy()
+
+            # Ensure numeric columns are numeric (coerce if necessary)
+            numeric_cols = ['Revenue (SAR)', 'Impression-Through Revenue (SAR)', 'Click-Through Revenue (SAR)', 'Total Conversions',
+                            'Health Score', 'Delivery Score', 'Engagement Score', 'Conversion Score', 'Revenue Score']
+            for col in numeric_cols:
+                if col in numeric_display_df.columns:
+                    numeric_display_df[col] = pd.to_numeric(numeric_display_df[col], errors='coerce')
+
+            # Add tier emojis to a separate display column (keep original Tier for filtering logic)
             tier_emojis = {
                 'Excellent': '🟢',
                 'Good': '🟡', 
                 'Fair': '🟠',
                 'Poor': '🔴'
             }
-            display_health_df_formatted['Tier'] = display_health_df_formatted['Tier'].apply(
-                lambda x: f"{tier_emojis.get(x, '⚪')} {x}"
-            )
-            
+            # Create a human-friendly Tier display column
+            numeric_display_df['Tier Display'] = numeric_display_df['Tier'].apply(lambda x: f"{tier_emojis.get(x, '⚪')} {x}")
+
             # Show filtered results count
-            st.info(f"📊 Showing {len(display_health_df_formatted)} journeys (filtered from {len(health_df)} total)")
-            
-            # Create table data with proper numeric sorting
-            # Keep original numeric values for revenue columns to enable proper sorting
-            table_data = display_health_df_formatted.copy()
-            
-            # Replace formatted revenue strings with original numeric values for sorting
-            table_data['Revenue (SAR)'] = display_health_df['Revenue (SAR)']
-            table_data['Impression-Through Revenue (SAR)'] = display_health_df['Impression-Through Revenue (SAR)']
-            table_data['Click-Through Revenue (SAR)'] = display_health_df['Click-Through Revenue (SAR)']
-            table_data['Total Conversions'] = display_health_df['Total Conversions']
-            
-            # Display the table with formatted display strings
-            # Note: Sorting is lexicographic on formatted strings, but values are properly formatted
-            st.dataframe(display_health_df_formatted[['Journey Name', 'Health Score', 'Tier', 'Revenue (SAR)', 'Impression-Through Revenue (SAR)', 'Click-Through Revenue (SAR)', 'Total Conversions', 
-                                           'Delivery Score', 'Engagement Score', 'Conversion Score', 'Revenue Score']],
-                        width='stretch',
-                        height=400)
+            st.info(f"📊 Showing {len(numeric_display_df)} journeys (filtered from {len(health_df)} total)")
+
+            # Define columns order for display
+            columns_order = ['Journey Name', 'Health Score', 'Tier Display', 'Revenue (SAR)', 'Impression-Through Revenue (SAR)',
+                             'Click-Through Revenue (SAR)', 'Total Conversions', 'Delivery Score', 'Engagement Score',
+                             'Conversion Score', 'Revenue Score']
+
+            # Create formatters for Styler so values look nice but remain numeric underneath (preserves numeric sorting)
+            formatters = {}
+            if 'Health Score' in numeric_display_df.columns:
+                formatters['Health Score'] = lambda x: f"{x:.1f}/100"
+            if 'Revenue (SAR)' in numeric_display_df.columns:
+                formatters['Revenue (SAR)'] = lambda x: format_metric(x, "SAR")
+                formatters['Impression-Through Revenue (SAR)'] = lambda x: format_metric(x, "SAR")
+                formatters['Click-Through Revenue (SAR)'] = lambda x: format_metric(x, "SAR")
+            if 'Total Conversions' in numeric_display_df.columns:
+                formatters['Total Conversions'] = lambda x: format_metric(x)
+            for score in ['Delivery Score', 'Engagement Score', 'Conversion Score', 'Revenue Score']:
+                if score in numeric_display_df.columns:
+                    formatters[score] = lambda x: f"{x:.1f}"
+
+            # Use pandas Styler to format display without changing underlying dtypes
+            try:
+                styled = numeric_display_df[columns_order].style.format(formatters)
+                st.dataframe(styled, width='stretch', height=400)
+            except Exception:
+                # Fallback: if Styler isn't supported in this environment, fall back to pre-formatted strings
+                fallback = numeric_display_df[columns_order].copy()
+                if 'Health Score' in fallback.columns:
+                    fallback['Health Score'] = fallback['Health Score'].apply(lambda x: f"{x:.1f}/100")
+                if 'Revenue (SAR)' in fallback.columns:
+                    fallback['Revenue (SAR)'] = fallback['Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
+                    fallback['Impression-Through Revenue (SAR)'] = fallback['Impression-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
+                    fallback['Click-Through Revenue (SAR)'] = fallback['Click-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
+                if 'Total Conversions' in fallback.columns:
+                    fallback['Total Conversions'] = fallback['Total Conversions'].apply(format_metric)
+                if 'Tier Display' in fallback.columns:
+                    fallback = fallback.rename(columns={'Tier Display': 'Tier'})
+
+                st.dataframe(fallback, width='stretch', height=400)
             
             # Component Scores Radar Chart for Selected Journey
             st.subheader("🎯 Journey Performance Breakdown")
@@ -1863,6 +2184,139 @@ if uploaded_file is not None:
                 st.subheader("💡 Recommendations")
                 for rec in health_info_for_rec['recommendations']:
                     st.info(rec)
+
+                # 🔍 DETAILED INDIVIDUAL JOURNEY ANALYSIS
+                st.subheader("🔍 Detailed Journey Analysis")
+                st.markdown("*Get the complete story behind this journey's score - same analysis as our debug script*")
+                
+                # Call our analysis function
+                individual_analysis = analyze_individual_journey(selected_journey_health, filtered_df)
+                
+                if 'error' in individual_analysis:
+                    st.error(f"❌ Error analyzing journey: {individual_analysis['error']}")
+                else:
+                    # Journey Summary
+                    st.markdown(f"**📊 Journey:** {individual_analysis['journey_name']}")
+                    st.markdown(f"**📈 Data Points:** {individual_analysis['data_rows']} rows of data")
+                    st.markdown(f"**🎯 Final Score:** {individual_analysis['score_result']['health_score']:.1f}/100 ({individual_analysis['score_result']['tier']})")
+                    st.markdown(f"**🔬 Method:** {individual_analysis['score_result']['scoring_method']}")
+                    
+                    # Raw Metrics Breakdown
+                    with st.expander("📈 Raw Metrics Breakdown", expanded=True):
+                        if 'delivery' in individual_analysis['raw_metrics']:
+                            delivery_data = individual_analysis['raw_metrics']['delivery']
+                            st.markdown("**📤 Delivery Performance:**")
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Sent", format_metric(delivery_data['total_sent']))
+                            with col2:
+                                st.metric("Delivered", format_metric(delivery_data['total_delivered']))
+                            with col3:
+                                st.metric("Delivery Rate", f"{delivery_data['delivery_rate']:.1%}")
+                        
+                        if 'engagement' in individual_analysis['raw_metrics']:
+                            engagement_data = individual_analysis['raw_metrics']['engagement']
+                            st.markdown("**👆 Engagement Performance:**")
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Impressions", format_metric(engagement_data['total_impressions']))
+                            with col2:
+                                st.metric("Clicks", format_metric(engagement_data['total_clicks']))
+                            with col3:
+                                st.metric("CTR", f"{engagement_data['ctr']:.2%}")
+                        
+                        if 'conversion' in individual_analysis['raw_metrics']:
+                            conversion_data = individual_analysis['raw_metrics']['conversion']
+                            st.markdown("**💰 Conversion Performance:**")
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                st.metric("Clicks", format_metric(conversion_data['total_clicks']))
+                            with col2:
+                                st.metric("Conversions", format_metric(conversion_data['total_conversions']))
+                            with col3:
+                                st.metric("Conversion Rate", f"{conversion_data['conversion_rate']:.2%}")
+                            with col4:
+                                if 'source' in conversion_data:
+                                    st.caption(f"Source: {conversion_data['source']}")
+                        
+                        if 'revenue' in individual_analysis['raw_metrics']:
+                            revenue_data = individual_analysis['raw_metrics']['revenue']
+                            st.markdown("**💵 Revenue Performance:**")
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                st.metric("Total Revenue", format_metric(revenue_data['total_revenue'], "SAR"))
+                            with col2:
+                                st.metric("Conversions", format_metric(revenue_data['total_conversions']))
+                            with col3:
+                                st.metric("Rev/Conversion", format_metric(revenue_data['revenue_per_conversion'], "SAR"))
+                            with col4:
+                                st.metric("Log(RPC)", f"{revenue_data['log_rpc']:.2f}")
+                    
+                    # Population Comparison & Percentiles
+                    with st.expander("📊 Population Comparison & Percentiles", expanded=True):
+                        st.markdown("**How this journey compares to all other journeys in your portfolio:**")
+                        
+                        percentile_cols = st.columns(2)
+                        with percentile_cols[0]:
+                            if 'delivery' in individual_analysis['percentiles']:
+                                perc = individual_analysis['percentiles']['delivery']
+                                color = "🟢" if perc >= 80 else "🟡" if perc >= 60 else "🟠" if perc >= 40 else "🔴"
+                                st.markdown(f"📤 **Delivery**: {color} {perc:.0f}th percentile")
+                            
+                            if 'engagement' in individual_analysis['percentiles']:
+                                perc = individual_analysis['percentiles']['engagement']
+                                color = "🟢" if perc >= 80 else "🟡" if perc >= 60 else "🟠" if perc >= 40 else "🔴"
+                                st.markdown(f"👆 **CTR**: {color} {perc:.0f}th percentile")
+                        
+                        with percentile_cols[1]:
+                            if 'conversion' in individual_analysis['percentiles']:
+                                perc = individual_analysis['percentiles']['conversion']
+                                color = "🟢" if perc >= 80 else "🟡" if perc >= 60 else "🟠" if perc >= 40 else "🔴"
+                                st.markdown(f"💰 **Conversion**: {color} {perc:.0f}th percentile")
+                            
+                            if 'revenue' in individual_analysis['percentiles']:
+                                perc = individual_analysis['percentiles']['revenue']
+                                color = "🟢" if perc >= 80 else "🟡" if perc >= 60 else "🟠" if perc >= 40 else "🔴"
+                                st.markdown(f"💵 **Revenue/Conv**: {color} {perc:.0f}th percentile")
+                    
+                    # Component Score Contributions
+                    with st.expander("🔢 Component Score Contributions", expanded=True):
+                        st.markdown("**How each component contributes to the final health score:**")
+                        
+                        # Create a detailed breakdown table
+                        contribution_data = []
+                        total_contribution = 0
+                        
+                        for component, details in individual_analysis['component_contributions'].items():
+                            contribution_data.append({
+                                'Component': component.capitalize(),
+                                'Score': f"{details['score']:.1f}/100",
+                                'Weight': f"{details['weight']:.0%}",
+                                'Contribution': f"{details['contribution']:.1f} points"
+                            })
+                            total_contribution += details['contribution']
+                        
+                        # Display as a nice table
+                        contrib_df = pd.DataFrame(contribution_data)
+                        st.dataframe(contrib_df, use_container_width=True)
+                        
+                        # Show final calculation
+                        st.markdown(f"**🎯 Total Weighted Score: {total_contribution:.1f}/100**")
+                        
+                        # Show the weights explanation
+                        st.caption("💡 Weights: Conversion 30% (most critical for ROI) • Delivery 20% • Engagement 25% • Revenue 25%")
+                    
+                    # Key Insights & Problem Areas
+                    if individual_analysis['insights']:
+                        with st.expander("🎯 Key Insights & Problem Areas", expanded=True):
+                            st.markdown("**Why this journey scored the way it did:**")
+                            for insight in individual_analysis['insights']:
+                                st.warning(insight)
+                    
+                    # Actionable Recommendations (already shown above but repeated here for completeness)
+                    st.markdown("**💡 Action Items for this Journey:**")
+                    for rec in individual_analysis['score_result']['recommendations']:
+                        st.info(rec)
         
         # Advanced Funnel Analysis
         st.subheader("🎯 Advanced Conversion Funnel Analysis")
