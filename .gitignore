@@ -1,0 +1,4 @@
+# WebEngage CSV Dashboard
+data/
+.venv/
+__pycache__/
