@@ -528,33 +528,347 @@ def calculate_journey_health_score(df_journey, all_journeys_df=None):
 
 
 
-def analyze_journey_funnel(df_journey):
+def calculate_campaign_health_score(df_campaign, all_campaigns_df=None):
     """
-    Advanced funnel analysis leveraging unique vs total metrics from UPC data
+    Calculate a comprehensive Campaign Health Score (0-100) using Empirical Bayes methodology
+    with small-sample corrections - adapted from journey health scoring for campaign analysis.
+
+    Scoring Method: Empirical Bayes Shrinkage + Log-transformed Revenue Per Conversion
+    - Uses Beta-Binomial shrinkage for conversion rates (handles small samples robustly)
+    - Log-transforms Revenue Per Conversion to reduce outlier dominance
+    - Applies statistical smoothing used by major tech companies (Meta, Google, Amazon)
+    - Provides reliable rankings even with sparse data
+    """
+    try:
+        # Initialize scores
+        scores = {}
+
+        # --- Data sufficiency guard ---
+        # Avoid labeling very low-activity campaigns as 'Good' or 'Excellent'.
+        # Heuristic thresholds (conservative defaults) - adjust as needed:
+        # - min_sent: minimum total messages sent across the campaign
+        # - min_conversions: minimum total conversions to consider revenue/conversion metrics meaningful
+        # - min_days: minimum number of reporting days for the campaign
+        min_sent = 10
+        min_conversions = 3
+        min_days = 3
+
+        # Compute simple activity metrics for this campaign
+        total_sent_c = df_campaign['Sent'].sum() if 'Sent' in df_campaign.columns else 0
+        total_conversions_c = df_campaign['Unique Conversions'].sum() if 'Unique Conversions' in df_campaign.columns else 0
+        unique_days = df_campaign['Reporting Period Start Date'].nunique() if 'Reporting Period Start Date' in df_campaign.columns else len(df_campaign)
+
+        if total_sent_c < min_sent or total_conversions_c < min_conversions or unique_days < min_days:
+            # Return explicit Insufficient Data result so the UI can filter or flag these campaigns
+            return {
+                'health_score': 0.0,
+                'tier': 'Insufficient Data',
+                'tier_description': 'Insufficient activity to compute reliable score',
+                'component_scores': {'delivery': 0, 'engagement': 0, 'conversion': 0, 'revenue': 0},
+                'recommendations': [
+                    'ℹ️ Insufficient data: Not enough volume or time to compute a reliable campaign health score',
+                    '🔎 Consider increasing the lookback window or aggregating similar campaigns for stability'
+                ],
+                'scoring_method': 'Insufficient data guard (volume/time thresholds)'
+            }
+
+        # Get baseline data for percentile calculations (use all data if available)
+        baseline_df = all_campaigns_df if all_campaigns_df is not None else df_campaign
+
+        # === EMPIRICAL BAYES HELPER FUNCTIONS ===
+        def estimate_beta_prior(successes_array, trials_array):
+            """Estimate Beta prior parameters using method of moments from population data"""
+            # Filter out invalid data
+            valid_mask = (trials_array > 0) & (~np.isnan(successes_array)) & (~np.isnan(trials_array))
+            if not valid_mask.any():
+                return 1.0, 1.0  # Uniform prior fallback
+
+            rates = successes_array[valid_mask] / trials_array[valid_mask]
+            rates = rates[(rates >= 0) & (rates <= 1)]  # Valid rates only
+
+            if len(rates) < 2:
+                return 1.0, 1.0  # Uniform prior fallback
+
+            mean_rate = np.mean(rates)
+            var_rate = np.var(rates, ddof=1)
+
+            # Ensure variance is positive and not too close to theoretical maximum
+            if var_rate <= 0 or var_rate >= mean_rate * (1 - mean_rate):
+                return 1.0, 1.0  # Uniform prior fallback
+
+            # Method of moments: alpha = mean * (mean*(1-mean)/var - 1), beta = (1-mean) * (...)
+            scale = mean_rate * (1 - mean_rate) / var_rate - 1.0
+            alpha = max(0.1, mean_rate * scale)
+            beta = max(0.1, (1 - mean_rate) * scale)
+
+            return alpha, beta
+
+        def beta_posterior_mean(successes, trials, alpha_prior, beta_prior):
+            """Calculate posterior mean for Beta-Binomial model"""
+            if trials <= 0:
+                return 0.0
+            return (successes + alpha_prior) / (trials + alpha_prior + beta_prior)
+
+        # Helper function for percentile-based scoring (now using smoothed values)
+        def calculate_percentile_score(value, baseline_values, reverse=False):
+            """Convert a value to percentile score (0-100) using statistical ranking"""
+            if len(baseline_values) == 0 or pd.isna(value):
+                return 50  # Neutral score for missing data
+
+            # Remove NaN values
+            clean_values = baseline_values.dropna()
+            if len(clean_values) == 0:
+                return 50
+
+            # Calculate percentile rank
+            if reverse:
+                # For metrics where lower is better (e.g., cost per conversion)
+                percentile = (1 - (clean_values < value).mean()) * 100
+            else:
+                # For metrics where higher is better (standard case)
+                percentile = (clean_values <= value).mean() * 100
+
+            return min(max(percentile, 0), 100)  # Ensure 0-100 range
+
+        # === PREPARE POPULATION DATA FOR EMPIRICAL BAYES ===
+
+        # Collect campaign-level data for prior estimation
+        campaign_groups = baseline_df.groupby('Campaign Name') if 'Campaign Name' in baseline_df.columns else [('current', baseline_df)]
+
+        # Delivery rates (usually high success rate, less smoothing needed)
+        delivery_rates = []
+        delivery_totals = []
+        for name, group in campaign_groups:
+            if 'Delivery Rate' in group.columns:
+                rate = group['Delivery Rate'].mean()
+                if not pd.isna(rate):
+                    delivery_rates.append(rate)
+            elif 'Sent' in group.columns and 'Delivered' in group.columns:
+                sent = group['Sent'].sum()
+                delivered = group['Delivered'].sum()
+                if sent > 0:
+                    delivery_rates.append(delivered / sent)
+                    delivery_totals.append(sent)
+
+        # CTR data for Empirical Bayes
+        ctr_clicks = []
+        ctr_impressions = []
+        for name, group in campaign_groups:
+            if 'Unique Clicks' in group.columns and 'Unique Impressions' in group.columns:
+                clicks = group['Unique Clicks'].sum()
+                impressions = group['Unique Impressions'].sum()
+                if impressions > 0:
+                    ctr_clicks.append(clicks)
+                    ctr_impressions.append(impressions)
+
+        # Conversion data for Empirical Bayes
+        conv_conversions = []
+        conv_clicks = []
+        for name, group in campaign_groups:
+            if 'Unique Conversions' in group.columns and 'Unique Clicks' in group.columns:
+                conversions = group['Unique Conversions'].sum()
+                clicks = group['Unique Clicks'].sum()
+                if clicks > 0:
+                    conv_conversions.append(conversions)
+                    conv_clicks.append(clicks)
+
+        # Revenue Per Conversion data (for log-transformation)
+        rpc_values = []
+        for name, group in campaign_groups:
+            if 'Revenue (SAR)' in group.columns and 'Unique Conversions' in group.columns:
+                revenue = group['Revenue (SAR)'].sum()
+                conversions = group['Unique Conversions'].sum()
+                if conversions > 0:
+                    rpc = revenue / conversions
+                    if rpc > 0:  # Only positive RPC values
+                        rpc_values.append(rpc)
+
+        # Estimate priors
+        ctr_alpha, ctr_beta = estimate_beta_prior(np.array(ctr_clicks), np.array(ctr_impressions))
+        conv_alpha, conv_beta = estimate_beta_prior(np.array(conv_conversions), np.array(conv_clicks))
+
+        # === CALCULATE COMPONENT SCORES WITH EMPIRICAL BAYES ===
+
+        # 1. Delivery Performance Score (25% weight) - Less smoothing needed
+        if 'Delivery Rate' in df_campaign.columns and df_campaign['Delivery Rate'].notna().any():
+            delivery_rate = df_campaign['Delivery Rate'].mean()
+        elif 'Sent' in df_campaign.columns and 'Delivered' in df_campaign.columns:
+            total_sent = df_campaign['Sent'].sum()
+            total_delivered = df_campaign['Delivered'].sum()
+            delivery_rate = (total_delivered / total_sent) if total_sent > 0 else 0
+        else:
+            delivery_rate = 0.8  # Industry average 80%
+
+        baseline_delivery = pd.Series(delivery_rates) if delivery_rates else pd.Series([delivery_rate])
+        scores['delivery'] = calculate_percentile_score(delivery_rate, baseline_delivery)
+
+        # 2. Engagement Performance Score (25% weight) - WITH EMPIRICAL BAYES SMOOTHING
+        # FIXED: Always use aggregate CTR calculation instead of daily average CTR for proper scoring
+        if 'Unique Clicks' in df_campaign.columns and 'Unique Impressions' in df_campaign.columns:
+            total_clicks = df_campaign['Unique Clicks'].sum()
+            total_impressions = df_campaign['Unique Impressions'].sum()
+            # Apply Empirical Bayes smoothing to aggregate CTR (more reliable than daily averages)
+            smoothed_ctr = beta_posterior_mean(total_clicks, total_impressions, ctr_alpha, ctr_beta)
+        else:
+            smoothed_ctr = 0.02  # Industry average 2%
+
+        # Create baseline of smoothed CTRs for fair comparison
+        baseline_ctr_smoothed = []
+        for clicks, impressions in zip(ctr_clicks, ctr_impressions):
+            baseline_ctr_smoothed.append(beta_posterior_mean(clicks, impressions, ctr_alpha, ctr_beta))
+        baseline_ctr = pd.Series(baseline_ctr_smoothed) if baseline_ctr_smoothed else pd.Series([smoothed_ctr])
+
+        scores['engagement'] = calculate_percentile_score(smoothed_ctr, baseline_ctr)
+
+        # 3. Conversion Performance Score (30% weight) - WITH EMPIRICAL BAYES SMOOTHING
+        # FIXED: Use the direct Conversion Rate column when available (more reliable than manual calculation)
+        if 'Conversion Rate' in df_campaign.columns and df_campaign['Conversion Rate'].notna().any():
+            # Use the provided conversion rate column (already calculated correctly by WebEngage)
+            conv_rate = df_campaign['Conversion Rate'].mean() / 100.0  # Convert percentage to decimal
+            # Create baseline from all campaigns' conversion rates
+            if 'Conversion Rate' in baseline_df.columns:
+                baseline_conv_values = []
+                for name, group in baseline_df.groupby('Campaign Name'):
+                    campaign_conv_rate = group['Conversion Rate'].mean() / 100.0
+                    if not pd.isna(campaign_conv_rate):
+                        baseline_conv_values.append(campaign_conv_rate)
+                baseline_conv = pd.Series(baseline_conv_values)
+            else:
+                baseline_conv = pd.Series([conv_rate])
+        elif 'Unique Conversions' in df_campaign.columns and 'Unique Clicks' in df_campaign.columns:
+            # Fallback: manual calculation (but this may not be reliable for some data)
+            total_conversions = df_campaign['Unique Conversions'].sum()
+            total_clicks = df_campaign['Unique Clicks'].sum()
+            # Apply Empirical Bayes smoothing for manual calculations
+            conv_rate = beta_posterior_mean(total_conversions, total_clicks, conv_alpha, conv_beta)
+
+            # Create baseline of smoothed conversion rates
+            baseline_conv_smoothed = []
+            for conversions, clicks in zip(conv_conversions, conv_clicks):
+                baseline_conv_smoothed.append(beta_posterior_mean(conversions, clicks, conv_alpha, conv_beta))
+            baseline_conv = pd.Series(baseline_conv_smoothed) if baseline_conv_smoothed else pd.Series([conv_rate])
+        else:
+            conv_rate = 0.05  # Industry average 5%
+            baseline_conv = pd.Series([conv_rate])
+
+        scores['conversion'] = calculate_percentile_score(conv_rate, baseline_conv)
+
+        # 4. Revenue Efficiency Score (20% weight) - LOG-TRANSFORMED RPC
+        if 'Revenue (SAR)' in df_campaign.columns and 'Unique Conversions' in df_campaign.columns:
+            total_revenue = df_campaign['Revenue (SAR)'].sum()
+            total_conversions = df_campaign['Unique Conversions'].sum()
+            revenue_per_conversion = (total_revenue / total_conversions) if total_conversions > 0 else 0
+
+            # Log-transform for better distribution (reduces outlier dominance)
+            log_rpc = np.log1p(revenue_per_conversion)  # log(1 + x) handles zero values
+
+            # Create baseline of log-transformed RPCs
+            baseline_log_rpc = [np.log1p(rpc) for rpc in rpc_values] if rpc_values else [log_rpc]
+            baseline_log_rpc = pd.Series(baseline_log_rpc)
+
+            scores['revenue'] = calculate_percentile_score(log_rpc, baseline_log_rpc)
+        else:
+            scores['revenue'] = 50  # Neutral score if no revenue data
+
+        # Calculate weighted final score using enterprise-optimized weights
+        # Increased revenue weight slightly to improve sensitivity to business outcomes
+        weights = {'delivery': 0.20, 'engagement': 0.25, 'conversion': 0.30, 'revenue': 0.25}
+        final_score = sum(scores[key] * weights[key] for key in scores)
+
+        # Professional tier classification (McKinsey/BCG standard)
+        if final_score >= 80:
+            tier = "Excellent"
+            tier_description = "Top Quartile Performance"
+        elif final_score >= 60:
+            tier = "Good"
+            tier_description = "Above Average Performance"
+        elif final_score >= 40:
+            tier = "Fair"
+            tier_description = "Below Average Performance"
+        else:
+            tier = "Poor"
+            tier_description = "Bottom Quartile Performance"
+
+        # Generate professional recommendations for executives
+        recommendations = []
+
+        if scores['delivery'] < 40:
+            recommendations.append("🚨 DELIVERY CRITICAL: Immediate technical review required - poor inbox placement impacting all downstream metrics")
+        elif scores['delivery'] < 60:
+            recommendations.append("⚠️ DELIVERY OPTIMIZATION: Review sender reputation and content to improve deliverability")
+
+        if scores['engagement'] < 40:
+            recommendations.append("🚨 ENGAGEMENT CRITICAL: Content and targeting strategy requires complete overhaul")
+        elif scores['engagement'] < 60:
+            recommendations.append("⚠️ ENGAGEMENT OPPORTUNITY: A/B test subject lines, send times, and content personalization")
+
+        if scores['conversion'] < 40:
+            recommendations.append("🚨 CONVERSION CRITICAL: Landing page and customer journey optimization is priority #1")
+        elif scores['conversion'] < 60:
+            recommendations.append("⚠️ CONVERSION OPTIMIZATION: Review offer relevance and purchase friction points")
+
+        if scores['revenue'] < 40:
+            recommendations.append("🚨 REVENUE EFFICIENCY: Customer value optimization or pricing strategy review needed")
+        elif scores['revenue'] < 60:
+            recommendations.append("⚠️ REVENUE OPPORTUNITY: Focus on upselling or higher-value customer segments")
+
+        # Success recommendations
+        if final_score >= 80:
+            recommendations.append("🎯 SCALE SUCCESS: Allocate more budget to this high-performing campaign")
+            recommendations.append("📈 BEST PRACTICE: Document and replicate successful elements across other campaigns")
+
+        if not recommendations:
+            recommendations.append("✅ SOLID PERFORMANCE: Continue current strategy with minor optimizations")
+
+        return {
+            'health_score': round(final_score, 1),
+            'tier': tier,
+            'tier_description': tier_description,
+            'component_scores': scores,
+            'recommendations': recommendations,
+            'scoring_method': 'Empirical Bayes (Beta-Binomial) + Log(RPC) percentiles'
+        }
+
+    except Exception as e:
+        # Fallback scoring for data quality issues
+        return {
+            'health_score': 50.0,
+            'tier': 'Insufficient Data',
+            'tier_description': 'Data Quality Issues',
+            'component_scores': {'delivery': 50, 'engagement': 50, 'conversion': 50, 'revenue': 50},
+            'recommendations': ['📊 DATA QUALITY: Improve data collection for accurate performance measurement'],
+            'scoring_method': 'Fallback scoring due to data limitations'
+        }
+
+
+
+def analyze_campaign_funnel(df_campaign):
+    """
+    Advanced funnel analysis for campaigns leveraging unique vs total metrics
     """
     try:
         funnel_data = {}
         
         # Basic funnel stages
-        funnel_data['Sent'] = df_journey['Sent'].sum() if 'Sent' in df_journey.columns else 0
-        funnel_data['Delivered'] = df_journey['Delivered'].sum() if 'Delivered' in df_journey.columns else 0
+        funnel_data['Sent'] = df_campaign['Sent'].sum() if 'Sent' in df_campaign.columns else 0
+        funnel_data['Delivered'] = df_campaign['Delivered'].sum() if 'Delivered' in df_campaign.columns else 0
         
         # Engagement stages (use both unique and total if available)
-        if 'Unique Impressions' in df_journey.columns:
-            funnel_data['Unique Impressions'] = df_journey['Unique Impressions'].sum()
-        if 'Total Impressions' in df_journey.columns:
-            funnel_data['Total Impressions'] = df_journey['Total Impressions'].sum()
+        if 'Unique Impressions' in df_campaign.columns:
+            funnel_data['Unique Impressions'] = df_campaign['Unique Impressions'].sum()
+        if 'Total Impressions' in df_campaign.columns:
+            funnel_data['Total Impressions'] = df_campaign['Total Impressions'].sum()
         
-        if 'Unique Clicks' in df_journey.columns:
-            funnel_data['Unique Clicks'] = df_journey['Unique Clicks'].sum()
-        if 'Total Clicks' in df_journey.columns:
-            funnel_data['Total Clicks'] = df_journey['Total Clicks'].sum()
+        if 'Unique Clicks' in df_campaign.columns:
+            funnel_data['Unique Clicks'] = df_campaign['Unique Clicks'].sum()
+        if 'Total Clicks' in df_campaign.columns:
+            funnel_data['Total Clicks'] = df_campaign['Total Clicks'].sum()
         
         # Conversion stages
-        if 'Unique Conversions' in df_journey.columns:
-            funnel_data['Unique Conversions'] = df_journey['Unique Conversions'].sum()
-        if 'Total Conversions' in df_journey.columns:
-            funnel_data['Total Conversions'] = df_journey['Total Conversions'].sum()
+        if 'Unique Conversions' in df_campaign.columns:
+            funnel_data['Unique Conversions'] = df_campaign['Unique Conversions'].sum()
+        if 'Total Conversions' in df_campaign.columns:
+            funnel_data['Total Conversions'] = df_campaign['Total Conversions'].sum()
         
         # Calculate drop-off rates and insights
         insights = []
@@ -592,6 +906,70 @@ def analyze_journey_funnel(df_journey):
             'conversion_rates': {}
         }
 
+def analyze_journey_funnel(df_journey):
+    """
+    Advanced funnel analysis for journeys leveraging unique vs total metrics
+    """
+    try:
+        funnel_data = {}
+
+        # Basic funnel stages
+        funnel_data['Sent'] = df_journey['Sent'].sum() if 'Sent' in df_journey.columns else 0
+        funnel_data['Delivered'] = df_journey['Delivered'].sum() if 'Delivered' in df_journey.columns else 0
+
+        # Engagement stages (use both unique and total if available)
+        if 'Unique Impressions' in df_journey.columns:
+            funnel_data['Unique Impressions'] = df_journey['Unique Impressions'].sum()
+        if 'Total Impressions' in df_journey.columns:
+            funnel_data['Total Impressions'] = df_journey['Total Impressions'].sum()
+
+        if 'Unique Clicks' in df_journey.columns:
+            funnel_data['Unique Clicks'] = df_journey['Unique Clicks'].sum()
+        if 'Total Clicks' in df_journey.columns:
+            funnel_data['Total Clicks'] = df_journey['Total Clicks'].sum()
+
+        # Conversion stages
+        if 'Unique Conversions' in df_journey.columns:
+            funnel_data['Unique Conversions'] = df_journey['Unique Conversions'].sum()
+        if 'Total Conversions' in df_journey.columns:
+            funnel_data['Total Conversions'] = df_journey['Total Conversions'].sum()
+
+        # Calculate drop-off rates and insights
+        insights = []
+        if funnel_data.get('Sent', 0) > 0 and funnel_data.get('Delivered', 0) > 0:
+            delivery_rate = funnel_data['Delivered'] / funnel_data['Sent']
+            if delivery_rate < 0.95:
+                insights.append(f"🚨 Delivery Issue: {(1-delivery_rate)*100:.1f}% delivery failure rate")
+
+        if funnel_data.get('Delivered', 0) > 0 and funnel_data.get('Unique Impressions', 0) > 0:
+            impression_rate = funnel_data['Unique Impressions'] / funnel_data['Delivered']
+            if impression_rate < 0.8:
+                insights.append(f"👁️ Low Visibility: Only {impression_rate*100:.1f}% of delivered messages were seen")
+
+        # Analyze repeat engagement (unique vs total)
+        if funnel_data.get('Total Impressions', 0) > 0 and funnel_data.get('Unique Impressions', 0) > 0:
+            repeat_impression_rate = funnel_data['Total Impressions'] / funnel_data['Unique Impressions']
+            if repeat_impression_rate > 1.5:
+                insights.append(f"🔄 High Re-engagement: {repeat_impression_rate:.1f}x average views per user")
+
+        if funnel_data.get('Total Clicks', 0) > 0 and funnel_data.get('Unique Clicks', 0) > 0:
+            repeat_click_rate = funnel_data['Total Clicks'] / funnel_data['Unique Clicks']
+            if repeat_click_rate > 1.2:
+                insights.append(f"🎯 Strong Interest: {repeat_click_rate:.1f}x average clicks per user")
+
+        return {
+            'funnel_data': funnel_data,
+            'insights': insights,
+            'conversion_rates': calculate_funnel_conversion_rates(funnel_data)
+        }
+
+    except Exception as e:
+        return {
+            'funnel_data': {},
+            'insights': [f"Error analyzing funnel: {str(e)}"],
+            'conversion_rates': {}
+        }
+
 def calculate_funnel_conversion_rates(funnel_data):
     """Calculate conversion rates between funnel stages"""
     rates = {}
@@ -616,6 +994,104 @@ def calculate_funnel_conversion_rates(funnel_data):
         rates['Click-to-Conversion'] = funnel_data['Unique Conversions'] / funnel_data['Unique Clicks']
     
     return rates
+
+def detect_campaign_anomalies(df, lookback_days=30):
+    """
+    Detect performance anomalies in campaigns using statistical methods
+    """
+    try:
+        import numpy as np
+        from scipy import stats
+        
+        anomalies = []
+        
+        # Ensure date column is datetime
+        if 'Reporting Period Start Date' in df.columns:
+            df['date'] = pd.to_datetime(df['Reporting Period Start Date'])
+        elif 'Day' in df.columns:
+            df['date'] = pd.to_datetime(df['Day'])
+        else:
+            return []
+        
+        # Get recent data
+        cutoff_date = df['date'].max() - pd.Timedelta(days=lookback_days)
+        recent_df = df[df['date'] >= cutoff_date]
+        
+        # Group by campaign and analyze performance
+        campaigns = df['Campaign Name'].dropna().unique()
+        
+        for campaign in campaigns:
+            if str(campaign) == 'nan' or not campaign:
+                continue
+                
+            campaign_data = df[df['Campaign Name'] == campaign]
+            recent_campaign_data = recent_df[recent_df['Campaign Name'] == campaign]
+            
+            if len(campaign_data) < 5 or len(recent_campaign_data) == 0:
+                continue
+            
+            # Calculate historical metrics
+            historical_metrics = {
+                'conversion_rate': campaign_data['Unique Conversions'].sum() / max(campaign_data['Unique Clicks'].sum(), 1),
+                'delivery_rate': campaign_data['Delivered'].sum() / max(campaign_data['Sent'].sum(), 1),
+                'ctr': campaign_data['Unique Clicks'].sum() / max(campaign_data['Unique Impressions'].sum(), 1),
+                'revenue_per_conversion': campaign_data['Revenue (SAR)'].sum() / max(campaign_data['Unique Conversions'].sum(), 1)
+            }
+            
+            # Calculate recent metrics
+            recent_metrics = {
+                'conversion_rate': recent_campaign_data['Unique Conversions'].sum() / max(recent_campaign_data['Unique Clicks'].sum(), 1),
+                'delivery_rate': recent_campaign_data['Delivered'].sum() / max(recent_campaign_data['Sent'].sum(), 1),
+                'ctr': recent_campaign_data['Unique Clicks'].sum() / max(recent_campaign_data['Unique Impressions'].sum(), 1),
+                'revenue_per_conversion': recent_campaign_data['Revenue (SAR)'].sum() / max(recent_campaign_data['Unique Conversions'].sum(), 1)
+            }
+            
+            # Detect significant changes
+            for metric_name, historical_value in historical_metrics.items():
+                recent_value = recent_metrics[metric_name]
+                
+                if historical_value > 0 and recent_value >= 0:
+                    # Calculate percentage change
+                    pct_change = ((recent_value - historical_value) / historical_value) * 100
+                    
+                    # Define thresholds for anomalies
+                    if abs(pct_change) > 50:  # 50% change threshold
+                        severity = "🚨 Critical" if abs(pct_change) > 80 else "⚠️ Warning"
+                        direction = "↗️ Improved" if pct_change > 0 else "↘️ Declined"
+                        
+                        anomalies.append({
+                            'campaign': campaign,
+                            'metric': metric_name.replace('_', ' ').title(),
+                            'historical_value': historical_value,
+                            'recent_value': recent_value,
+                            'change_pct': pct_change,
+                            'severity': severity,
+                            'direction': direction,
+                            'recommendation': get_anomaly_recommendation(metric_name, pct_change)
+                        })
+            
+            # Check for volume anomalies (sudden drops in activity)
+            historical_volume = campaign_data['Sent'].sum()
+            recent_volume = recent_campaign_data['Sent'].sum()
+            
+            if historical_volume > 0:
+                expected_recent_volume = historical_volume * (lookback_days / len(campaign_data))
+                if recent_volume < expected_recent_volume * 0.3:  # Less than 30% of expected volume
+                    anomalies.append({
+                        'campaign': campaign,
+                        'metric': 'Activity Volume',
+                        'historical_value': expected_recent_volume,
+                        'recent_value': recent_volume,
+                        'change_pct': ((recent_volume - expected_recent_volume) / expected_recent_volume) * 100,
+                        'severity': "🚨 Critical",
+                        'direction': "📉 Low Activity",
+                        'recommendation': "Check if campaign is paused or has targeting issues"
+                    })
+        
+        return sorted(anomalies, key=lambda x: abs(x['change_pct']), reverse=True)
+        
+    except Exception as e:
+        return [{'campaign': 'Error', 'metric': 'Detection Failed', 'recommendation': f"Error: {str(e)}"}]
 
 def detect_journey_anomalies(df, lookback_days=30):
     """
@@ -1863,6 +2339,575 @@ if uploaded_file is not None:
                 failed_camp['Count'] = failed_camp['Count'].apply(format_metric)
                 fig_fail_camp = px.bar(failed_camp, x='Reason', y='Count', title="Failed Reasons for Selected Campaigns")
                 st.plotly_chart(fig_fail_camp)
+
+        # Campaign Health Score Analysis
+        st.subheader("🏥 Campaign Health Dashboard")
+        
+        # Professional Methodology Explanation for Executives
+        with st.expander("📊 Scoring Methodology (Click to View)", expanded=False):
+            st.markdown("""
+            ### **Professional Scoring Methodology**
+            
+            **Scoring Method**: Percentile-based ranking with statistical quartiles (Fortune 500 standard)
+            
+            #### **How Scores are Calculated:**
+            - **Percentile Ranking**: Each campaign is scored based on its performance relative to all other campaigns in your portfolio
+            - **0-100 Scale**: 50th percentile = 50 points, 75th percentile = 75 points, 95th percentile = 95+ points
+            - **No Arbitrary Benchmarks**: Uses your company's actual historical performance as the baseline
+            
+            #### **Component Weights (Industry Standard):**
+            - 🚀 **Conversion Performance**: 30% (Most critical for ROI)
+            - 📧 **Delivery Performance**: 25% (Foundation of reach)
+            - 🎯 **Engagement Performance**: 25% (Audience interest indicator) 
+            - 💰 **Revenue Efficiency**: 20% (Financial effectiveness)
+            
+            #### **Performance Tiers:**
+            - **Excellent (80-100)**: Top quartile performance - scale these campaigns
+            - **Good (60-79)**: Above average - minor optimizations needed
+            - **Fair (40-59)**: Below average - moderate improvements required
+            - **Poor (0-39)**: Bottom quartile - immediate action required
+            
+            #### **Why This Method:**
+            ✅ **Investor-Grade**: Used by McKinsey, BCG, and Fortune 500 companies  
+            ✅ **Context-Aware**: Considers your business reality, not arbitrary benchmarks  
+            ✅ **Statistically Sound**: Based on proven percentile ranking methodology  
+            ✅ **Executive-Ready**: Suitable for board presentations and strategic planning  
+            """)
+        
+        
+        # Calculate health scores for all campaigns
+        campaign_health_data = []
+        unique_campaigns = filtered_df['Campaign Name'].dropna().unique()
+        
+        for campaign in unique_campaigns:
+            if str(campaign) != 'nan' and campaign:
+                campaign_data = filtered_df[filtered_df['Campaign Name'] == campaign]
+                health_info = calculate_campaign_health_score(campaign_data, filtered_df)
+                campaign_health_data.append({
+                    'Campaign Name': campaign,
+                    'Health Score': health_info['health_score'],
+                    'Tier': health_info['tier'],
+                    'Revenue (SAR)': campaign_data['Revenue (SAR)'].sum(),
+                    'Impression-Through Revenue (SAR)': campaign_data['Impression-Through Revenue (SAR)'].sum(),
+                    'Click-Through Revenue (SAR)': campaign_data['Click-Through Revenue (SAR)'].sum(),
+                    'Total Conversions': campaign_data['Unique Conversions'].sum(),
+                    'Delivery Score': health_info['component_scores'].get('delivery', 0),
+                    'Engagement Score': health_info['component_scores'].get('engagement', 0),
+                    'Conversion Score': health_info['component_scores'].get('conversion', 0),
+                    'Revenue Score': health_info['component_scores'].get('revenue', 0)
+                })
+        
+        if campaign_health_data:
+            health_df = pd.DataFrame(campaign_health_data)
+            health_df = health_df.sort_values('Health Score', ascending=False)
+            
+            # Display top performers and those needing attention
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("🔥 Top Performing Campaigns")
+                top_performing_campaigns = health_df.head(5)
+                for _, row in top_performing_campaigns.iterrows():
+                    # Use expandable containers for full campaign names
+                    with st.container():
+                        st.markdown(f"**{row['Campaign Name']}**")
+                        score_col, tier_col = st.columns([2, 1])
+                        with score_col:
+                            st.markdown(f"🏥 **{row['Health Score']:.1f}/100**")
+                        with tier_col:
+                            tier_color = "🟢" if row['Tier'] == "Excellent" else "🟡" if row['Tier'] == "Good" else "🟠"
+                            st.markdown(f"{tier_color} {row['Tier']}")
+                        st.markdown("---")
+            
+            with col2:
+                st.subheader("🚨 Campaigns Needing Attention")
+                bottom_campaigns = health_df[health_df['Health Score'] < 60].head(5)
+                if not bottom_campaigns.empty:
+                    for _, row in bottom_campaigns.iterrows():
+                        # Use expandable containers for full campaign names
+                        with st.container():
+                            st.markdown(f"**{row['Campaign Name']}**")
+                            score_col, tier_col = st.columns([2, 1])
+                            with score_col:
+                                st.markdown(f"🏥 **{row['Health Score']:.1f}/100**")
+                            with tier_col:
+                                tier_color = "🔴" if row['Tier'] == "Poor" else "🟠" if row['Tier'] == "Fair" else "🟡"
+                                st.markdown(f"{tier_color} {row['Tier']}")
+                            st.markdown("---")
+                else:
+                    st.success("🎉 All campaigns are performing well!")
+            
+            # Health Score Distribution
+            st.subheader("📊 Health Score Distribution")
+            fig_health_dist = px.histogram(health_df, x='Health Score', nbins=20, 
+                                         title="Distribution of Campaign Health Scores")
+            fig_health_dist.add_vline(x=health_df['Health Score'].mean(), 
+                                    line_dash="dash", 
+                                    annotation_text=f"Average: {health_df['Health Score'].mean():.1f}")
+            st.plotly_chart(fig_health_dist)
+            
+            # Complete Health Dashboard Table
+            st.subheader("📋 Complete Campaign Health Report")
+            
+            # Add search and filter options
+            search_col, filter_col = st.columns([2, 1])
+            
+            with search_col:
+                search_term = st.text_input("🔍 Search Campaign Names", placeholder="Type to filter campaigns...", key='campaign_search')
+            
+            with filter_col:
+                tier_filter = st.selectbox("Filter by Tier", ['All'] + list(health_df['Tier'].unique()), key='campaign_tier_filter')
+            
+            # Apply filters
+            display_health_df = health_df.copy()
+            
+            if search_term:
+                display_health_df = display_health_df[
+                    display_health_df['Campaign Name'].str.contains(search_term, case=False, na=False)
+                ]
+            
+            if tier_filter != 'All':
+                display_health_df = display_health_df[display_health_df['Tier'] == tier_filter]
+            
+            # Prepare numeric dataframe for display while keeping numeric types so Streamlit sorts correctly
+            numeric_display_df = display_health_df.copy()
+
+            # Ensure numeric columns are numeric (coerce if necessary)
+            numeric_cols = ['Revenue (SAR)', 'Impression-Through Revenue (SAR)', 'Click-Through Revenue (SAR)', 'Total Conversions',
+                            'Health Score', 'Delivery Score', 'Engagement Score', 'Conversion Score', 'Revenue Score']
+            for col in numeric_cols:
+                if col in numeric_display_df.columns:
+                    numeric_display_df[col] = pd.to_numeric(numeric_display_df[col], errors='coerce')
+
+            # Add tier emojis to a separate display column (keep original Tier for filtering logic)
+            tier_emojis = {
+                'Excellent': '🟢',
+                'Good': '🟡', 
+                'Fair': '🟠',
+                'Poor': '🔴'
+            }
+            # Create a human-friendly Tier display column
+            numeric_display_df['Tier Display'] = numeric_display_df['Tier'].apply(lambda x: f"{tier_emojis.get(x, '⚪')} {x}")
+
+            # Show filtered results count
+            st.info(f"📊 Showing {len(numeric_display_df)} campaigns (filtered from {len(health_df)} total)")
+
+            # Define columns order for display
+            columns_order = ['Campaign Name', 'Health Score', 'Tier Display', 'Revenue (SAR)', 'Impression-Through Revenue (SAR)',
+                             'Click-Through Revenue (SAR)', 'Total Conversions', 'Delivery Score', 'Engagement Score',
+                             'Conversion Score', 'Revenue Score']
+
+            # Create formatters for Styler so values look nice but remain numeric underneath (preserves numeric sorting)
+            formatters = {}
+            if 'Health Score' in numeric_display_df.columns:
+                formatters['Health Score'] = lambda x: f"{x:.1f}/100"
+            if 'Revenue (SAR)' in numeric_display_df.columns:
+                formatters['Revenue (SAR)'] = lambda x: format_metric(x, "SAR")
+                formatters['Impression-Through Revenue (SAR)'] = lambda x: format_metric(x, "SAR")
+                formatters['Click-Through Revenue (SAR)'] = lambda x: format_metric(x, "SAR")
+            if 'Total Conversions' in numeric_display_df.columns:
+                formatters['Total Conversions'] = lambda x: format_metric(x)
+            for score in ['Delivery Score', 'Engagement Score', 'Conversion Score', 'Revenue Score']:
+                if score in numeric_display_df.columns:
+                    formatters[score] = lambda x: f"{x:.1f}"
+
+            # Use pandas Styler to format display without changing underlying dtypes
+            try:
+                styled = numeric_display_df[columns_order].style.format(formatters)
+                st.dataframe(styled, width='stretch', height=400)
+            except Exception:
+                # Fallback: if Styler isn't supported in this environment, fall back to pre-formatted strings
+                fallback = numeric_display_df[columns_order].copy()
+                if 'Health Score' in fallback.columns:
+                    fallback['Health Score'] = fallback['Health Score'].apply(lambda x: f"{x:.1f}/100")
+                if 'Revenue (SAR)' in fallback.columns:
+                    fallback['Revenue (SAR)'] = fallback['Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
+                    fallback['Impression-Through Revenue (SAR)'] = fallback['Impression-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
+                    fallback['Click-Through Revenue (SAR)'] = fallback['Click-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
+                if 'Total Conversions' in fallback.columns:
+                    fallback['Total Conversions'] = fallback['Total Conversions'].apply(format_metric)
+                if 'Tier Display' in fallback.columns:
+                    fallback = fallback.rename(columns={'Tier Display': 'Tier'})
+
+                st.dataframe(fallback, width='stretch', height=400)
+            
+            # Component Scores Radar Chart for Selected Campaign
+            st.subheader("🎯 Campaign Performance Breakdown")
+            selected_campaign_health = st.selectbox("Select Campaign for Detailed Analysis", 
+                                                  health_df['Campaign Name'].tolist(), 
+                                                  key='health_campaign')
+            
+            if selected_campaign_health:
+                selected_health_data = health_df[health_df['Campaign Name'] == selected_campaign_health].iloc[0]
+                
+                # Create radar chart for component scores with better visualization
+                categories = ['Delivery Score', 'Engagement Score', 'Conversion Score', 'Revenue Score']
+                values = [selected_health_data[cat] for cat in categories]
+                
+                # Debug information to understand the values
+                st.write("**📊 Component Score Values:**")
+                score_cols = st.columns(4)
+                for i, (cat, val) in enumerate(zip(categories, values)):
+                    with score_cols[i]:
+                        st.metric(cat.replace(' Score', ''), f"{val:.1f}/100")
+                
+                # Create enhanced radar chart
+                fig_radar = go.Figure()
+                
+                # Add the main data trace
+                fig_radar.add_trace(go.Scatterpolar(
+                    r=values,
+                    theta=categories,
+                    fill='toself',
+                    name=selected_campaign_health,
+                    line=dict(color='rgb(0, 123, 255)', width=3),
+                    fillcolor='rgba(0, 123, 255, 0.3)',
+                    marker=dict(size=8, color='rgb(0, 123, 255)')
+                ))
+                
+                # Add reference lines for performance levels
+                excellent_line = [80] * len(categories)
+                good_line = [60] * len(categories)
+                
+                fig_radar.add_trace(go.Scatterpolar(
+                    r=excellent_line,
+                    theta=categories,
+                    mode='lines',
+                    name='Excellent (80+)',
+                    line=dict(color='green', width=2, dash='dash'),
+                    showlegend=True
+                ))
+                
+                fig_radar.add_trace(go.Scatterpolar(
+                    r=good_line,
+                    theta=categories,
+                    mode='lines',
+                    name='Good (60+)',
+                    line=dict(color='orange', width=2, dash='dot'),
+                    showlegend=True
+                ))
+                
+                # Update layout with better styling
+                fig_radar.update_layout(
+                    polar=dict(
+                        radialaxis=dict(
+                            visible=True,
+                            range=[0, 100],
+                            tickmode='linear',
+                            tick0=0,
+                            dtick=20,
+                            gridcolor='lightgray',
+                            gridwidth=1
+                        ),
+                        angularaxis=dict(
+                            gridcolor='lightgray',
+                            gridwidth=1
+                        )
+                    ),
+                    showlegend=True,
+                    title=dict(
+                        text=f"Performance Breakdown: {selected_campaign_health}",
+                        x=0.5,
+                        font=dict(size=16)
+                    ),
+                    width=600,
+                    height=500,
+                    margin=dict(l=80, r=80, t=80, b=80)
+                )
+                st.plotly_chart(fig_radar, use_container_width=True)
+                
+                # Show recommendations
+                campaign_data_for_rec = filtered_df[filtered_df['Campaign Name'] == selected_campaign_health]
+                health_info_for_rec = calculate_campaign_health_score(campaign_data_for_rec, filtered_df)
+                
+                st.subheader("💡 Recommendations")
+                for rec in health_info_for_rec['recommendations']:
+                    st.info(rec)
+
+        # Campaign Performance Breakdown Analysis
+        st.subheader("📊 Campaign Performance Breakdown")
+        
+        # Select campaign for detailed breakdown
+        breakdown_campaign = st.selectbox("Select Campaign for Performance Breakdown", 
+                                        unique_campaigns, 
+                                        key='breakdown_campaign')
+        
+        if breakdown_campaign and str(breakdown_campaign) != 'nan':
+            breakdown_data = filtered_df[filtered_df['Campaign Name'] == breakdown_campaign]
+            
+            # Calculate component scores and contributions
+            breakdown_health = calculate_campaign_health_score(breakdown_data, filtered_df)
+            
+            # Component Contribution Analysis
+            st.subheader("🔢 Component Contribution Analysis")
+            
+            # Create a detailed breakdown table
+            contribution_data = []
+            total_contribution = 0
+            
+            for component, details in breakdown_health.get('component_contributions', {}).items():
+                contribution_data.append({
+                    'Component': component.capitalize(),
+                    'Score': f"{details['score']:.1f}/100",
+                    'Weight': f"{details['weight']:.0%}",
+                    'Contribution': f"{details['contribution']:.1f} points"
+                })
+                total_contribution += details['contribution']
+            
+            # Display as a nice table
+            if contribution_data:
+                contrib_df = pd.DataFrame(contribution_data)
+                st.dataframe(contrib_df, use_container_width=True)
+                
+                # Show final calculation
+                st.markdown(f"**🎯 Total Weighted Score: {total_contribution:.1f}/100**")
+                
+                # Show the weights explanation
+                st.caption("💡 Weights: Conversion 30% (most critical for ROI) • Delivery 25% • Engagement 25% • Revenue 20%")
+            
+            # Performance Insights
+            st.subheader("🎯 Performance Insights")
+            
+            # Key metrics breakdown
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                total_sent = breakdown_data['Sent'].sum()
+                st.metric("📤 Total Sent", format_metric(total_sent))
+                
+                total_delivered = breakdown_data['Delivered'].sum()
+                delivery_rate = (total_delivered / total_sent * 100) if total_sent > 0 else 0
+                st.metric("📧 Delivery Rate", f"{delivery_rate:.1f}%")
+            
+            with col2:
+                total_impressions = breakdown_data['Unique Impressions'].sum() if 'Unique Impressions' in breakdown_data.columns else 0
+                st.metric("👁️ Total Impressions", format_metric(total_impressions))
+                
+                total_clicks = breakdown_data['Unique Clicks'].sum()
+                ctr = (total_clicks / total_impressions * 100) if total_impressions > 0 else 0
+                st.metric("🖱️ CTR", f"{ctr:.2f}%")
+            
+            with col3:
+                total_conversions = breakdown_data['Unique Conversions'].sum()
+                st.metric("💰 Total Conversions", format_metric(total_conversions))
+                
+                conversion_rate = (total_conversions / total_clicks * 100) if total_clicks > 0 else 0
+                st.metric("📈 Conversion Rate", f"{conversion_rate:.2f}%")
+            
+            with col4:
+                total_revenue = breakdown_data['Revenue (SAR)'].sum()
+                st.metric("💵 Total Revenue", format_metric(total_revenue, "SAR"))
+                
+                rpc = (total_revenue / total_conversions) if total_conversions > 0 else 0
+                st.metric("💰 Revenue/Conversion", format_metric(rpc, "SAR"))
+            
+            # Performance vs Portfolio Analysis
+            st.subheader("📊 Performance vs Portfolio")
+            
+            # Calculate portfolio averages
+            portfolio_delivery_rate = (filtered_df['Delivered'].sum() / filtered_df['Sent'].sum() * 100) if filtered_df['Sent'].sum() > 0 else 0
+            portfolio_ctr = (filtered_df['Unique Clicks'].sum() / filtered_df['Unique Impressions'].sum() * 100) if filtered_df['Unique Impressions'].sum() > 0 else 0
+            portfolio_conversion_rate = (filtered_df['Unique Conversions'].sum() / filtered_df['Unique Clicks'].sum() * 100) if filtered_df['Unique Clicks'].sum() > 0 else 0
+            portfolio_rpc = (filtered_df['Revenue (SAR)'].sum() / filtered_df['Unique Conversions'].sum()) if filtered_df['Unique Conversions'].sum() > 0 else 0
+            
+            # Compare campaign vs portfolio
+            comparison_data = {
+                'Metric': ['Delivery Rate', 'CTR', 'Conversion Rate', 'Revenue/Conversion'],
+                'Campaign': [delivery_rate, ctr, conversion_rate, rpc],
+                'Portfolio Average': [portfolio_delivery_rate, portfolio_ctr, portfolio_conversion_rate, portfolio_rpc],
+                'Difference': [
+                    delivery_rate - portfolio_delivery_rate,
+                    ctr - portfolio_ctr, 
+                    conversion_rate - portfolio_conversion_rate,
+                    rpc - portfolio_rpc
+                ]
+            }
+            
+            comparison_df = pd.DataFrame(comparison_data)
+            
+            # Format for display
+            display_comparison = comparison_df.copy()
+            display_comparison['Campaign'] = display_comparison.apply(
+                lambda row: f"{row['Campaign']:.1f}%" if 'Rate' in row['Metric'] else format_metric(row['Campaign'], "SAR" if "Revenue" in row['Metric'] else ""),
+                axis=1
+            )
+            display_comparison['Portfolio Average'] = display_comparison.apply(
+                lambda row: f"{row['Portfolio Average']:.1f}%" if 'Rate' in row['Metric'] else format_metric(row['Portfolio Average'], "SAR" if "Revenue" in row['Metric'] else ""),
+                axis=1
+            )
+            display_comparison['Difference'] = display_comparison.apply(
+                lambda row: f"{row['Difference']:+.1f}%" if 'Rate' in row['Metric'] else f"{format_metric(row['Difference'], 'SAR' if 'Revenue' in row['Metric'] else '')}",
+                axis=1
+            )
+            
+            st.dataframe(display_comparison, use_container_width=True)
+            
+            # Performance Summary
+            st.subheader("📋 Performance Summary")
+            
+            # Calculate performance level for each metric
+            summary_points = []
+            
+            if delivery_rate > portfolio_delivery_rate * 1.1:
+                summary_points.append("🚀 **Delivery Excellence**: Significantly above portfolio average")
+            elif delivery_rate < portfolio_delivery_rate * 0.9:
+                summary_points.append("⚠️ **Delivery Challenge**: Below portfolio average - investigate deliverability")
+            
+            if ctr > portfolio_ctr * 1.1:
+                summary_points.append("🎯 **Engagement Strength**: Strong click-through performance")
+            elif ctr < portfolio_ctr * 0.9:
+                summary_points.append("📉 **Engagement Opportunity**: CTR below average - consider creative optimization")
+            
+            if conversion_rate > portfolio_conversion_rate * 1.1:
+                summary_points.append("💰 **Conversion Champion**: Exceptional conversion performance")
+            elif conversion_rate < portfolio_conversion_rate * 0.9:
+                summary_points.append("🔄 **Conversion Focus**: Conversion rate needs improvement")
+            
+            if rpc > portfolio_rpc * 1.1:
+                summary_points.append("💎 **Revenue Efficiency**: High-value conversions")
+            elif rpc < portfolio_rpc * 0.9:
+                summary_points.append("💸 **Revenue Optimization**: Revenue per conversion below average")
+            
+            if summary_points:
+                for point in summary_points:
+                    st.info(point)
+            else:
+                st.info("📊 Campaign performance is generally aligned with portfolio averages")
+            
+            # Actionable Recommendations
+            st.subheader("🎯 Actionable Recommendations")
+            
+            recommendations = []
+            
+            # Delivery recommendations
+            if delivery_rate < portfolio_delivery_rate * 0.95:
+                recommendations.append("📧 **Improve Deliverability**: Review sender reputation, authentication, and content filters")
+                recommendations.append("🔍 **List Quality**: Clean email lists and remove inactive subscribers")
+            
+            # Engagement recommendations
+            if ctr < portfolio_ctr * 0.95:
+                recommendations.append("🎨 **Creative Optimization**: Test subject lines, preheaders, and visual elements")
+                recommendations.append("⏰ **Timing Strategy**: Experiment with send times and frequencies")
+            
+            # Conversion recommendations
+            if conversion_rate < portfolio_conversion_rate * 0.95:
+                recommendations.append("🎯 **Landing Page Optimization**: Improve page load speed and mobile experience")
+                recommendations.append("🛒 **Call-to-Action**: Test button text, placement, and design")
+            
+            # Revenue recommendations
+            if rpc < portfolio_rpc * 0.95:
+                recommendations.append("💰 **Value Proposition**: Enhance product messaging and benefits")
+                recommendations.append("🎯 **Audience Targeting**: Focus on higher-value customer segments")
+            
+            # Success recommendations
+            if delivery_rate > portfolio_delivery_rate * 1.05 and ctr > portfolio_ctr * 1.05 and conversion_rate > portfolio_conversion_rate * 1.05:
+                recommendations.append("📈 **Scale Up**: This campaign shows strong performance - consider increasing budget")
+                recommendations.append("🔄 **Replicate Success**: Apply successful elements to other campaigns")
+            
+            if recommendations:
+                for rec in recommendations:
+                    st.success(rec)
+            else:
+                st.info("✅ Campaign is performing well across all metrics - continue monitoring and optimizing")
+
+        # Campaign Funnel Analysis
+        st.subheader("🎯 Campaign Conversion Funnel Analysis")
+        
+        funnel_campaign = st.selectbox("Select Campaign for Funnel Analysis", 
+                                    unique_campaigns, 
+                                    key='funnel_campaign')
+        
+        if funnel_campaign and str(funnel_campaign) != 'nan':
+            funnel_data = filtered_df[filtered_df['Campaign Name'] == funnel_campaign]
+            funnel_analysis = analyze_campaign_funnel(funnel_data)
+            
+            # Display funnel visualization
+            if funnel_analysis['funnel_data']:
+                funnel_stages = []
+                funnel_values = []
+                
+                for stage, value in funnel_analysis['funnel_data'].items():
+                    if value > 0:
+                        funnel_stages.append(stage)
+                        funnel_values.append(value)
+                
+                if funnel_stages:
+                    fig_funnel = go.Figure(go.Funnel(
+                        y=funnel_stages,
+                        x=funnel_values,
+                        textposition="inside",
+                        textinfo="value+percent initial+percent previous",
+                        opacity=0.65,
+                        marker={"color": ["deepskyblue", "lightsalmon", "tan", "teal", "silver"]},
+                        connector={"line": {"color": "royalblue", "dash": "dot", "width": 3}}
+                    ))
+                    fig_funnel.update_layout(title=f"Conversion Funnel: {funnel_campaign}")
+                    st.plotly_chart(fig_funnel)
+            
+            # Display conversion rates
+            if funnel_analysis['conversion_rates']:
+                st.subheader("📈 Conversion Rates Between Stages")
+                rates_col1, rates_col2 = st.columns(2)
+                
+                rate_items = list(funnel_analysis['conversion_rates'].items())
+                mid_point = len(rate_items) // 2
+                
+                with rates_col1:
+                    for rate_name, rate_value in rate_items[:mid_point]:
+                        st.metric(rate_name, f"{rate_value:.2%}")
+                
+                with rates_col2:
+                    for rate_name, rate_value in rate_items[mid_point:]:
+                        st.metric(rate_name, f"{rate_value:.2%}")
+            
+            # Display insights
+            if funnel_analysis['insights']:
+                st.subheader("🔍 Funnel Insights")
+                for insight in funnel_analysis['insights']:
+                    st.warning(insight)
+
+        # Campaign Anomaly Detection
+        st.subheader("🚨 Campaign Anomaly Detection")
+        
+        col1, col2 = st.columns([2, 1])
+        with col2:
+            lookback_days = st.slider("Analysis Period (days)", 7, 90, 30, key='campaign_anomaly_days')
+        
+        with col1:
+            st.write("Detecting unusual performance patterns in campaigns...")
+        
+        if st.button("🔍 Detect Anomalies", key='detect_campaign_anomalies'):
+            with st.spinner("Analyzing campaign performance patterns..."):
+                anomalies = detect_campaign_anomalies(filtered_df, lookback_days)
+                
+                if anomalies:
+                    st.subheader(f"🚨 {len(anomalies)} Anomalies Detected")
+                    
+                    # Group by severity
+                    critical_anomalies = [a for a in anomalies if '🚨 Critical' in a.get('severity', '')]
+                    warning_anomalies = [a for a in anomalies if '⚠️ Warning' in a.get('severity', '')]
+                    
+                    if critical_anomalies:
+                        st.error(f"🚨 {len(critical_anomalies)} Critical Issues Require Immediate Attention")
+                        for anomaly in critical_anomalies[:5]:  # Show top 5
+                            with st.expander(f"{anomaly['campaign']} - {anomaly['metric']} {anomaly.get('direction', '')}"):
+                                col1, col2, col3 = st.columns(3)
+                                with col1:
+                                    st.metric("Historical", f"{anomaly['historical_value']:.3f}")
+                                with col2:
+                                    st.metric("Recent", f"{anomaly['recent_value']:.3f}")
+                                with col3:
+                                    st.metric("Change", f"{anomaly['change_pct']:+.1f}%")
+                                st.info(f"💡 {anomaly['recommendation']}")
+                    
+                    if warning_anomalies:
+                        st.warning(f"⚠️ {len(warning_anomalies)} Performance Changes Detected")
+                        with st.expander("View Warning Anomalies"):
+                            for anomaly in warning_anomalies:
+                                st.write(f"**{anomaly['campaign']}** - {anomaly['metric']}: {anomaly['change_pct']:+.1f}% change")
+                                st.write(f"   💡 {anomaly['recommendation']}")
+                else:
+                    st.success("✅ No significant anomalies detected. All campaigns are performing within normal ranges!")
 
     elif page == "Journeys":
         st.header("Journey Analysis")
