@@ -9,9 +9,20 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error
 from statsmodels.tsa.arima.model import ARIMA
-from prophet import Prophet
+try:
+    from prophet import Prophet
+except ImportError:
+    Prophet = None
 import warnings
 warnings.filterwarnings('ignore')
+
+# Import our new insights engine
+from insights_engine import (
+    generate_narrative_insights,
+    predict_revenue_forecast,
+    generate_top_actions,
+    generate_executive_summary
+)
 
 # Configure page layout for wide mode - better for BI dashboards
 st.set_page_config(
@@ -37,6 +48,7 @@ st.title("WebEngage CSV Dashboard")
 
 # Sidebar navigation
 page = st.sidebar.selectbox("Navigate to", [
+    "🎯 Automated Insights",  # NEW: Featured at top
     "Overview", 
     "Campaigns", 
     "Journeys", 
@@ -2131,26 +2143,6 @@ if uploaded_file is not None:
     # Filters
     st.sidebar.header("Filters")
     
-    # Period Comparison Settings
-    st.sidebar.subheader("📊 Period Comparison")
-    comparison_mode = st.sidebar.radio(
-        "Comparison Mode",
-        ["Automatic (Previous Period)", "Manual (Custom Dates)"],
-        help="Choose how to compare periods"
-    )
-    
-    # Manual comparison date inputs
-    manual_comparison_dates = None
-    if comparison_mode == "Manual (Custom Dates)":
-        st.sidebar.markdown("**Comparison Period:**")
-        manual_comparison_dates = st.sidebar.date_input(
-            "Select comparison date range",
-            value=[],
-            help="Select the previous period to compare against"
-        )
-    
-    st.sidebar.markdown("---")
-    
     # Global Attribution Filters
     st.sidebar.subheader("Attribution Settings")
     revenue_attribution = st.sidebar.selectbox(
@@ -2223,678 +2215,388 @@ if uploaded_file is not None:
     st.write(f"Filtered data: {len(filtered_df)} rows")
 
     # Page content based on selection
-    if page == "Overview":
-        # ========================================
-        # SHAREHOLDER REPORT - EXECUTIVE SUMMARY
-        # ========================================
+    if page == "🎯 Automated Insights":
+        st.header("🎯 Automated Insights & Recommendations")
+        st.markdown("*AI-powered narrative insights, predictions, and prioritized actions - like having a super team of analysts*")
         
-        st.title("📊 Executive Summary Report")
+        # Generate executive summary
+        with st.spinner("🧠 Analyzing data and generating insights..."):
+            exec_summary = generate_executive_summary(filtered_df)
         
-        # Detect reporting period
-        if not filtered_df.empty and 'Reporting Period Start Date' in filtered_df.columns:
-            period_start = filtered_df['Reporting Period Start Date'].min()
-            period_end = filtered_df['Reporting Period End Date'].max()
-            period_days = (period_end - period_start).days + 1
-            
-            # Determine period type
-            if period_days <= 7:
-                period_label = "Weekly Report"
-            elif period_days <= 35:
-                period_label = "Monthly Report"
-            elif period_days <= 100:
-                period_label = f"{period_days // 30}-Month Report"
-            else:
-                period_label = f"{period_days}-Day Report"
-            
-            st.markdown(f"### {period_label}")
-            st.markdown(f"**Period:** {period_start.strftime('%B %d, %Y')} - {period_end.strftime('%B %d, %Y')} ({period_days} days)")
-        else:
-            period_label = "Performance Report"
-            st.markdown(f"### {period_label}")
-        
+        # === EXECUTIVE SUMMARY CARD ===
         st.markdown("---")
+        st.subheader("📊 Executive Summary")
         
-        # ========================================
-        # 1. HERO METRICS - KEY PERFORMANCE INDICATORS
-        # ========================================
-        st.subheader("🎯 Key Performance Indicators")
+        col1, col2 = st.columns([2, 1])
         
-        # Calculate key metrics for current period
-        total_revenue = filtered_df['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in filtered_df.columns else filtered_df['Revenue (SAR)'].sum()
-        total_conversions = filtered_df['Selected Conversions'].sum() if 'Selected Conversions' in filtered_df.columns else filtered_df['Unique Conversions'].sum()
-        total_clicks = filtered_df['Unique Clicks'].sum()
-        total_impressions = filtered_df['Unique Impressions'].sum()
-        total_sent = filtered_df['Sent'].sum()
-        total_delivered = filtered_df['Delivered'].sum()
-        
-        # Calculate rates
-        overall_ctr = (total_clicks / total_impressions * 100) if total_impressions > 0 else 0
-        overall_conversion_rate = (total_conversions / total_clicks * 100) if total_clicks > 0 else 0
-        overall_delivery_rate = (total_delivered / total_sent * 100) if total_sent > 0 else 0
-        revenue_per_conversion = (total_revenue / total_conversions) if total_conversions > 0 else 0
-        
-        # Calculate previous period metrics for comparison
-        prev_metrics = {}
-        has_prev_comparison = False
-        prev_start = None
-        prev_end = None
-        
-        if 'Reporting Period Start Date' in filtered_df.columns and len(filtered_df) > 0:
-            current_start = filtered_df['Reporting Period Start Date'].min()
-            current_end = filtered_df['Reporting Period End Date'].max()
-            period_length = (current_end - current_start).days + 1
+        with col1:
+            if exec_summary.get('period'):
+                st.info(f"📅 **Analysis Period:** {exec_summary['period']}")
             
-            # Determine previous period based on comparison mode
-            if comparison_mode == "Manual (Custom Dates)" and manual_comparison_dates and len(manual_comparison_dates) == 2:
-                # Use manual dates
-                prev_start = pd.to_datetime(manual_comparison_dates[0])
-                prev_end = pd.to_datetime(manual_comparison_dates[1])
-                st.info(f"📊 Manual Comparison: Current period ({current_start.strftime('%b %d')} - {current_end.strftime('%b %d')}) vs Custom period ({prev_start.strftime('%b %d')} - {prev_end.strftime('%b %d, %Y')})")
-            else:
-                # Automatic - use previous period of equal length
-                prev_start = current_start - pd.Timedelta(days=period_length)
-                prev_end = current_start - pd.Timedelta(days=1)
+            # Display headline metrics in a clean grid
+            metrics = exec_summary.get('headline_metrics', {})
+            met_col1, met_col2, met_col3 = st.columns(3)
             
-            # Filter for previous period from the full dataset
-            prev_period_df = df[(df['Reporting Period Start Date'] >= prev_start) & 
-                               (df['Reporting Period End Date'] <= prev_end)]
+            with met_col1:
+                st.metric("💰 Total Revenue", format_metric(metrics.get('total_revenue', 0), "SAR"))
+                st.metric("🔄 Total Conversions", format_metric(metrics.get('total_conversions', 0)))
             
-            if len(prev_period_df) > 0:
-                has_prev_comparison = True
-                
-                # Calculate previous period metrics
-                prev_metrics['revenue'] = prev_period_df['Revenue (SAR)'].sum()
-                prev_metrics['conversions'] = prev_period_df['Unique Conversions'].sum()
-                prev_metrics['clicks'] = prev_period_df['Unique Clicks'].sum()
-                prev_metrics['impressions'] = prev_period_df['Unique Impressions'].sum()
-                prev_metrics['sent'] = prev_period_df['Sent'].sum()
-                prev_metrics['delivered'] = prev_period_df['Delivered'].sum()
-                
-                # Calculate previous rates
-                prev_metrics['ctr'] = (prev_metrics['clicks'] / prev_metrics['impressions'] * 100) if prev_metrics['impressions'] > 0 else 0
-                prev_metrics['conversion_rate'] = (prev_metrics['conversions'] / prev_metrics['clicks'] * 100) if prev_metrics['clicks'] > 0 else 0
-                prev_metrics['delivery_rate'] = (prev_metrics['delivered'] / prev_metrics['sent'] * 100) if prev_metrics['sent'] > 0 else 0
-                prev_metrics['rpc'] = (prev_metrics['revenue'] / prev_metrics['conversions']) if prev_metrics['conversions'] > 0 else 0
-                
-                # Calculate growth percentages
-                prev_metrics['revenue_growth'] = ((total_revenue - prev_metrics['revenue']) / prev_metrics['revenue'] * 100) if prev_metrics['revenue'] > 0 else 0
-                prev_metrics['conversions_growth'] = ((total_conversions - prev_metrics['conversions']) / prev_metrics['conversions'] * 100) if prev_metrics['conversions'] > 0 else 0
-                prev_metrics['ctr_growth'] = overall_ctr - prev_metrics['ctr']
-                prev_metrics['conversion_rate_growth'] = overall_conversion_rate - prev_metrics['conversion_rate']
-                prev_metrics['delivery_rate_growth'] = overall_delivery_rate - prev_metrics['delivery_rate']
-                prev_metrics['rpc_growth'] = ((revenue_per_conversion - prev_metrics['rpc']) / prev_metrics['rpc'] * 100) if prev_metrics['rpc'] > 0 else 0
+            with met_col2:
+                st.metric("📧 Total Sent", format_metric(metrics.get('total_sent', 0)))
+                st.metric("📨 Avg Delivery Rate", f"{metrics.get('avg_delivery_rate', 0):.1%}")
+            
+            with met_col3:
+                st.metric("👆 Avg CTR", f"{metrics.get('avg_ctr', 0):.2%}")
+                st.metric("💵 Avg Conv Rate", f"{metrics.get('avg_conversion_rate', 0):.2%}")
         
-        # Display hero metrics in 4 columns with period comparison
-        hero_col1, hero_col2, hero_col3, hero_col4 = st.columns(4)
-        
-        with hero_col1:
-            st.metric(
-                label="💰 Total Revenue",
-                value=format_metric(total_revenue, "SAR"),
-                delta=f"{prev_metrics.get('revenue_growth', 0):+.1f}%" if has_prev_comparison else None,
-                delta_color="normal" if has_prev_comparison else "off",
-                help="Total revenue generated across all campaigns and journeys" + (f"\nPrevious period: {format_metric(prev_metrics.get('revenue', 0), 'SAR')}" if has_prev_comparison else "")
-            )
-            st.metric(
-                label="🎯 Conversions",
-                value=format_metric(total_conversions),
-                delta=f"{prev_metrics.get('conversions_growth', 0):+.1f}%" if has_prev_comparison else None,
-                delta_color="normal" if has_prev_comparison else "off",
-                help="Total unique conversions" + (f"\nPrevious period: {format_metric(prev_metrics.get('conversions', 0))}" if has_prev_comparison else "")
-            )
-        
-        with hero_col2:
-            st.metric(
-                label="📊 Click-Through Rate",
-                value=f"{overall_ctr:.2f}%",
-                delta=f"{prev_metrics.get('ctr_growth', 0):+.2f}pp" if has_prev_comparison else None,
-                delta_color="normal" if has_prev_comparison else "off",
-                help="Percentage of impressions that resulted in clicks" + (f"\nPrevious period: {prev_metrics.get('ctr', 0):.2f}%" if has_prev_comparison else "")
-            )
-            st.metric(
-                label="✅ Conversion Rate",
-                value=f"{overall_conversion_rate:.2f}%",
-                delta=f"{prev_metrics.get('conversion_rate_growth', 0):+.2f}pp" if has_prev_comparison else None,
-                delta_color="normal" if has_prev_comparison else "off",
-                help="Percentage of clicks that resulted in conversions" + (f"\nPrevious period: {prev_metrics.get('conversion_rate', 0):.2f}%" if has_prev_comparison else "")
-            )
-        
-        with hero_col3:
-            st.metric(
-                label="📧 Delivery Rate",
-                value=f"{overall_delivery_rate:.2f}%",
-                delta=f"{prev_metrics.get('delivery_rate_growth', 0):+.2f}pp" if has_prev_comparison else None,
-                delta_color="normal" if has_prev_comparison else "off",
-                help="Percentage of messages successfully delivered" + (f"\nPrevious period: {prev_metrics.get('delivery_rate', 0):.2f}%" if has_prev_comparison else "")
-            )
-            st.metric(
-                label="💵 Revenue per Conversion",
-                value=format_metric(revenue_per_conversion, "SAR"),
-                delta=f"{prev_metrics.get('rpc_growth', 0):+.1f}%" if has_prev_comparison else None,
-                delta_color="normal" if has_prev_comparison else "off",
-                help="Average revenue generated per conversion" + (f"\nPrevious period: {format_metric(prev_metrics.get('rpc', 0), 'SAR')}" if has_prev_comparison else "")
-            )
-        
-        with hero_col4:
-            st.metric(
-                label="📨 Messages Sent",
-                value=format_metric(total_sent),
-                delta=f"{((total_sent - prev_metrics.get('sent', 0)) / prev_metrics.get('sent', 1) * 100):+.1f}%" if has_prev_comparison and prev_metrics.get('sent', 0) > 0 else None,
-                delta_color="normal" if has_prev_comparison else "off",
-                help="Total messages sent across all campaigns" + (f"\nPrevious period: {format_metric(prev_metrics.get('sent', 0))}" if has_prev_comparison else "")
-            )
-            st.metric(
-                label="👁️ Impressions",
-                value=format_metric(total_impressions),
-                delta=f"{((total_impressions - prev_metrics.get('impressions', 0)) / prev_metrics.get('impressions', 1) * 100):+.1f}%" if has_prev_comparison and prev_metrics.get('impressions', 0) > 0 else None,
-                delta_color="normal" if has_prev_comparison else "off",
-                help="Total unique impressions" + (f"\nPrevious period: {format_metric(prev_metrics.get('impressions', 0))}" if has_prev_comparison else "")
-            )
-        
-        # Add comparison note
-        if has_prev_comparison:
-            if comparison_mode == "Manual (Custom Dates)":
-                comparison_days = (prev_end - prev_start).days + 1
-                st.info(f"📊 **Manual Comparison**: Current period vs Custom period ({prev_start.strftime('%b %d')} - {prev_end.strftime('%b %d, %Y')}, {comparison_days} days). Green ▲ = improvement, Red ▼ = decline. 'pp' = percentage points.")
+        with col2:
+            # Alerts count
+            alerts_count = exec_summary.get('alerts_count', 0)
+            if alerts_count > 0:
+                st.error(f"🚨 **{alerts_count} Critical Alerts**\nRequire Immediate Attention")
             else:
-                st.info(f"📊 **Automatic Comparison**: Current period vs previous {period_length}-day period ({prev_start.strftime('%b %d')} - {prev_end.strftime('%b %d, %Y')}). Green ▲ = improvement, Red ▼ = decline. 'pp' = percentage points.")
-        else:
-            if comparison_mode == "Manual (Custom Dates)":
-                st.warning("⚠️ No data found for the selected comparison period. Please select a different date range or switch to Automatic mode.")
-            else:
-                st.warning("💡 Upload data spanning multiple periods to see period-over-period growth trends and comparisons.")
+                st.success("✅ **No Critical Alerts**\nAll Systems Performing Well")
+            
+            st.metric("📈 Generated At", exec_summary.get('timestamp', 'N/A'))
         
+        # === HEADLINE NARRATIVE INSIGHTS (Like the example images) ===
         st.markdown("---")
+        st.subheader("📰 What's Happening: Narrative Insights")
+        st.markdown("*Automated explanations of your performance - no manual analysis needed*")
         
-        # ========================================
-        # 2. REVENUE ANALYSIS
-        # ========================================
-        st.subheader("💰 Revenue Analysis")
+        insights = exec_summary.get('narrative_insights', {})
         
-        revenue_col1, revenue_col2 = st.columns([2, 1])
+        # Headline Insights
+        headline_insights = insights.get('headline_insights', [])
+        if headline_insights:
+            for insight in headline_insights:
+                emoji = insight.get('emoji', 'ℹ️')
+                title = insight.get('title', '')
+                message = insight.get('message', '')
+                severity = insight.get('severity', 'info')
+                
+                if severity == 'positive':
+                    st.success(f"{emoji} **{title}**\n\n{message}")
+                elif severity == 'critical':
+                    st.error(f"{emoji} **{title}**\n\n{message}")
+                elif severity == 'warning':
+                    st.warning(f"{emoji} **{title}**\n\n{message}")
+                else:
+                    st.info(f"{emoji} **{title}**\n\n{message}")
         
-        with revenue_col1:
-            # Revenue over time
-            st.markdown("#### Revenue Trend Over Time")
-            if 'Reporting Period Start Date' in filtered_df.columns:
-                revenue_ts = filtered_df.groupby('Reporting Period Start Date').agg({
-                    'Revenue (SAR)': 'sum',
-                    'Impression-Through Revenue (SAR)': 'sum',
-                    'Click-Through Revenue (SAR)': 'sum'
-                }).reset_index()
+        # Trend Analysis (Like: "Gradual Recovery")
+        trend_analysis = insights.get('trend_analysis', [])
+        if trend_analysis:
+            st.markdown("### 📈 Trend Analysis")
+            for trend in trend_analysis:
+                emoji = trend.get('emoji', '📊')
+                title = trend.get('title', '')
+                message = trend.get('message', '')
+                detail = trend.get('detail', '')
+                severity = trend.get('severity', 'info')
                 
-                fig_revenue_trend = go.Figure()
-                fig_revenue_trend.add_trace(go.Scatter(
-                    x=revenue_ts['Reporting Period Start Date'],
-                    y=revenue_ts['Revenue (SAR)'],
-                    mode='lines+markers',
-                    name='Total Revenue',
-                    line=dict(color='#1f77b4', width=3),
-                    marker=dict(size=8)
-                ))
-                fig_revenue_trend.add_trace(go.Scatter(
-                    x=revenue_ts['Reporting Period Start Date'],
-                    y=revenue_ts['Click-Through Revenue (SAR)'],
-                    mode='lines+markers',
-                    name='Click-Through Revenue',
-                    line=dict(color='#ff7f0e', width=2, dash='dash'),
-                    marker=dict(size=6)
-                ))
-                fig_revenue_trend.add_trace(go.Scatter(
-                    x=revenue_ts['Reporting Period Start Date'],
-                    y=revenue_ts['Impression-Through Revenue (SAR)'],
-                    mode='lines+markers',
-                    name='Impression-Through Revenue',
-                    line=dict(color='#2ca02c', width=2, dash='dot'),
-                    marker=dict(size=6)
-                ))
-                
-                fig_revenue_trend.update_layout(
-                    xaxis_title="Date",
-                    yaxis_title="Revenue (SAR)",
-                    hovermode='x unified',
-                    height=400,
-                    showlegend=True,
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-                )
-                st.plotly_chart(fig_revenue_trend, use_container_width=True)
+                with st.expander(f"{emoji} {title}", expanded=True):
+                    st.markdown(f"**{message}**")
+                    if detail:
+                        st.caption(detail)
         
-        with revenue_col2:
-            # Revenue Attribution Breakdown - CORRECTED LOGIC
-            st.markdown("#### Revenue Attribution")
-            
-            # The correct hierarchy in WebEngage:
-            # Send-Through Revenue (Total) ⊇ Impression-Through Revenue ⊇ Click-Through Revenue
-            # They are nested, not additive!
-            send_through_revenue = filtered_df['Revenue (SAR)'].sum()  # Total revenue (largest)
-            impression_through_revenue = filtered_df['Impression-Through Revenue (SAR)'].sum()  # Subset of send-through
-            click_through_revenue = filtered_df['Click-Through Revenue (SAR)'].sum()  # Subset of impression-through
-            
-            # Calculate actual breakdown (non-overlapping portions)
-            # Click-Through is the most engaged (clicked)
-            # Impression-Through (excluding clicks) = saw but didn't click
-            # Send-Through (excluding impressions) = converted without seeing/clicking
-            click_attributed = click_through_revenue
-            impression_attributed = impression_through_revenue - click_through_revenue  # Saw but didn't click
-            send_attributed = send_through_revenue - impression_through_revenue  # No impression/click tracked
-            
-            # Create attribution data in the CORRECT ORDER (Send → Impression → Click)
-            # DO NOT SORT - keep the hierarchical order!
-            attribution_data = pd.DataFrame({
-                'Attribution Type': ['Send-Through Only', 'Impression-Through Only', 'Click-Through'],
-                'Revenue (SAR)': [send_attributed, impression_attributed, click_attributed],
-                'Percentage': [
-                    (send_attributed / send_through_revenue * 100) if send_through_revenue > 0 else 0,
-                    (impression_attributed / send_through_revenue * 100) if send_through_revenue > 0 else 0,
-                    (click_attributed / send_through_revenue * 100) if send_through_revenue > 0 else 0
-                ]
-            })
-            
-            # Create pie chart with explicit category order to maintain hierarchy
-            fig_attribution = go.Figure(data=[go.Pie(
-                labels=attribution_data['Attribution Type'],
-                values=attribution_data['Revenue (SAR)'],
-                hole=0.4,
-                marker=dict(colors=['#ff7f0e', '#2ca02c', '#1f77b4']),  # Orange for Send, Green for Impression, Blue for Click
-                textinfo='label+percent',
-                textposition='inside',
-                sort=False  # CRITICAL: Don't sort by value - keep our order!
-            )])
-            
-            fig_attribution.update_layout(
-                height=400,
-                showlegend=True,
-                legend=dict(
-                    orientation="v",
-                    yanchor="middle",
-                    y=0.5,
-                    xanchor="left",
-                    x=1.1
-                )
-            )
-            st.plotly_chart(fig_attribution, use_container_width=True)
-            
-            # Show actual totals for verification
-            st.markdown("**Total Revenue Breakdown:**")
-            st.markdown(f"- 📧 **Total (Send-Through)**: {format_metric(send_through_revenue, 'SAR')}")
-            st.markdown(f"- 👁️ **Impression-Through**: {format_metric(impression_through_revenue, 'SAR')} ({impression_through_revenue/send_through_revenue*100:.1f}%)")
-            st.markdown(f"- 🖱️ **Click-Through**: {format_metric(click_through_revenue, 'SAR')} ({click_through_revenue/send_through_revenue*100:.1f}%)")
-            
-            # Attribution explanation
-            with st.expander("ℹ️ Understanding Revenue Attribution"):
-                st.markdown("""
-                **Revenue Attribution Explained:**
+        # Performance Alerts
+        performance_alerts = insights.get('performance_alerts', [])
+        if performance_alerts:
+            st.markdown("### 🚨 Performance Alerts")
+            for alert in performance_alerts:
+                emoji = alert.get('emoji', '⚠️')
+                title = alert.get('title', '')
+                message = alert.get('message', '')
+                action = alert.get('action', '')
+                severity = alert.get('severity', 'warning')
                 
-                WebEngage uses hierarchical attribution (nested, not additive):
+                if severity == 'critical':
+                    st.error(f"{emoji} **{title}**\n\n{message}")
+                else:
+                    st.warning(f"{emoji} **{title}**\n\n{message}")
                 
-                - **Send-Through** (Total): All revenue from this campaign/journey
-                - **Impression-Through** ⊆ Send-Through: Revenue where user had an impression
-                - **Click-Through** ⊆ Impression-Through: Revenue where user clicked
-                
-                **The chart shows non-overlapping portions:**
-                - **Click-Through**: Users who clicked and converted (most engaged)
-                - **Impression-Through Only**: Users who saw but didn't click, yet converted
-                - **Send-Through Only**: Conversions without tracked impression/click
-                
-                *Total Revenue = Send-Through Revenue (the outermost set)*
-                """)
+                if action:
+                    st.caption(f"💡 **Action:** {action}")
         
-        # Revenue by Channel with Period Comparison
-        st.markdown("#### Revenue by Channel")
+        # Optimization Opportunities
+        opportunities = insights.get('opportunities', [])
+        if opportunities:
+            st.markdown("### 🎯 Optimization Opportunities")
+            for opp in opportunities:
+                emoji = opp.get('emoji', '💡')
+                title = opp.get('title', '')
+                message = opp.get('message', '')
+                action = opp.get('action', '')
+                expected_impact = opp.get('expected_impact', '')
+                
+                with st.expander(f"{emoji} {title}"):
+                    st.markdown(f"**Observation:** {message}")
+                    if action:
+                        st.info(f"**Recommended Action:** {action}")
+                    if expected_impact:
+                        st.success(f"**Expected Impact:** {expected_impact}")
         
-        # Calculate current period channel performance
-        channel_revenue = filtered_df.groupby('Channel').agg({
-            'Revenue (SAR)': 'sum',
-            'Unique Conversions': 'sum',
-            'Sent': 'sum'
-        }).reset_index()
-        channel_revenue['Revenue %'] = (channel_revenue['Revenue (SAR)'] / channel_revenue['Revenue (SAR)'].sum() * 100)
-        channel_revenue = channel_revenue.sort_values('Revenue (SAR)', ascending=False)
+        # Business Context Notes
+        context_notes = insights.get('context_notes', [])
+        if context_notes:
+            st.markdown("### 🌍 Business Context")
+            for note in context_notes:
+                emoji = note.get('emoji', 'ℹ️')
+                title = note.get('title', '')
+                message = note.get('message', '')
+                st.info(f"{emoji} **{title}**\n\n{message}")
         
-        # Calculate previous period for comparison
-        if 'Reporting Period Start Date' in filtered_df.columns and len(filtered_df) > 0:
-            current_start = filtered_df['Reporting Period Start Date'].min()
-            current_end = filtered_df['Reporting Period End Date'].max()
-            period_length = (current_end - current_start).days + 1
+        # === REVENUE FORECAST ===
+        st.markdown("---")
+        st.subheader("📈 Revenue Forecast")
+        st.markdown("*Predictive analytics for proactive planning*")
+        
+        forecast_col1, forecast_col2 = st.columns([1, 3])
+        
+        with forecast_col1:
+            forecast_days = st.selectbox("Forecast Horizon", [7, 14, 30], index=1, key='forecast_horizon')
             
-            # Define previous period
-            prev_start = current_start - pd.Timedelta(days=period_length)
-            prev_end = current_start - pd.Timedelta(days=1)
-            
-            # Filter for previous period from the full dataset
-            prev_period_df = df[(df['Reporting Period Start Date'] >= prev_start) & 
-                               (df['Reporting Period End Date'] <= prev_end)]
-            
-            if len(prev_period_df) > 0:
-                prev_channel_revenue = prev_period_df.groupby('Channel').agg({
-                    'Revenue (SAR)': 'sum',
-                    'Unique Conversions': 'sum'
-                }).reset_index()
-                prev_channel_revenue.columns = ['Channel', 'Prev Revenue (SAR)', 'Prev Conversions']
-                
-                # Merge with current period
-                channel_revenue = channel_revenue.merge(prev_channel_revenue, on='Channel', how='left')
-                channel_revenue['Prev Revenue (SAR)'] = channel_revenue['Prev Revenue (SAR)'].fillna(0)
-                channel_revenue['Prev Conversions'] = channel_revenue['Prev Conversions'].fillna(0)
-                
-                # Calculate growth
-                channel_revenue['Revenue Growth %'] = ((channel_revenue['Revenue (SAR)'] - channel_revenue['Prev Revenue (SAR)']) / 
-                                                       channel_revenue['Prev Revenue (SAR)'] * 100).replace([np.inf, -np.inf], 0).fillna(0)
-                channel_revenue['Conversion Growth %'] = ((channel_revenue['Unique Conversions'] - channel_revenue['Prev Conversions']) / 
-                                                          channel_revenue['Prev Conversions'] * 100).replace([np.inf, -np.inf], 0).fillna(0)
-                
-                has_comparison = True
-            else:
-                has_comparison = False
-        else:
-            has_comparison = False
-        
-        # Display chart and comparison
-        channel_chart_col, channel_table_col = st.columns([2, 1])
-        
-        with channel_chart_col:
-            fig_channel_revenue = px.bar(
-                channel_revenue,
-                x='Channel',
-                y='Revenue (SAR)',
-                text=channel_revenue['Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR")),
-                title='',
-                color='Revenue (SAR)',
-                color_continuous_scale='Blues'
-            )
-            fig_channel_revenue.update_traces(textposition='outside')
-            fig_channel_revenue.update_layout(showlegend=False, height=350)
-            st.plotly_chart(fig_channel_revenue, use_container_width=True)
-        
-        with channel_table_col:
-            if has_comparison:
-                st.markdown("**Period Comparison:**")
-                comparison_data = channel_revenue[['Channel', 'Revenue Growth %', 'Conversion Growth %']].copy()
-                
-                for idx, row in comparison_data.iterrows():
-                    channel = row['Channel']
-                    rev_growth = row['Revenue Growth %']
-                    conv_growth = row['Conversion Growth %']
+            if st.button("🔮 Generate Forecast", key='run_forecast'):
+                with st.spinner("Running Prophet forecast model..."):
+                    forecast_result = predict_revenue_forecast(filtered_df, forecast_days=forecast_days)
                     
-                    # Format with emojis
-                    rev_emoji = "📈" if rev_growth > 0 else "📉" if rev_growth < 0 else "➡️"
-                    conv_emoji = "📈" if conv_growth > 0 else "📉" if conv_growth < 0 else "➡️"
-                    
-                    st.markdown(f"**{channel}**")
-                    st.markdown(f"{rev_emoji} Revenue: {rev_growth:+.1f}%")
-                    st.markdown(f"{conv_emoji} Conversions: {conv_growth:+.1f}%")
-                    st.markdown("---")
+                    if forecast_result:
+                        st.session_state['forecast_result'] = forecast_result
+                    else:
+                        st.error("❌ Unable to generate forecast. Need at least 14 days of historical data.")
+        
+        with forecast_col2:
+            if 'forecast_result' in st.session_state and st.session_state['forecast_result']:
+                forecast = st.session_state['forecast_result']
                 
-                st.info(f"📅 Comparing to previous {period_length}-day period")
-            else:
-                st.info("💡 No previous period data available for comparison. Upload data spanning multiple periods to see growth trends.")
+                # Display forecast insight
+                insight = forecast.get('insight', {})
+                emoji = insight.get('emoji', '📊')
+                message = insight.get('message', '')
+                severity = insight.get('severity', 'info')
+                
+                if severity == 'positive':
+                    st.success(f"{emoji} {message}")
+                elif severity == 'warning':
+                    st.warning(f"{emoji} {message}")
+                else:
+                    st.info(f"{emoji} {message}")
+                
+                # Display forecast metrics
+                fcol1, fcol2, fcol3 = st.columns(3)
+                
+                with fcol1:
+                    st.metric("Total Predicted", format_metric(forecast.get('total_predicted', 0), "SAR"))
+                
+                with fcol2:
+                    st.metric("Daily Average", format_metric(forecast.get('daily_average', 0), "SAR"))
+                
+                with fcol3:
+                    trend_pct = forecast.get('trend_pct', 0)
+                    st.metric("Trend", f"{trend_pct:+.1f}%")
+                
+                # Plot forecast
+                forecast_df = forecast.get('forecast_df')
+                if forecast_df is not None and not forecast_df.empty:
+                    fig_forecast = go.Figure()
+                    
+                    # Add predicted revenue line
+                    fig_forecast.add_trace(go.Scatter(
+                        x=forecast_df['ds'],
+                        y=forecast_df['yhat'],
+                        mode='lines',
+                        name='Predicted Revenue',
+                        line=dict(color='blue', width=2)
+                    ))
+                    
+                    # Add confidence interval
+                    fig_forecast.add_trace(go.Scatter(
+                        x=forecast_df['ds'],
+                        y=forecast_df['yhat_upper'],
+                        mode='lines',
+                        name='Upper Bound (95%)',
+                        line=dict(color='lightblue', width=1, dash='dash'),
+                        showlegend=False
+                    ))
+                    
+                    fig_forecast.add_trace(go.Scatter(
+                        x=forecast_df['ds'],
+                        y=forecast_df['yhat_lower'],
+                        mode='lines',
+                        name='Lower Bound (95%)',
+                        line=dict(color='lightblue', width=1, dash='dash'),
+                        fill='tonexty',
+                        fillcolor='rgba(173, 216, 230, 0.2)',
+                        showlegend=False
+                    ))
+                    
+                    fig_forecast.update_layout(
+                        title=f"{forecast.get('forecast_days', 0)}-Day Revenue Forecast",
+                        xaxis_title="Date",
+                        yaxis_title="Revenue (SAR)",
+                        hovermode='x unified'
+                    )
+                    
+                    st.plotly_chart(fig_forecast, use_container_width=True)
+                    
+                    # Show confidence interval info
+                    st.caption(f"📊 95% Confidence Interval: {format_metric(forecast.get('confidence_lower', 0), 'SAR')} - {format_metric(forecast.get('confidence_upper', 0), 'SAR')}")
         
+        # === TOP ACTIONS (Like the example: "Add reminder blocks") ===
         st.markdown("---")
+        st.subheader("🎯 Top 5 Prioritized Actions")
+        st.markdown("*Specific, actionable recommendations with expected ROI*")
         
-        # ========================================
-        # 3. TOP PERFORMERS
-        # ========================================
-        st.subheader("🏆 Top Performers")
+        top_actions = exec_summary.get('top_actions', [])
         
-        top_col1, top_col2 = st.columns(2)
+        if top_actions:
+            for idx, action in enumerate(top_actions, 1):
+                priority = action.get('priority', 'MEDIUM')
+                title = action.get('title', '')
+                action_text = action.get('action', '')
+                expected_impact = action.get('expected_impact', '')
+                confidence = action.get('confidence', '')
+                impl_time = action.get('implementation_time', '')
+                
+                # Color code by priority
+                if priority == 'HIGH':
+                    priority_color = '🔴'
+                    container_type = st.error
+                elif priority == 'MEDIUM':
+                    priority_color = '🟡'
+                    container_type = st.warning
+                else:
+                    priority_color = '🟢'
+                    container_type = st.info
+                
+                with st.expander(f"{idx}. {priority_color} [{priority}] {title}", expanded=(idx <= 2)):
+                    st.markdown(f"**Action:** {action_text}")
+                    
+                    act_col1, act_col2, act_col3 = st.columns(3)
+                    
+                    with act_col1:
+                        st.metric("Expected Impact", expected_impact)
+                    
+                    with act_col2:
+                        st.metric("Confidence", confidence)
+                    
+                    with act_col3:
+                        st.metric("Implementation Time", impl_time)
+        else:
+            st.info("✅ No critical actions needed at this time. Continue monitoring performance.")
         
-        with top_col1:
-            st.markdown("#### 🎯 Top 10 Journeys by Revenue")
-            
-            # Calculate journey performance with health scores
-            journey_performance = []
+        # === JOURNEY-SPECIFIC INSIGHTS ===
+        st.markdown("---")
+        st.subheader("🔍 Journey-Specific Deep Dive")
+        st.markdown("*Analyze individual journeys with automated insights*")
+        
+        if 'Journey Name' in filtered_df.columns:
             unique_journeys = filtered_df['Journey Name'].dropna().unique()
             
-            for journey in unique_journeys:
-                if str(journey) != 'nan' and journey:
-                    journey_data = filtered_df[filtered_df['Journey Name'] == journey]
-                    health_info = calculate_journey_health_score(journey_data, filtered_df)
-                    
-                    if health_info['tier'] != 'Insufficient Data':  # Only include journeys with sufficient data
-                        journey_performance.append({
-                            'Journey': journey,
-                            'Revenue': journey_data['Revenue (SAR)'].sum(),
-                            'Conversions': journey_data['Unique Conversions'].sum(),
-                            'Health Score': health_info['health_score'],
-                            'Tier': health_info['tier']
-                        })
-            
-            if journey_performance:
-                journey_df = pd.DataFrame(journey_performance)
-                journey_df = journey_df.sort_values('Revenue', ascending=False).head(10)
-                
-                # Format for display
-                journey_display = journey_df.copy()
-                journey_display['Revenue'] = journey_display['Revenue'].apply(lambda x: format_metric(x, "SAR"))
-                journey_display['Conversions'] = journey_display['Conversions'].apply(format_metric)
-                journey_display['Health Score'] = journey_display['Health Score'].apply(lambda x: f"{x:.1f}/100")
-                
-                # Add tier emoji
-                tier_emojis = {'Excellent': '🟢', 'Good': '🟡', 'Fair': '🟠', 'Poor': '🔴'}
-                journey_display['Status'] = journey_display['Tier'].apply(lambda x: f"{tier_emojis.get(x, '⚪')} {x}")
-                journey_display = journey_display[['Journey', 'Revenue', 'Conversions', 'Health Score', 'Status']]
-                
-                st.dataframe(journey_display, use_container_width=True, hide_index=True)
-            else:
-                st.info("No journey data available with sufficient volume for analysis.")
-        
-        with top_col2:
-            st.markdown("#### 📧 Top 10 Campaigns by Revenue")
-            
-            # Calculate campaign performance with health scores
-            campaign_performance = []
-            unique_campaigns = filtered_df['Campaign Name'].dropna().unique()
-            
-            for campaign in unique_campaigns:
-                if str(campaign) != 'nan' and campaign:
-                    campaign_data = filtered_df[filtered_df['Campaign Name'] == campaign]
-                    health_info = calculate_campaign_health_score(campaign_data, filtered_df)
-                    
-                    if health_info['tier'] != 'Insufficient Data':  # Only include campaigns with sufficient data
-                        campaign_performance.append({
-                            'Campaign': campaign,
-                            'Revenue': campaign_data['Revenue (SAR)'].sum(),
-                            'Conversions': campaign_data['Unique Conversions'].sum(),
-                            'Health Score': health_info['health_score'],
-                            'Tier': health_info['tier']
-                        })
-            
-            if campaign_performance:
-                campaign_df = pd.DataFrame(campaign_performance)
-                campaign_df = campaign_df.sort_values('Revenue', ascending=False).head(10)
-                
-                # Format for display
-                campaign_display = campaign_df.copy()
-                campaign_display['Revenue'] = campaign_display['Revenue'].apply(lambda x: format_metric(x, "SAR"))
-                campaign_display['Conversions'] = campaign_display['Conversions'].apply(format_metric)
-                campaign_display['Health Score'] = campaign_display['Health Score'].apply(lambda x: f"{x:.1f}/100")
-                
-                # Add tier emoji
-                tier_emojis = {'Excellent': '🟢', 'Good': '🟡', 'Fair': '🟠', 'Poor': '🔴'}
-                campaign_display['Status'] = campaign_display['Tier'].apply(lambda x: f"{tier_emojis.get(x, '⚪')} {x}")
-                campaign_display = campaign_display[['Campaign', 'Revenue', 'Conversions', 'Health Score', 'Status']]
-                
-                st.dataframe(campaign_display, use_container_width=True, hide_index=True)
-            else:
-                st.info("No campaign data available with sufficient volume for analysis.")
-        
-        st.markdown("---")
-        
-        # ========================================
-        # 4. MARKETING FUNNEL ANALYSIS
-        # ========================================
-        st.subheader("📊 Marketing Funnel Performance")
-        
-        funnel_col1, funnel_col2 = st.columns([2, 1])
-        
-        with funnel_col1:
-            # Enhanced conversion funnel
-            funnel_data = {
-                'Stage': ['Sent', 'Delivered', 'Impressions', 'Clicks', 'Conversions'],
-                'Count': [
-                    total_sent,
-                    total_delivered,
-                    total_impressions,
-                    total_clicks,
-                    total_conversions
-                ]
-            }
-            
-            fig_funnel = go.Figure(go.Funnel(
-                y=funnel_data['Stage'],
-                x=funnel_data['Count'],
-                textinfo="value+percent initial+percent previous",
-                marker=dict(color=["#1f77b4", "#2ca02c", "#ff7f0e", "#d62728", "#9467bd"]),
-                connector=dict(line=dict(color="royalblue", width=3))
-            ))
-            
-            fig_funnel.update_layout(
-                title="Customer Journey Funnel",
-                height=400
+            selected_journey_insights = st.selectbox(
+                "Select Journey for Detailed Insights",
+                [''] + list(unique_journeys),
+                key='journey_insights_selector'
             )
-            st.plotly_chart(fig_funnel, use_container_width=True)
+            
+            if selected_journey_insights:
+                with st.spinner(f"Generating insights for {selected_journey_insights}..."):
+                    journey_insights = generate_narrative_insights(
+                        filtered_df,
+                        journey_name=selected_journey_insights,
+                        lookback_days=30
+                    )
+                    
+                    # Display journey-specific insights
+                    for category, items in journey_insights.items():
+                        if items and category != 'context_notes':
+                            st.markdown(f"**{category.replace('_', ' ').title()}:**")
+                            for item in items:
+                                if isinstance(item, dict):
+                                    emoji = item.get('emoji', '')
+                                    title = item.get('title', '')
+                                    message = item.get('message', '')
+                                    st.info(f"{emoji} **{title}**: {message}")
+                    
+                    # Generate journey-specific forecast
+                    st.markdown("### 📈 Journey Revenue Forecast")
+                    journey_forecast = predict_revenue_forecast(
+                        filtered_df,
+                        journey_name=selected_journey_insights,
+                        forecast_days=14
+                    )
+                    
+                    if journey_forecast:
+                        insight = journey_forecast.get('insight', {})
+                        st.info(f"{insight.get('emoji', '')} {insight.get('message', '')}")
+                        
+                        jf_col1, jf_col2 = st.columns(2)
+                        with jf_col1:
+                            st.metric("14-Day Predicted Total", 
+                                    format_metric(journey_forecast.get('total_predicted', 0), "SAR"))
+                        with jf_col2:
+                            st.metric("Trend", f"{journey_forecast.get('trend_pct', 0):+.1f}%")
+                    
+                    # Generate journey-specific actions
+                    st.markdown("### 🎯 Recommended Actions for This Journey")
+                    journey_actions = generate_top_actions(
+                        filtered_df,
+                        journey_name=selected_journey_insights,
+                        max_actions=3
+                    )
+                    
+                    if journey_actions:
+                        for action in journey_actions:
+                            st.success(f"**{action.get('title', '')}**\n\n{action.get('action', '')}\n\n*Expected Impact: {action.get('expected_impact', '')}*")
+                    else:
+                        st.info("✅ Journey is performing well. Continue current strategy.")
         
-        with funnel_col2:
-            st.markdown("#### Funnel Metrics")
-            
-            # Calculate drop-off rates
-            delivery_rate = (total_delivered / total_sent * 100) if total_sent > 0 else 0
-            impression_rate = (total_impressions / total_delivered * 100) if total_delivered > 0 else 0
-            ctr = (total_clicks / total_impressions * 100) if total_impressions > 0 else 0
-            conversion_rate = (total_conversions / total_clicks * 100) if total_clicks > 0 else 0
-            
-            st.metric("📧 Delivery Success", f"{delivery_rate:.1f}%")
-            st.metric("👁️ Impression Rate", f"{impression_rate:.1f}%")
-            st.metric("🖱️ Click-Through Rate", f"{ctr:.2f}%")
-            st.metric("✅ Conversion Rate", f"{conversion_rate:.2f}%")
-            
-            # Overall funnel efficiency
-            overall_efficiency = (total_conversions / total_sent * 100) if total_sent > 0 else 0
-            st.metric("🎯 Overall Efficiency", f"{overall_efficiency:.3f}%", 
-                     help="Conversions as % of total messages sent")
-        
+        # === DOWNLOAD INSIGHTS REPORT ===
         st.markdown("---")
+        st.subheader("📄 Export Insights Report")
         
-        # ========================================
-        # 5. KEY INSIGHTS & RECOMMENDATIONS
-        # ========================================
-        st.subheader("💡 Key Insights & Actionable Recommendations")
-        
-        insights = []
-        recommendations = []
-        
-        # Revenue concentration insight
-        if journey_performance:
-            top_3_journey_revenue = sum([j['Revenue'] for j in journey_performance[:3]])
-            journey_concentration = (top_3_journey_revenue / total_revenue * 100) if total_revenue > 0 else 0
-            
-            if journey_concentration > 60:
-                insights.append(f"🎯 **High Concentration**: Top 3 journeys account for {journey_concentration:.1f}% of total revenue")
-                recommendations.append("Consider diversifying revenue sources or scaling top performers")
-            elif journey_concentration < 30:
-                insights.append(f"📊 **Well Distributed**: Revenue is well distributed across journeys ({journey_concentration:.1f}% in top 3)")
-                recommendations.append("Identify and optimize underperforming journeys to improve overall performance")
-        
-        # Channel performance insight
-        if not channel_revenue.empty:
-            top_channel = channel_revenue.iloc[0]
-            top_channel_pct = top_channel['Revenue %']
-            insights.append(f"📱 **Top Channel**: {top_channel['Channel']} generates {top_channel_pct:.1f}% of revenue")
-            
-            if top_channel_pct > 70:
-                recommendations.append(f"Consider diversifying beyond {top_channel['Channel']} to reduce dependency")
-        
-        # Conversion rate insight
-        if overall_conversion_rate > 5:
-            insights.append(f"✅ **Strong Conversion**: {overall_conversion_rate:.2f}% conversion rate is above industry average")
-            recommendations.append("Document and replicate successful conversion strategies across other campaigns")
-        elif overall_conversion_rate < 2:
-            insights.append(f"⚠️ **Low Conversion**: {overall_conversion_rate:.2f}% conversion rate needs improvement")
-            recommendations.append("Review landing pages, CTAs, and offer relevance to boost conversions")
-        
-        # Delivery rate insight
-        if overall_delivery_rate < 95:
-            insights.append(f"📧 **Delivery Issue**: {overall_delivery_rate:.1f}% delivery rate is below optimal (95%+)")
-            recommendations.append("Check ESP reputation, list hygiene, and bounce rates immediately")
-        else:
-            insights.append(f"📧 **Excellent Delivery**: {overall_delivery_rate:.1f}% delivery rate is optimal")
-        
-        # CTR insight
-        if overall_ctr > 3:
-            insights.append(f"🎯 **High Engagement**: {overall_ctr:.2f}% CTR shows strong audience interest")
-            recommendations.append("Test similar messaging and creative across lower-performing campaigns")
-        elif overall_ctr < 1:
-            insights.append(f"⚠️ **Low Engagement**: {overall_ctr:.2f}% CTR suggests weak audience resonance")
-            recommendations.append("A/B test subject lines, send times, and content personalization")
-        
-        # Display insights and recommendations
-        insight_col1, insight_col2 = st.columns(2)
-        
-        with insight_col1:
-            st.markdown("#### 🔍 Key Insights")
-            for insight in insights:
-                st.markdown(f"- {insight}")
-        
-        with insight_col2:
-            st.markdown("#### 🎯 Recommended Actions")
-            for rec in recommendations:
-                st.markdown(f"- {rec}")
-        
-        st.markdown("---")
-        
-        # ========================================
-        # 6. QUICK EXPORT SECTION
-        # ========================================
-        st.subheader("📥 Export Report")
-        
-        export_col1, export_col2, export_col3 = st.columns(3)
-        
-        with export_col1:
-            # Export summary metrics to Excel
-            if st.button("📊 Download Full Report (Excel)", use_container_width=True):
-                from io import BytesIO
-                import openpyxl
-                
-                output = BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    # Summary sheet
-                    summary_data = {
-                        'Metric': ['Total Revenue (SAR)', 'Total Conversions', 'Total Clicks', 'Total Impressions', 
-                                  'Click-Through Rate', 'Conversion Rate', 'Delivery Rate', 'Revenue per Conversion'],
-                        'Value': [total_revenue, total_conversions, total_clicks, total_impressions,
-                                 f"{overall_ctr:.2f}%", f"{overall_conversion_rate:.2f}%", 
-                                 f"{overall_delivery_rate:.2f}%", revenue_per_conversion]
-                    }
-                    pd.DataFrame(summary_data).to_excel(writer, sheet_name='Summary', index=False)
-                    
-                    # Top Journeys
-                    if journey_performance:
-                        pd.DataFrame(journey_performance).to_excel(writer, sheet_name='Top Journeys', index=False)
-                    
-                    # Top Campaigns
-                    if campaign_performance:
-                        pd.DataFrame(campaign_performance).to_excel(writer, sheet_name='Top Campaigns', index=False)
-                    
-                    # Channel Performance
-                    channel_revenue.to_excel(writer, sheet_name='Channel Performance', index=False)
-                
-                output.seek(0)
-                st.download_button(
-                    label="⬇️ Download Excel File",
-                    data=output,
-                    file_name=f"shareholder_report_{period_start.strftime('%Y%m%d')}_{period_end.strftime('%Y%m%d')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-        
-        with export_col2:
-            st.info("📊 The Excel file includes:\n- Summary metrics\n- Top journeys\n- Top campaigns\n- Channel breakdown")
-        
-        with export_col3:
-            st.success("✅ Ready for presentation!\n\nThis report is shareholder-ready and can be shared directly.")
-        
-        # Optional: Raw data preview
-        with st.expander("🔍 View Detailed Data (Click to Expand)"):
-            st.dataframe(filtered_df, use_container_width=True)
+        if st.button("📥 Download Full Insights Report (PDF-Ready)", key='download_insights'):
+            st.info("💡 **Export Feature**: Copy the insights above or use browser print (Ctrl+P) to save as PDF")
+
+    elif page == "Overview":
+        st.header("Overview")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            total_revenue = filtered_df['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in filtered_df.columns else filtered_df['Revenue (SAR)'].sum()
+            st.metric("Total Revenue", format_metric(total_revenue, "SAR"))
+            st.metric("Total Conversions", format_metric(filtered_df['Selected Conversions'].sum() if 'Selected Conversions' in filtered_df.columns else filtered_df['Unique Conversions'].sum()))
+        with col2:
+            st.metric("Total Clicks", format_metric(filtered_df['Unique Clicks'].sum()))
+            st.metric("Total Impressions", format_metric(filtered_df['Unique Impressions'].sum()))
+        with col3:
+            st.metric("Avg CTR", f"{filtered_df['CTR'].mean():.2%}")
+            st.metric("Avg Conversion Rate", f"{filtered_df['Unique Conversion Rate'].mean():.2%}")
+            st.metric("Avg Delivery Rate", f"{filtered_df['Delivery Rate'].mean():.2%}")
+
+        # Conversion Funnel
+        st.subheader("Conversion Funnel")
+        funnel_data = {
+            'Stage': ['Sent', 'Impressions', 'Clicks', 'Conversions'],
+            'Count': [filtered_df['Sent'].sum(), filtered_df['Unique Impressions'].sum(), filtered_df['Unique Clicks'].sum(), filtered_df['Unique Conversions'].sum()]
+        }
+        fig_funnel = go.Figure(go.Funnel(
+            y=funnel_data['Stage'],
+            x=funnel_data['Count'],
+            textinfo="value+percent initial"
+        ))
+        st.plotly_chart(fig_funnel)
+
+        # Failed reasons
+        failed_df = failed_reasons_analysis(filtered_df)
+        if not failed_df.empty:
+            st.subheader("Failed Reasons Breakdown")
+            fig_fail = px.pie(failed_df, names='Reason', values='Count')
+            st.plotly_chart(fig_fail)
+
+        # Data Preview
+        with st.expander("View Filtered Data"):
+            st.dataframe(filtered_df)
 
     elif page == "Campaigns":
         st.header("Campaign Analysis")
