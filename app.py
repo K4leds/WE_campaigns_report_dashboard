@@ -143,6 +143,95 @@ def clean_data(df):
     else:
         df['Delivery Rate'] = 0
     
+    # Add new business metrics
+    # Revenue Per Click (RPC) - Shows quality of clicks
+    revenue_cols = [col for col in df.columns if 'Revenue' in col and 'Rate' not in col]
+    if revenue_cols and 'Unique Clicks' in df.columns:
+        revenue_col = revenue_cols[0]
+        df['Revenue Per Click'] = np.where(df['Unique Clicks'] > 0, df[revenue_col] / df['Unique Clicks'], 0)
+    else:
+        df['Revenue Per Click'] = 0
+    
+    # Average Order Value (AOV) - Revenue per conversion
+    if revenue_cols and 'Unique Conversions' in df.columns:
+        revenue_col = revenue_cols[0]
+        df['AOV'] = np.where(df['Unique Conversions'] > 0, df[revenue_col] / df['Unique Conversions'], 0)
+    else:
+        df['AOV'] = 0
+    
+    # Engagement Rate - Combined engagement metric
+    # For channels with Opens (Email, Push): (Clicks + Opens) / Impressions
+    # For channels without Opens: Clicks / Impressions (same as CTR)
+    if 'Unique Opens' in df.columns and 'Unique Impressions' in df.columns and 'Unique Clicks' in df.columns:
+        df['Engagement Rate'] = np.where(
+            df['Unique Impressions'] > 0, 
+            (df['Unique Clicks'] + df['Unique Opens']) / df['Unique Impressions'], 
+            0
+        )
+    elif 'Unique Clicks' in df.columns and 'Unique Impressions' in df.columns:
+        df['Engagement Rate'] = np.where(df['Unique Impressions'] > 0, df['Unique Clicks'] / df['Unique Impressions'], 0)
+    else:
+        df['Engagement Rate'] = 0
+    
+    # === COST-BASED METRICS ===
+    # Channel cost configuration (cost per 1000 sends)
+    channel_costs = {
+        'Email': 1.2,  # SAR per 1000 emails
+        'SMS': 43.2,   # Estimated - adjust based on your rates
+        'WhatsApp': 200.0,  # Estimated - adjust based on your rates
+        'Push': 0.0,   # Usually free
+        'Mobile Push': 0.0,
+        'App Push': 0.0,
+        'Web Push': 0.0,
+        'In-App': 0.0,
+        'On-Site': 0.0,
+        'Onsite': 0.0,
+        'On-site': 0.0
+    }
+    
+    # Calculate campaign cost based on channel and sends
+    if 'Channel' in df.columns and 'Sent' in df.columns:
+        df['Campaign Cost'] = df.apply(
+            lambda row: (row['Sent'] / 1000) * channel_costs.get(row['Channel'], 0), 
+            axis=1
+        )
+    else:
+        df['Campaign Cost'] = 0
+    
+    # Revenue Per Send (RPS) - KEY EFFICIENCY METRIC
+    if revenue_cols and 'Sent' in df.columns:
+        revenue_col = revenue_cols[0]
+        df['Revenue Per Send'] = np.where(df['Sent'] > 0, df[revenue_col] / df['Sent'], 0)
+    else:
+        df['Revenue Per Send'] = 0
+    
+    # ROAS - Return on Ad Spend (Revenue / Cost)
+    if revenue_cols:
+        revenue_col = revenue_cols[0]
+        df['ROAS'] = np.where(df['Campaign Cost'] > 0, df[revenue_col] / df['Campaign Cost'], 0)
+    else:
+        df['ROAS'] = 0
+    
+    # Cost Per Conversion (CPC)
+    if 'Unique Conversions' in df.columns:
+        df['Cost Per Conversion'] = np.where(
+            df['Unique Conversions'] > 0, 
+            df['Campaign Cost'] / df['Unique Conversions'], 
+            0
+        )
+    else:
+        df['Cost Per Conversion'] = 0
+    
+    # Cost Per Click
+    if 'Unique Clicks' in df.columns:
+        df['Cost Per Click'] = np.where(
+            df['Unique Clicks'] > 0, 
+            df['Campaign Cost'] / df['Unique Clicks'], 
+            0
+        )
+    else:
+        df['Cost Per Click'] = 0
+    
     # Convert object columns to string for Arrow compatibility
     object_cols = df.select_dtypes(include='object').columns
     df[object_cols] = df[object_cols].astype(str)
@@ -1648,53 +1737,126 @@ def analyze_stopped_journeys(df, stopped_threshold_days=3, lookback_period=90, c
             if len(journey_data) < 7:  # Need minimum data for analysis
                 continue
 
-            # Sort by date
-            journey_data = journey_data.sort_values('date')
+            # Sort by date and reset index for proper iteration
+            journey_data = journey_data.sort_values('date').reset_index(drop=True)
 
             # Identify stopped periods (consecutive days with zero delivery)
-            journey_data['is_stopped'] = journey_data['Delivered'] == 0
+            if 'Delivered' not in journey_data.columns:
+                continue
 
-            # Find consecutive stopped periods
+            # Aggregate multiple rows per calendar date into a single daily record
+            # (Some journeys have multiple campaign rows on the same date)
+            daily = journey_data.groupby('date', as_index=False).agg({
+                'Delivered': 'sum',
+                'Revenue (SAR)': 'sum'  # Also track revenue to validate stops
+            })
+            daily = daily.sort_values('date').reset_index(drop=True)
+            daily['Delivered'] = daily['Delivered'].fillna(0)
+            daily['Revenue (SAR)'] = daily['Revenue (SAR)'].fillna(0)
+            daily['is_stopped'] = (daily['Delivered'] == 0)
+
+            # Find consecutive stopped periods on daily aggregated data
             stopped_periods = []
             current_stopped_start = None
+            current_stopped_start_idx = None
             consecutive_stopped = 0
+            had_activity_before = False  # Track if journey was active before this stopped period
 
-            for i, (_, row) in enumerate(journey_data.iterrows()):
+            for idx in range(len(daily)):
+                row = daily.iloc[idx]
+
                 if row['is_stopped']:
                     if current_stopped_start is None:
                         current_stopped_start = row['date']
+                        current_stopped_start_idx = idx
                     consecutive_stopped += 1
                 else:
-                    if consecutive_stopped >= stopped_threshold_days:
-                        # Use positional indexing to get the previous row
-                        if i > 0:
-                            prev_date = journey_data.iloc[i-1]['date']
-                        else:
-                            prev_date = row['date']
+                    # Journey is active (has delivery)
+                    if consecutive_stopped >= stopped_threshold_days and current_stopped_start is not None and had_activity_before:
+                        prev_row = daily.iloc[idx - 1]
+                        prev_date = prev_row['date']
+
+                        # Calculate actual calendar days between start and end
+                        actual_calendar_days = (prev_date - current_stopped_start).days + 1
+
+                        # Check how much activity was before the stop (based on daily aggregated data)
+                        activity_before = daily.iloc[:current_stopped_start_idx]
+                        active_days_before = (activity_before['Delivered'] > 0).sum()
+                        avg_delivery_before = activity_before[activity_before['Delivered'] > 0]['Delivered'].mean()
+
+                        # Validate: Check if revenue continues beyond conversion window (7 days)
+                        # If so, the journey likely has active campaigns and isn't truly stopped
+                        conversion_window_days = 7
+                        revenue_after_window_start = current_stopped_start + pd.Timedelta(days=conversion_window_days)
+                        stopped_period_data = daily[(daily['date'] >= revenue_after_window_start) & (daily['date'] <= prev_date)]
                         
-                        # Calculate actual calendar days between start and end dates
-                        days_stopped = (prev_date - current_stopped_start).days + 1
+                        # Calculate total revenue beyond conversion window
+                        revenue_beyond_window = stopped_period_data['Revenue (SAR)'].sum() if len(stopped_period_data) > 0 else 0
+                        revenue_before_stop = activity_before['Revenue (SAR)'].mean() if len(activity_before) > 0 else 0
                         
-                        stopped_periods.append({
-                            'start_date': current_stopped_start,
-                            'end_date': prev_date,
-                            'days_stopped': days_stopped
-                        })
+                        # Only include stop if revenue beyond window is minimal (<10% of pre-stop average per day)
+                        days_beyond_window = max(1, actual_calendar_days - conversion_window_days)
+                        avg_revenue_during_stop = revenue_beyond_window / days_beyond_window if days_beyond_window > 0 else 0
+                        
+                        is_truly_stopped = True
+                        if revenue_before_stop > 0 and avg_revenue_during_stop > (revenue_before_stop * 0.1):
+                            # Revenue continues at significant level - likely has active campaigns
+                            is_truly_stopped = False
+                        
+                        if is_truly_stopped:
+                            stopped_periods.append({
+                                'start_date': current_stopped_start,
+                                'end_date': prev_date,
+                                'days_stopped': actual_calendar_days,  # Calendar days between dates
+                                'was_active_before': True,
+                                'active_days_before_stop': int(active_days_before),
+                                'avg_delivery_before_stop': float(avg_delivery_before) if not pd.isna(avg_delivery_before) else 0
+                            })
+
+                    # Mark that we've seen activity
+                    had_activity_before = True
                     current_stopped_start = None
+                    current_stopped_start_idx = None
                     consecutive_stopped = 0
 
-            # Check for stopped period at the end
-            if consecutive_stopped >= stopped_threshold_days:
-                last_date = journey_data.iloc[-1]['date']
+            # Check for stopped period at the end (only if journey was active before)
+            if consecutive_stopped >= stopped_threshold_days and current_stopped_start is not None and had_activity_before:
+                last_row = daily.iloc[-1]
+                last_date = last_row['date']
+
+                # Calculate actual calendar days
+                actual_calendar_days = (last_date - current_stopped_start).days + 1
+
+                # Check activity before the stop
+                activity_before = daily.iloc[:current_stopped_start_idx]
+                active_days_before = (activity_before['Delivered'] > 0).sum()
+                avg_delivery_before = activity_before[activity_before['Delivered'] > 0]['Delivered'].mean()
+
+                # Validate: Check if revenue continues beyond conversion window
+                conversion_window_days = 7
+                revenue_after_window_start = current_stopped_start + pd.Timedelta(days=conversion_window_days)
+                stopped_period_data = daily[(daily['date'] >= revenue_after_window_start) & (daily['date'] <= last_date)]
                 
-                # Calculate actual calendar days for the final stopped period
-                days_stopped = (last_date - current_stopped_start).days + 1
+                revenue_beyond_window = stopped_period_data['Revenue (SAR)'].sum() if len(stopped_period_data) > 0 else 0
+                revenue_before_stop = activity_before['Revenue (SAR)'].mean() if len(activity_before) > 0 else 0
                 
-                stopped_periods.append({
-                    'start_date': current_stopped_start,
-                    'end_date': last_date,
-                    'days_stopped': days_stopped
-                })
+                days_beyond_window = max(1, actual_calendar_days - conversion_window_days)
+                avg_revenue_during_stop = revenue_beyond_window / days_beyond_window if days_beyond_window > 0 else 0
+                
+                is_truly_stopped = True
+                if revenue_before_stop > 0 and avg_revenue_during_stop > (revenue_before_stop * 0.1):
+                    # Revenue continues at significant level - likely has active campaigns
+                    is_truly_stopped = False
+                
+                if is_truly_stopped:
+                    stopped_periods.append({
+                        'start_date': current_stopped_start,
+                        'end_date': last_date,
+                        'days_stopped': actual_calendar_days,  # Calendar days between dates
+                        'was_active_before': True,
+                        'active_days_before_stop': int(active_days_before),
+                        'avg_delivery_before_stop': float(avg_delivery_before) if not pd.isna(avg_delivery_before) else 0
+                    })
 
             if stopped_periods:
                 # Estimate revenue loss using ML forecasting
@@ -1741,82 +1903,200 @@ def estimate_revenue_loss_ml(journey_data, stopped_periods, confidence_level=0.9
     try:
         from prophet import Prophet
         from scipy import stats
+        
+        # Aggregate journey data by date first (handle multiple rows per day)
+        daily_data = journey_data.groupby('date', as_index=False).agg({
+            'Revenue (SAR)': 'sum',
+            'Impression-Through Revenue (SAR)': 'sum',
+            'Click-Through Revenue (SAR)': 'sum'
+        })
+        daily_data = daily_data.sort_values('date').reset_index(drop=True)
 
         # Prepare data for Prophet
-        prophet_data = journey_data[['date', 'Revenue (SAR)', 'Impression-Through Revenue (SAR)', 'Click-Through Revenue (SAR)']].copy()
+        prophet_data = daily_data[['date', 'Revenue (SAR)', 'Impression-Through Revenue (SAR)', 'Click-Through Revenue (SAR)']].copy()
         prophet_data = prophet_data.rename(columns={'date': 'ds'})
 
         # Estimate loss for each attribution model
         attribution_models = ['Revenue (SAR)', 'Impression-Through Revenue (SAR)', 'Click-Through Revenue (SAR)']
         total_loss = 0
         attribution_breakdown = {}
-        daily_loss_estimates = []
+        model_success = {}
 
         for model in attribution_models:
-            if model in prophet_data.columns:
-                model_data = prophet_data[['ds', model]].rename(columns={model: 'y'})
-                model_data = model_data.dropna()
+            if model not in prophet_data.columns:
+                continue
+                
+            model_data = prophet_data[['ds', model]].rename(columns={model: 'y'})
+            model_data = model_data.dropna()
+            
+            # Filter out negative values
+            model_data = model_data[model_data['y'] >= 0]
+            
+            # CRITICAL: Exclude stopped periods from training
+            # Mark stopped periods so Prophet doesn't learn the "stopped = low revenue" pattern
+            for period in stopped_periods:
+                # Exclude from training: stopped period dates
+                mask = (model_data['ds'] >= period['start_date']) & (model_data['ds'] <= period['end_date'])
+                model_data = model_data[~mask]
 
-                if len(model_data) >= 7:  # Minimum data for Prophet
-                    # Train Prophet model
-                    model_prophet = Prophet(
-                        yearly_seasonality=False,
-                        weekly_seasonality=True,
-                        daily_seasonality=False,
-                        interval_width=confidence_level
+            if len(model_data) < 14:  # Need at least 2 weeks for reliable forecasting
+                model_success[model] = False
+                continue
+            
+            # Outlier detection and capping using IQR method
+            Q1 = model_data['y'].quantile(0.25)
+            Q3 = model_data['y'].quantile(0.75)
+            IQR = Q3 - Q1
+            upper_bound = Q3 + 3 * IQR  # Use 3*IQR for less aggressive capping
+            lower_bound = max(0, Q1 - 3 * IQR)
+            
+            # Cap outliers
+            model_data['y'] = model_data['y'].clip(lower=lower_bound, upper=upper_bound)
+            
+            # Calculate baseline statistics for validation
+            # Use wider window excluding immediate pre-stop spikes
+            baseline_window = model_data.iloc[-60:] if len(model_data) >= 60 else model_data
+            baseline_mean = baseline_window['y'].mean()
+            baseline_std = baseline_window['y'].std()
+            baseline_median = baseline_window['y'].median()
+            
+            # Use median if highly volatile (coefficient of variation > 1)
+            cv = baseline_std / baseline_mean if baseline_mean > 0 else float('inf')
+            use_median = cv > 1.0
+            baseline_value = baseline_median if use_median else baseline_mean
+            
+            try:
+                # Configure Prophet with conservative settings
+                model_prophet = Prophet(
+                    growth='linear',  # Linear growth for stability
+                    yearly_seasonality=False,
+                    weekly_seasonality=True,
+                    daily_seasonality=False,
+                    seasonality_mode='additive',  # More stable than multiplicative
+                    interval_width=confidence_level,
+                    changepoint_prior_scale=0.01,  # Lower = less flexible = more stable
+                    seasonality_prior_scale=1.0
+                )
+                
+                # Set floor to prevent negative predictions
+                model_data['floor'] = 0
+                model_prophet.fit(model_data)
+
+                # Forecast for stopped periods
+                model_loss = 0
+                model_valid = True
+
+                for period_idx, period in enumerate(stopped_periods):
+                    # Create future dataframe for the stopped period
+                    future_dates = pd.date_range(
+                        start=period['start_date'],
+                        end=period['end_date'],
+                        freq='D'
                     )
 
-                    model_prophet.fit(model_data)
+                    future_df = pd.DataFrame({'ds': future_dates})
+                    future_df['floor'] = 0
 
-                    # Forecast for stopped periods
-                    model_loss = 0
-                    model_daily_estimates = []
+                    # Make prediction
+                    forecast = model_prophet.predict(future_df)
+                    
+                    # Validate predictions - reject if unreasonable
+                    predicted_mean = forecast['yhat'].mean()
+                    predicted_daily = forecast['yhat'].values
+                    
+                    # Sanity checks
+                    if predicted_mean < 0:
+                        # Negative predictions - fall back to average
+                        model_valid = False
+                        break
+                    
+                    # Conservative validation: Check for unrealistic predictions
+                    # Calculate pre-stop baseline (last 14 days before this specific stop)
+                    pre_stop_data = model_data[model_data['ds'] < period['start_date']].tail(14)
+                    if len(pre_stop_data) > 0:
+                        pre_stop_baseline = pre_stop_data['y'].median() if use_median else pre_stop_data['y'].mean()
+                    else:
+                        pre_stop_baseline = baseline_value
+                    
+                    # If prediction is way off pre-stop baseline, use conservative estimate
+                    if predicted_mean > pre_stop_baseline * 2:
+                        # Cap at 1.5x pre-stop baseline for conservative CEO/CMO reporting
+                        predicted_daily = np.clip(predicted_daily, 0, pre_stop_baseline * 1.5)
+                    elif predicted_mean < pre_stop_baseline * 0.1 and pre_stop_baseline > 0:
+                        # Too low - use pre-stop baseline
+                        predicted_daily = np.full(len(predicted_daily), pre_stop_baseline)
+                    
+                    # Ensure non-negative
+                    predicted_daily = np.maximum(predicted_daily, 0)
+                    
+                    # Calculate period loss
+                    period_loss = predicted_daily.sum()
+                    model_loss += period_loss
 
-                    for period in stopped_periods:
-                        # Create future dataframe for the stopped period
-                        future_dates = pd.date_range(
-                            start=period['start_date'],
-                            end=period['end_date'],
-                            freq='D'
-                        )
-
-                        future_df = pd.DataFrame({'ds': future_dates})
-
-                        # Make prediction
-                        forecast = model_prophet.predict(future_df)
-
-                        # Calculate expected revenue for this period
-                        expected_revenue = forecast['yhat'].sum()
-                        model_loss += max(0, expected_revenue)  # Only count positive expected revenue
-
-                        # Daily estimates for this period
-                        for _, forecast_row in forecast.iterrows():
-                            model_daily_estimates.append({
-                                'date': forecast_row['ds'],
-                                'expected_revenue': max(0, forecast_row['yhat']),
-                                'confidence_lower': max(0, forecast_row['yhat_lower']),
-                                'confidence_upper': max(0, forecast_row['yhat_upper'])
-                            })
-
+                    # Store daily estimates for this specific period
+                    if 'daily_estimates' not in period:
+                        period['daily_estimates'] = {}
+                    
+                    period['daily_estimates'][model] = []
+                    for idx, (_, forecast_row) in enumerate(forecast.iterrows()):
+                        period['daily_estimates'][model].append({
+                            'date': forecast_row['ds'],
+                            'expected_revenue': predicted_daily[idx],
+                            'confidence_lower': max(0, forecast_row['yhat_lower']),
+                            'confidence_upper': min(baseline_mean * 3, forecast_row['yhat_upper'])  # Cap upper bound
+                        })
+                    
+                    # Track period loss by model (don't overwrite, accumulate)
+                    if 'model_losses' not in period:
+                        period['model_losses'] = {}
+                    period['model_losses'][model] = period_loss
+                
+                if model_valid:
                     attribution_breakdown[model] = model_loss
-                    total_loss += model_loss
+                    model_success[model] = True
+                else:
+                    # Fall back to simple average for this model
+                    model_loss = baseline_median if use_median else baseline_mean
+                    model_loss = model_loss * sum(p['days_stopped'] for p in stopped_periods)
+                    attribution_breakdown[model] = model_loss
+                    model_success[model] = False
+                    
+            except Exception as model_error:
+                # Prophet failed for this model - use fallback
+                fallback_value = baseline_median if use_median else baseline_mean
+                model_loss = fallback_value * sum(p['days_stopped'] for p in stopped_periods)
+                attribution_breakdown[model] = model_loss
+                model_success[model] = False
 
-                    # Add daily estimates to the period
-                    for i, period in enumerate(stopped_periods):
-                        period['daily_estimates'] = model_daily_estimates
-                        period['estimated_daily_loss'] = model_loss / period['days_stopped'] if period['days_stopped'] > 0 else 0
+        # CRITICAL: Use Send-Through Revenue as primary metric (NOT sum of attributions!)
+        # Attribution models are alternative views, not additive
+        primary_model = 'Revenue (SAR)'
+        total_loss = attribution_breakdown.get(primary_model, 0)
+        
+        # Calculate estimated_daily_loss for each period using PRIMARY model only
+        for period in stopped_periods:
+            if 'model_losses' in period and primary_model in period['model_losses']:
+                period['estimated_daily_loss'] = period['model_losses'][primary_model] / period['days_stopped'] if period['days_stopped'] > 0 else 0
+            else:
+                # No model succeeded for this period
+                period['estimated_daily_loss'] = 0
 
-        # Calculate confidence interval for total loss
+        # Calculate confidence interval based on model success and data quality
         if total_loss > 0:
-            # Use bootstrap method for confidence interval
-            loss_samples = []
-            for _ in range(1000):
-                sample_loss = total_loss * np.random.normal(1, 0.1)  # 10% standard deviation
-                loss_samples.append(max(0, sample_loss))
-
+            # Adaptive confidence interval based on data quality
+            if all(model_success.values()):
+                # All models succeeded - tighter interval
+                lower_pct, upper_pct = 0.80, 1.20
+            elif any(model_success.values()):
+                # Some models succeeded - moderate interval
+                lower_pct, upper_pct = 0.70, 1.40
+            else:
+                # All models failed - wider interval
+                lower_pct, upper_pct = 0.50, 1.50
+            
             confidence_interval = (
-                np.percentile(loss_samples, (1-confidence_level)*50),
-                np.percentile(loss_samples, (1+confidence_level)*50)
+                total_loss * lower_pct,
+                total_loss * upper_pct
             )
         else:
             confidence_interval = (0, 0)
@@ -1826,36 +2106,102 @@ def estimate_revenue_loss_ml(journey_data, stopped_periods, confidence_level=0.9
             'avg_daily_loss': total_loss / sum(p['days_stopped'] for p in stopped_periods) if stopped_periods else 0,
             'attribution_breakdown': attribution_breakdown,
             'confidence_interval': confidence_interval,
-            'confidence_level': confidence_level
+            'confidence_level': confidence_level,
+            'model_quality': 'high' if all(model_success.values()) else ('medium' if any(model_success.values()) else 'low'),
+            'method': 'prophet_robust'
         }
 
     except Exception as e:
-        # Fallback to simple average method if Prophet fails
+        # Fallback to improved average method if Prophet fails entirely
         total_loss = 0
         attribution_breakdown = {}
+        
+        # Aggregate journey data by date
+        daily_data = journey_data.groupby('date', as_index=False).agg({
+            'Revenue (SAR)': 'sum',
+            'Impression-Through Revenue (SAR)': 'sum',
+            'Click-Through Revenue (SAR)': 'sum'
+        })
+        daily_data = daily_data.sort_values('date').reset_index(drop=True)
+        
+        # Get total stopped days for average calculation
+        total_stopped_days = sum(p['days_stopped'] for p in stopped_periods)
 
-        # Simple average method
+        # Improved fallback method with outlier handling
         for period in stopped_periods:
-            period_data = journey_data[
-                (journey_data['date'] >= period['start_date'] - pd.Timedelta(days=30)) &
-                (journey_data['date'] < period['start_date'])
+            # Get 30-60 days before stop for baseline calculation
+            period_data = daily_data[
+                (daily_data['date'] >= period['start_date'] - pd.Timedelta(days=60)) &
+                (daily_data['date'] < period['start_date'])
             ]
 
-            if len(period_data) > 0:
+            if len(period_data) >= 7:  # Need minimum data
+                period_loss = 0
                 for model in ['Revenue (SAR)', 'Impression-Through Revenue (SAR)', 'Click-Through Revenue (SAR)']:
                     if model in period_data.columns:
-                        avg_daily = period_data[model].mean()
-                        period_loss = avg_daily * period['days_stopped']
-                        attribution_breakdown[model] = attribution_breakdown.get(model, 0) + period_loss
-                        total_loss += period_loss
+                        # Use robust statistics (median + IQR outlier filtering)
+                        model_values = period_data[model].fillna(0)
+                        model_values = model_values[model_values >= 0]  # Remove negatives
+                        
+                        if len(model_values) > 0:
+                            # Remove outliers using IQR
+                            Q1 = model_values.quantile(0.25)
+                            Q3 = model_values.quantile(0.75)
+                            IQR = Q3 - Q1
+                            
+                            # Filter outliers
+                            filtered_values = model_values[
+                                (model_values >= Q1 - 1.5 * IQR) &
+                                (model_values <= Q3 + 1.5 * IQR)
+                            ]
+                            
+                            if len(filtered_values) > 0:
+                                # Use median for robustness
+                                avg_daily = filtered_values.median()
+                            else:
+                                avg_daily = model_values.median()
+                            
+                            # Recent trend adjustment (last 7 days vs previous)
+                            if len(period_data) >= 14:
+                                recent = period_data[model].iloc[-7:].median()
+                                earlier = period_data[model].iloc[:-7].median()
+                                
+                                # If recent is much different, blend the two
+                                if earlier > 0:
+                                    trend_ratio = recent / earlier
+                                    # Cap trend adjustment to ±50%
+                                    trend_ratio = np.clip(trend_ratio, 0.5, 1.5)
+                                    avg_daily = avg_daily * trend_ratio
+                            
+                            model_period_loss = max(0, avg_daily * period['days_stopped'])
+                            attribution_breakdown[model] = attribution_breakdown.get(model, 0) + model_period_loss
+                            
+                            # Track by model for period (don't sum!)
+                            if 'model_losses' not in period:
+                                period['model_losses'] = {}
+                            period['model_losses'][model] = model_period_loss
+                
+                # Use primary model (Send-Through Revenue) for period total
+                primary_model = 'Revenue (SAR)'
+                if 'model_losses' in period and primary_model in period['model_losses']:
+                    period['estimated_daily_loss'] = period['model_losses'][primary_model] / period['days_stopped'] if period['days_stopped'] > 0 else 0
+                else:
+                    period['estimated_daily_loss'] = 0
+            else:
+                period['estimated_daily_loss'] = 0
+
+        # Use primary attribution model for total loss
+        primary_model = 'Revenue (SAR)'
+        total_loss = attribution_breakdown.get(primary_model, 0)
 
         return {
             'total_loss': total_loss,
-            'avg_daily_loss': total_loss / sum(p['days_stopped'] for p in stopped_periods) if stopped_periods else 0,
+            'avg_daily_loss': total_loss / total_stopped_days if total_stopped_days > 0 else 0,
             'attribution_breakdown': attribution_breakdown,
-            'confidence_interval': (total_loss * 0.8, total_loss * 1.2),  # Rough estimate
+            'confidence_interval': (max(0, total_loss * 0.6), total_loss * 1.4),  # Wider interval for fallback
             'confidence_level': confidence_level,
-            'method': 'fallback_average'
+            'model_quality': 'low',
+            'method': 'fallback_robust_average'
         }
 
 def generate_stopped_journey_recommendations(journey_data, stopped_periods, revenue_loss_estimate):
@@ -1948,6 +2294,223 @@ def create_cohort_analysis(df, cohort_period='week'):
         
     except Exception as e:
         return {'error': str(e)}
+
+def calculate_comparison_periods(df, current_date_range, comparison_mode, custom_comparison_range=None):
+    """
+    Calculate the comparison period based on the selected mode.
+    
+    Args:
+        df: Full dataframe
+        current_date_range: Tuple of (start_date, end_date) for current period
+        comparison_mode: String indicating comparison type
+        custom_comparison_range: Tuple for custom comparison range
+        
+    Returns:
+        dict with current_period_data, comparison_period_data, and metadata
+    """
+    try:
+        if not current_date_range or len(current_date_range) != 2:
+            return None
+        
+        current_start = pd.to_datetime(current_date_range[0])
+        current_end = pd.to_datetime(current_date_range[1])
+        current_days = (current_end - current_start).days + 1
+        
+        # Get current period data
+        current_data = df[(df['Reporting Period Start Date'] >= current_start) & 
+                         (df['Reporting Period End Date'] <= current_end)]
+        
+        # Calculate comparison period based on mode
+        if comparison_mode == "None":
+            return None
+        
+        elif comparison_mode == "Previous Period (Auto)":
+            # Same duration as current, immediately before
+            comp_end = current_start - pd.Timedelta(days=1)
+            comp_start = comp_end - pd.Timedelta(days=current_days - 1)
+            comp_label = f"Previous {current_days} days"
+        
+        elif comparison_mode == "Week over Week":
+            # Previous week (7 days back)
+            comp_end = current_start - pd.Timedelta(days=1)
+            comp_start = comp_end - pd.Timedelta(days=6)
+            comp_label = "Previous Week"
+        
+        elif comparison_mode == "Month over Month":
+            # Previous month (approximately)
+            comp_end = current_start - pd.Timedelta(days=1)
+            comp_start = comp_end - pd.Timedelta(days=29)
+            comp_label = "Previous Month"
+        
+        elif comparison_mode == "Quarter over Quarter":
+            # Previous quarter (90 days back)
+            comp_end = current_start - pd.Timedelta(days=1)
+            comp_start = comp_end - pd.Timedelta(days=89)
+            comp_label = "Previous Quarter"
+        
+        elif comparison_mode == "Custom Date Range":
+            if not custom_comparison_range or len(custom_comparison_range) != 2:
+                return None
+            comp_start = pd.to_datetime(custom_comparison_range[0])
+            comp_end = pd.to_datetime(custom_comparison_range[1])
+            comp_label = f"Custom: {comp_start.strftime('%b %d')} - {comp_end.strftime('%b %d')}"
+        
+        else:
+            return None
+        
+        # Get comparison period data
+        comparison_data = df[(df['Reporting Period Start Date'] >= comp_start) & 
+                            (df['Reporting Period End Date'] <= comp_end)]
+        
+        comp_days = (comp_end - comp_start).days + 1
+        
+        return {
+            'current_data': current_data,
+            'comparison_data': comparison_data,
+            'current_start': current_start,
+            'current_end': current_end,
+            'current_days': current_days,
+            'comparison_start': comp_start,
+            'comparison_end': comp_end,
+            'comparison_days': comp_days,
+            'comparison_label': comp_label,
+            'current_label': f"{current_start.strftime('%b %d')} - {current_end.strftime('%b %d')}"
+        }
+    
+    except Exception as e:
+        return None
+
+
+def calculate_period_metrics(period_data, period_days):
+    """
+    Calculate key metrics for a given period with daily averages.
+    
+    Args:
+        period_data: DataFrame for the period
+        period_days: Number of days in the period
+        
+    Returns:
+        dict with all key metrics
+    """
+    metrics = {}
+    
+    # Revenue metrics
+    metrics['total_revenue'] = period_data['Revenue (SAR)'].sum() if 'Revenue (SAR)' in period_data.columns else 0
+    metrics['impression_revenue'] = period_data['Impression-Through Revenue (SAR)'].sum() if 'Impression-Through Revenue (SAR)' in period_data.columns else 0
+    metrics['click_revenue'] = period_data['Click-Through Revenue (SAR)'].sum() if 'Click-Through Revenue (SAR)' in period_data.columns else 0
+    metrics['selected_revenue'] = period_data['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in period_data.columns else metrics['total_revenue']
+    
+    # Conversion metrics
+    metrics['total_conversions'] = period_data['Unique Conversions'].sum() if 'Unique Conversions' in period_data.columns else 0
+    metrics['selected_conversions'] = period_data['Selected Conversions'].sum() if 'Selected Conversions' in period_data.columns else metrics['total_conversions']
+    
+    # Engagement metrics
+    metrics['total_clicks'] = period_data['Unique Clicks'].sum() if 'Unique Clicks' in period_data.columns else 0
+    metrics['total_impressions'] = period_data['Unique Impressions'].sum() if 'Unique Impressions' in period_data.columns else 0
+    
+    # Delivery metrics
+    metrics['total_sent'] = period_data['Sent'].sum() if 'Sent' in period_data.columns else 0
+    metrics['total_delivered'] = period_data['Delivered'].sum() if 'Delivered' in period_data.columns else 0
+    metrics['total_failed'] = period_data['Failed'].sum() if 'Failed' in period_data.columns else 0
+    
+    # Calculate rates
+    metrics['ctr'] = (metrics['total_clicks'] / metrics['total_impressions']) if metrics['total_impressions'] > 0 else 0
+    metrics['conversion_rate'] = (metrics['total_conversions'] / metrics['total_clicks']) if metrics['total_clicks'] > 0 else 0
+    metrics['delivery_rate'] = (metrics['total_delivered'] / metrics['total_sent']) if metrics['total_sent'] > 0 else 0
+    
+    # Revenue per conversion (AOV)
+    metrics['revenue_per_conversion'] = (metrics['total_revenue'] / metrics['total_conversions']) if metrics['total_conversions'] > 0 else 0
+    metrics['aov'] = metrics['revenue_per_conversion']  # Same as AOV
+    
+    # Revenue Per Click (RPC)
+    metrics['revenue_per_click'] = (metrics['selected_revenue'] / metrics['total_clicks']) if metrics['total_clicks'] > 0 else 0
+    
+    # Engagement Rate (includes Opens if available)
+    total_opens = period_data['Unique Opens'].sum() if 'Unique Opens' in period_data.columns else 0
+    if total_opens > 0 and metrics['total_impressions'] > 0:
+        metrics['engagement_rate'] = (metrics['total_clicks'] + total_opens) / metrics['total_impressions']
+    else:
+        metrics['engagement_rate'] = metrics['ctr']  # Fallback to CTR if no opens data
+    
+    # === COST-BASED METRICS ===
+    metrics['total_cost'] = period_data['Campaign Cost'].sum() if 'Campaign Cost' in period_data.columns else 0
+    
+    # ROAS - Return on Ad Spend (Industry standard: 4:1 is good)
+    metrics['roas'] = (metrics['selected_revenue'] / metrics['total_cost']) if metrics['total_cost'] > 0 else 0
+    
+    # Revenue Per Send (RPS) - Key efficiency metric
+    metrics['revenue_per_send'] = (metrics['selected_revenue'] / metrics['total_sent']) if metrics['total_sent'] > 0 else 0
+    
+    # Cost Per Conversion
+    metrics['cost_per_conversion'] = (metrics['total_cost'] / metrics['total_conversions']) if metrics['total_conversions'] > 0 else 0
+    
+    # Cost Per Click
+    metrics['cost_per_click'] = (metrics['total_cost'] / metrics['total_clicks']) if metrics['total_clicks'] > 0 else 0
+    
+    # Profit (Revenue - Cost)
+    metrics['profit'] = metrics['selected_revenue'] - metrics['total_cost']
+    
+    # Profit Margin
+    metrics['profit_margin'] = (metrics['profit'] / metrics['selected_revenue']) if metrics['selected_revenue'] > 0 else 0
+    
+    # Daily averages
+    metrics['daily_revenue'] = metrics['total_revenue'] / period_days if period_days > 0 else 0
+    metrics['daily_conversions'] = metrics['total_conversions'] / period_days if period_days > 0 else 0
+    metrics['daily_clicks'] = metrics['total_clicks'] / period_days if period_days > 0 else 0
+    metrics['daily_sent'] = metrics['total_sent'] / period_days if period_days > 0 else 0
+    metrics['daily_cost'] = metrics['total_cost'] / period_days if period_days > 0 else 0
+    
+    return metrics
+
+
+def calculate_metric_changes(current_metrics, comparison_metrics):
+    """
+    Calculate changes and percentage changes between two periods.
+    
+    Args:
+        current_metrics: Dict of metrics for current period
+        comparison_metrics: Dict of metrics for comparison period
+        
+    Returns:
+        dict with absolute changes, percentage changes, and trend indicators
+    """
+    changes = {}
+    
+    for key in current_metrics.keys():
+        current_val = current_metrics[key]
+        comparison_val = comparison_metrics.get(key, 0)
+        
+        # Absolute change
+        absolute_change = current_val - comparison_val
+        
+        # Percentage change
+        if comparison_val != 0:
+            pct_change = ((current_val - comparison_val) / comparison_val) * 100
+        else:
+            pct_change = 0 if current_val == 0 else 100
+        
+        # Trend indicator
+        if abs(pct_change) < 1:
+            trend = "→"  # Stable
+            trend_color = "blue"
+        elif pct_change > 0:
+            trend = "↗"  # Increasing
+            trend_color = "green"
+        else:
+            trend = "↘"  # Decreasing
+            trend_color = "red"
+        
+        changes[key] = {
+            'current': current_val,
+            'comparison': comparison_val,
+            'absolute_change': absolute_change,
+            'pct_change': pct_change,
+            'trend': trend,
+            'trend_color': trend_color
+        }
+    
+    return changes
+
 
 def analyze_individual_journey(journey_name, filtered_df):
     """
@@ -2161,6 +2724,7 @@ if uploaded_file is not None:
     @st.cache_data
     def apply_filters_and_attribution(df, revenue_attribution, conversion_attribution, date_range, channels, campaigns, segments, journeys):
         # Apply attribution settings
+        df = df.copy()
         if 'Revenue (SAR)' in df.columns:
             if revenue_attribution == "Click-Through" and 'Click-Through Revenue (SAR)' in df.columns:
                 df['Selected Revenue (SAR)'] = df['Click-Through Revenue (SAR)']
@@ -2204,6 +2768,28 @@ if uploaded_file is not None:
         date_range = st.sidebar.date_input("Date Range", value=(min_date, max_date))
     else:
         date_range = st.sidebar.date_input("Date Range", [])
+    
+    # Comparison Period Settings
+    st.sidebar.subheader("📊 Comparison Settings")
+    comparison_mode = st.sidebar.selectbox(
+        "Compare With",
+        ["None", "Previous Period (Auto)", "Week over Week", "Month over Month", "Quarter over Quarter", "Custom Date Range"],
+        help="Select a comparison period to see trends and changes"
+    )
+    
+    # Custom comparison date range (only show if Custom is selected)
+    comparison_date_range = None
+    if comparison_mode == "Custom Date Range":
+        st.sidebar.markdown("**Comparison Period:**")
+        if not df.empty:
+            comparison_date_range = st.sidebar.date_input(
+                "Custom Comparison Range", 
+                value=(min_date, min_date + pd.Timedelta(days=7)),
+                key="comparison_date_range"
+            )
+        else:
+            comparison_date_range = st.sidebar.date_input("Custom Comparison Range", [], key="comparison_date_range")
+    
     channels = st.sidebar.multiselect("Channels", df['Channel'].unique() if not df.empty else [])
     campaigns = st.sidebar.multiselect("Campaigns", df['Campaign Name'].unique() if not df.empty else [])
     segments = st.sidebar.multiselect("Segments", df['Segment Name'].unique() if not df.empty else [])
@@ -2212,7 +2798,52 @@ if uploaded_file is not None:
     # Apply filters using cached function
     filtered_df = apply_filters_and_attribution(df, revenue_attribution, conversion_attribution, date_range, channels, campaigns, segments, journeys)
 
+    # Calculate comparison data if comparison mode is enabled
+    comparison_result = None
+    if comparison_mode != "None":
+        # First, apply attribution to full dataset
+        df_with_attribution = df.copy()
+        if 'Revenue (SAR)' in df_with_attribution.columns:
+            if revenue_attribution == "Click-Through" and 'Click-Through Revenue (SAR)' in df_with_attribution.columns:
+                df_with_attribution['Selected Revenue (SAR)'] = df_with_attribution['Click-Through Revenue (SAR)']
+            elif revenue_attribution == "Impression-Through" and 'Impression-Through Revenue (SAR)' in df_with_attribution.columns:
+                df_with_attribution['Selected Revenue (SAR)'] = df_with_attribution['Impression-Through Revenue (SAR)']
+            else:
+                df_with_attribution['Selected Revenue (SAR)'] = df_with_attribution['Revenue (SAR)']
+        else:
+            df_with_attribution['Selected Revenue (SAR)'] = 0
+        
+        if 'Unique Conversions' in df_with_attribution.columns:
+            if conversion_attribution == "Click-Through" and 'Unique Click-Through Conversions' in df_with_attribution.columns:
+                df_with_attribution['Selected Conversions'] = df_with_attribution['Unique Click-Through Conversions']
+            elif conversion_attribution == "Impression-Through" and 'Unique Impression-Through Conversions' in df_with_attribution.columns:
+                df_with_attribution['Selected Conversions'] = df_with_attribution['Unique Impression-Through Conversions']
+            else:
+                df_with_attribution['Selected Conversions'] = df_with_attribution['Unique Conversions']
+        else:
+            df_with_attribution['Selected Conversions'] = 0
+        
+        # Apply same dimension filters (channels, campaigns, etc.)
+        if channels:
+            df_with_attribution = df_with_attribution[df_with_attribution['Channel'].isin(channels)]
+        if campaigns:
+            df_with_attribution = df_with_attribution[df_with_attribution['Campaign Name'].isin(campaigns)]
+        if segments:
+            df_with_attribution = df_with_attribution[df_with_attribution['Segment Name'].isin(segments)]
+        if journeys:
+            df_with_attribution = df_with_attribution[df_with_attribution['Journey Name'].isin(journeys)]
+        
+        # Calculate comparison periods
+        comparison_result = calculate_comparison_periods(
+            df_with_attribution, 
+            date_range, 
+            comparison_mode, 
+            comparison_date_range
+        )
+
     st.write(f"Filtered data: {len(filtered_df)} rows")
+    if comparison_result:
+        st.info(f"📊 Comparing **{comparison_result['current_label']}** vs **{comparison_result['comparison_label']}**")
 
     # Page content based on selection
     if page == "🎯 Automated Insights":
@@ -2561,20 +3192,617 @@ if uploaded_file is not None:
 
     elif page == "Overview":
         st.header("Overview")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            total_revenue = filtered_df['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in filtered_df.columns else filtered_df['Revenue (SAR)'].sum()
-            st.metric("Total Revenue", format_metric(total_revenue, "SAR"))
-            st.metric("Total Conversions", format_metric(filtered_df['Selected Conversions'].sum() if 'Selected Conversions' in filtered_df.columns else filtered_df['Unique Conversions'].sum()))
-        with col2:
-            st.metric("Total Clicks", format_metric(filtered_df['Unique Clicks'].sum()))
-            st.metric("Total Impressions", format_metric(filtered_df['Unique Impressions'].sum()))
-        with col3:
-            st.metric("Avg CTR", f"{filtered_df['CTR'].mean():.2%}")
-            st.metric("Avg Conversion Rate", f"{filtered_df['Unique Conversion Rate'].mean():.2%}")
-            st.metric("Avg Delivery Rate", f"{filtered_df['Delivery Rate'].mean():.2%}")
+        
+        # Calculate metrics with comparison
+        if comparison_result:
+            current_metrics = calculate_period_metrics(comparison_result['current_data'], comparison_result['current_days'])
+            comp_metrics = calculate_period_metrics(comparison_result['comparison_data'], comparison_result['comparison_days'])
+            metric_changes = calculate_metric_changes(current_metrics, comp_metrics)
+            
+            # Display metrics with comparisons
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                change_data = metric_changes['selected_revenue']
+                st.metric(
+                    "Total Revenue", 
+                    format_metric(change_data['current'], "SAR"),
+                    delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
+                    delta_color="normal" if change_data['pct_change'] >= 0 else "inverse"
+                )
+                change_data = metric_changes['selected_conversions']
+                st.metric(
+                    "Total Conversions", 
+                    format_metric(change_data['current']),
+                    delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
+                    delta_color="normal" if change_data['pct_change'] >= 0 else "inverse"
+                )
+            with col2:
+                change_data = metric_changes['total_clicks']
+                st.metric(
+                    "Total Clicks", 
+                    format_metric(change_data['current']),
+                    delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
+                    delta_color="normal" if change_data['pct_change'] >= 0 else "inverse"
+                )
+                change_data = metric_changes['total_impressions']
+                st.metric(
+                    "Total Impressions", 
+                    format_metric(change_data['current']),
+                    delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
+                    delta_color="normal" if change_data['pct_change'] >= 0 else "inverse"
+                )
+            with col3:
+                change_data = metric_changes['ctr']
+                st.metric(
+                    "Avg CTR", 
+                    f"{change_data['current']:.2%}",
+                    delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
+                    delta_color="normal" if change_data['pct_change'] >= 0 else "inverse"
+                )
+                change_data = metric_changes['conversion_rate']
+                st.metric(
+                    "Avg Conversion Rate", 
+                    f"{change_data['current']:.2%}",
+                    delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
+                    delta_color="normal" if change_data['pct_change'] >= 0 else "inverse"
+                )
+                change_data = metric_changes['delivery_rate']
+                st.metric(
+                    "Avg Delivery Rate", 
+                    f"{change_data['current']:.2%}",
+                    delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
+                    delta_color="normal" if change_data['pct_change'] >= 0 else "inverse"
+                )
+            
+            # NEW: Business Intelligence Metrics Row
+            st.markdown("---")
+            st.subheader("💰 Business Intelligence Metrics")
+            biz_col1, biz_col2, biz_col3 = st.columns(3)
+            
+            with biz_col1:
+                change_data = metric_changes['aov']
+                st.metric(
+                    "Average Order Value (AOV)", 
+                    format_metric(change_data['current'], "SAR"),
+                    delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
+                    delta_color="normal" if change_data['pct_change'] >= 0 else "inverse",
+                    help="Revenue per conversion - shows average customer purchase value"
+                )
+            
+            with biz_col2:
+                change_data = metric_changes['revenue_per_click']
+                st.metric(
+                    "Revenue Per Click (RPC)", 
+                    format_metric(change_data['current'], "SAR"),
+                    delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
+                    delta_color="normal" if change_data['pct_change'] >= 0 else "inverse",
+                    help="Revenue generated per click - measures click quality"
+                )
+            
+            with biz_col3:
+                change_data = metric_changes['engagement_rate']
+                st.metric(
+                    "Engagement Rate", 
+                    f"{change_data['current']:.2%}",
+                    delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
+                    delta_color="normal" if change_data['pct_change'] >= 0 else "inverse",
+                    help="Combined engagement metric (clicks + opens) / impressions"
+                )
+            
+            # NEW: ROI & Cost Efficiency Metrics
+            st.markdown("---")
+            st.subheader("💵 ROI & Cost Efficiency")
+            st.caption("*Based on channel costs: Email (1.2 SAR/1k), SMS (15 SAR/1k), WhatsApp (8 SAR/1k)*")
+            
+            roi_col1, roi_col2, roi_col3, roi_col4 = st.columns(4)
+            
+            with roi_col1:
+                change_data = metric_changes['roas']
+                current_roas = change_data['current']
+                # ROAS interpretation
+                if current_roas >= 4:
+                    roas_status = "🟢 Excellent"
+                elif current_roas >= 2:
+                    roas_status = "🟡 Good"
+                elif current_roas >= 1:
+                    roas_status = "🟠 Break-even"
+                else:
+                    roas_status = "🔴 Unprofitable"
+                
+                st.metric(
+                    "ROAS (Return on Ad Spend)", 
+                    f"{current_roas:.2f}x",
+                    delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
+                    delta_color="normal" if change_data['pct_change'] >= 0 else "inverse",
+                    help=f"Revenue / Cost ratio. {roas_status}"
+                )
+                st.caption(f"Status: {roas_status}")
+            
+            with roi_col2:
+                change_data = metric_changes['revenue_per_send']
+                st.metric(
+                    "Revenue Per Send (RPS)", 
+                    f"{change_data['current']:.4f} SAR",
+                    delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
+                    delta_color="normal" if change_data['pct_change'] >= 0 else "inverse",
+                    help="Revenue generated per message sent - KEY efficiency indicator"
+                )
+            
+            with roi_col3:
+                change_data = metric_changes['cost_per_conversion']
+                st.metric(
+                    "Cost Per Conversion", 
+                    format_metric(change_data['current'], "SAR"),
+                    delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
+                    delta_color="inverse" if change_data['pct_change'] >= 0 else "normal",  # Lower is better
+                    help="How much you spend to acquire each conversion"
+                )
+            
+            with roi_col4:
+                change_data = metric_changes['profit']
+                st.metric(
+                    "Profit (Revenue - Cost)", 
+                    format_metric(change_data['current'], "SAR"),
+                    delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
+                    delta_color="normal" if change_data['pct_change'] >= 0 else "inverse",
+                    help="Net profit after campaign costs"
+                )
+            
+            # Comparison summary card
+            st.markdown("---")
+            st.subheader("📊 Period Comparison Summary")
+            sum_col1, sum_col2, sum_col3 = st.columns(3)
+            
+            with sum_col1:
+                st.markdown(f"**Current Period:** {comparison_result['current_label']}")
+                st.markdown(f"- Duration: {comparison_result['current_days']} days")
+                st.markdown(f"- Daily Avg Revenue: {format_metric(current_metrics['daily_revenue'], 'SAR')}")
+                st.markdown(f"- Daily Avg Conversions: {format_metric(current_metrics['daily_conversions'])}")
+            
+            with sum_col2:
+                st.markdown(f"**Comparison Period:** {comparison_result['comparison_label']}")
+                st.markdown(f"- Duration: {comparison_result['comparison_days']} days")
+                st.markdown(f"- Daily Avg Revenue: {format_metric(comp_metrics['daily_revenue'], 'SAR')}")
+                st.markdown(f"- Daily Avg Conversions: {format_metric(comp_metrics['daily_conversions'])}")
+            
+            with sum_col3:
+                st.markdown("**Key Changes:**")
+                revenue_change = metric_changes['selected_revenue']['pct_change']
+                conv_change = metric_changes['selected_conversions']['pct_change']
+                ctr_change = metric_changes['ctr']['pct_change']
+                
+                if revenue_change > 0:
+                    st.success(f"✅ Revenue: {revenue_change:+.1f}%")
+                else:
+                    st.error(f"⚠️ Revenue: {revenue_change:+.1f}%")
+                
+                if conv_change > 0:
+                    st.success(f"✅ Conversions: {conv_change:+.1f}%")
+                else:
+                    st.error(f"⚠️ Conversions: {conv_change:+.1f}%")
+                
+                if ctr_change > 0:
+                    st.success(f"✅ CTR: {ctr_change:+.1f}%")
+                else:
+                    st.error(f"⚠️ CTR: {ctr_change:+.1f}%")
+        
+        else:
+            # No comparison - show regular metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                total_revenue = filtered_df['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in filtered_df.columns else filtered_df['Revenue (SAR)'].sum()
+                st.metric("Total Revenue", format_metric(total_revenue, "SAR"))
+                st.metric("Total Conversions", format_metric(filtered_df['Selected Conversions'].sum() if 'Selected Conversions' in filtered_df.columns else filtered_df['Unique Conversions'].sum()))
+            with col2:
+                st.metric("Total Clicks", format_metric(filtered_df['Unique Clicks'].sum()))
+                st.metric("Total Impressions", format_metric(filtered_df['Unique Impressions'].sum()))
+            with col3:
+                st.metric("Avg CTR", f"{filtered_df['CTR'].mean():.2%}")
+                # Fix: Handle missing Unique Conversion Rate
+                if 'Unique Conversion Rate' in filtered_df.columns:
+                    st.metric("Avg Conversion Rate", f"{filtered_df['Unique Conversion Rate'].mean():.2%}")
+                else:
+                    avg_conv_rate = filtered_df['Conversion Rate'].mean() if 'Conversion Rate' in filtered_df.columns else 0
+                    st.metric("Avg Conversion Rate", f"{avg_conv_rate:.2%}")
+                st.metric("Avg Delivery Rate", f"{filtered_df['Delivery Rate'].mean():.2%}")
+
+        # Channels Overview Section
+        st.markdown("---")
+        st.subheader("📡 Channels Overview")
+        st.markdown("*Performance breakdown by marketing channel*")
+        
+        if 'Channel' in filtered_df.columns:
+            # Get channel data - determine revenue and conversion columns
+            revenue_col_to_use = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in filtered_df.columns else 'Revenue (SAR)'
+            conv_col_to_use = 'Selected Conversions' if 'Selected Conversions' in filtered_df.columns else 'Unique Conversions'
+            
+            agg_dict = {
+                'Sent': 'sum',
+                'Delivered': 'sum',
+                'Unique Impressions': 'sum',
+                'Unique Clicks': 'sum',
+            }
+            
+            # Always aggregate the conversion column being used
+            agg_dict[conv_col_to_use] = 'sum'
+            
+            # Also aggregate Unique Conversions if it's different (needed for fallback calculations)
+            if conv_col_to_use != 'Unique Conversions' and 'Unique Conversions' in filtered_df.columns:
+                agg_dict['Unique Conversions'] = 'sum'
+            
+            # Add Click-Through Conversions if available (for accurate conversion rate)
+            if 'Unique Click-Through Conversions' in filtered_df.columns:
+                agg_dict['Unique Click-Through Conversions'] = 'sum'
+            
+            if revenue_col_to_use in filtered_df.columns:
+                agg_dict[revenue_col_to_use] = 'sum'
+            
+            channel_data = filtered_df.groupby('Channel').agg(agg_dict).reset_index()
+            
+            # Calculate rates for each channel from raw counts (not pre-calculated rates)
+            # Using raw metrics ensures correct calculation at channel level
+            channel_data['Delivery Rate'] = np.where(
+                channel_data['Sent'] > 0,
+                (channel_data['Delivered'] / channel_data['Sent'] * 100),
+                0
+            ).round(1)
+            
+            channel_data['CTR'] = np.where(
+                channel_data['Unique Impressions'] > 0,
+                (channel_data['Unique Clicks'] / channel_data['Unique Impressions'] * 100),
+                0
+            ).round(2)
+            
+            # Conversion Rate - Use Click-Through Conversions for accurate rate
+            # (Total conversions includes impression-through which didn't click)
+            if 'Unique Click-Through Conversions' in channel_data.columns:
+                channel_data['Conversion Rate'] = np.where(
+                    channel_data['Unique Clicks'] > 0,
+                    (channel_data['Unique Click-Through Conversions'] / channel_data['Unique Clicks'] * 100),
+                    0
+                ).round(2)
+            else:
+                # Fallback to total conversions if click-through not available
+                channel_data['Conversion Rate'] = np.where(
+                    channel_data['Unique Clicks'] > 0,
+                    (channel_data['Unique Conversions'] / channel_data['Unique Clicks'] * 100),
+                    0
+                ).round(2)
+            
+            # Calculate business metrics for channels
+            revenue_col = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in channel_data.columns else 'Revenue (SAR)'
+            # Use the selected conversion column for calculations
+            conv_col_for_calc = conv_col_to_use if conv_col_to_use in channel_data.columns else 'Unique Conversions'
+            
+            # AOV - Average Order Value (Revenue per Conversion) - uses selected attribution
+            channel_data['AOV'] = np.where(
+                channel_data[conv_col_for_calc] > 0,
+                channel_data[revenue_col] / channel_data[conv_col_for_calc],
+                0
+            ).round(2)
+            
+            # RPC - Revenue Per Click
+            channel_data['RPC'] = np.where(
+                channel_data['Unique Clicks'] > 0,
+                channel_data[revenue_col] / channel_data['Unique Clicks'],
+                0
+            ).round(2)
+            
+            # Calculate cost-based metrics for channels
+            channel_costs = {
+                'Email': 1.2, 'SMS': 15.0, 'WhatsApp': 8.0,
+                'Push': 0.0, 'Mobile Push': 0.0, 'App Push': 0.0,
+                'Web Push': 0.0, 'In-App': 0.0, 'On-Site': 0.0,
+                'Onsite': 0.0, 'On-site': 0.0
+            }
+            
+            # Channel Cost
+            channel_data['Cost'] = channel_data.apply(
+                lambda row: (row['Sent'] / 1000) * channel_costs.get(row['Channel'], 0),
+                axis=1
+            ).round(2)
+            
+            # ROAS - Return on Ad Spend
+            channel_data['ROAS'] = np.where(
+                channel_data['Cost'] > 0,
+                channel_data[revenue_col] / channel_data['Cost'],
+                0
+            ).round(2)
+            
+            # Revenue Per Send (RPS)
+            channel_data['RPS'] = np.where(
+                channel_data['Sent'] > 0,
+                channel_data[revenue_col] / channel_data['Sent'],
+                0
+            ).round(4)
+            
+            # Cost Per Conversion (CPC) - uses selected attribution
+            channel_data['CPC'] = np.where(
+                channel_data[conv_col_for_calc] > 0,
+                channel_data['Cost'] / channel_data[conv_col_for_calc],
+                0
+            ).round(2)
+            
+            # Sort by revenue
+            channel_data = channel_data.sort_values(revenue_col, ascending=False)
+            
+            # Define channel icons and status
+            channel_icons = {
+                'Email': '📧',
+                'SMS': '💬',
+                'Push': '🔔',
+                'Web Push': '🌐',
+                'Mobile Push': '📱',
+                'App Push': '📱',
+                'WhatsApp': '💚',
+                'In-App': '📲',
+                'On-Site': '🖥️',
+                'Onsite': '🖥️',
+                'On-site': '🖥️',
+                'Facebook': '👤',
+                'Google': '🔍'
+            }
+            
+            # Check comparison data for channel performance
+            channel_comparison = {}
+            if comparison_result:
+                # Determine columns for comparison
+                comp_rev_col = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in comparison_result['current_data'].columns else 'Revenue (SAR)'
+                comp_conv_col = 'Selected Conversions' if 'Selected Conversions' in comparison_result['current_data'].columns else 'Unique Conversions'
+                
+                current_channel_agg = {}
+                comp_channel_agg = {}
+                
+                if comp_rev_col in comparison_result['current_data'].columns:
+                    current_channel_agg[comp_rev_col] = 'sum'
+                    comp_channel_agg[comp_rev_col] = 'sum'
+                if comp_conv_col in comparison_result['current_data'].columns:
+                    current_channel_agg[comp_conv_col] = 'sum'
+                    comp_channel_agg[comp_conv_col] = 'sum'
+                
+                current_channel_data = comparison_result['current_data'].groupby('Channel').agg(current_channel_agg)
+                comp_channel_data = comparison_result['comparison_data'].groupby('Channel').agg(comp_channel_agg)
+                
+                for channel in current_channel_data.index:
+                    if channel in comp_channel_data.index:
+                        curr_rev = current_channel_data.loc[channel, comp_rev_col]
+                        comp_rev = comp_channel_data.loc[channel, comp_rev_col]
+                        
+                        if comp_rev > 0:
+                            rev_change = ((curr_rev - comp_rev) / comp_rev) * 100
+                        else:
+                            rev_change = 0
+                        
+                        channel_comparison[channel] = {
+                            'revenue_change': rev_change,
+                            'trend': '↗' if rev_change > 1 else '↘' if rev_change < -1 else '→'
+                        }
+            
+            # Display channel cards in a grid
+            num_channels = len(channel_data)
+            
+            if num_channels > 0:
+                # Show top-level summary
+                st.markdown("#### Active Channels Performance")
+                
+                # Create channel cards
+                cols_per_row = 4
+                rows_needed = (num_channels + cols_per_row - 1) // cols_per_row
+                
+                idx = 0
+                for row in range(rows_needed):
+                    cols = st.columns(cols_per_row)
+                    
+                    for col_idx, col in enumerate(cols):
+                        if idx < num_channels:
+                            channel_row = channel_data.iloc[idx]
+                            channel_name = channel_row['Channel']
+                            
+                            # Get icon
+                            icon = channel_icons.get(channel_name, '📊')
+                            
+                            with col:
+                                # Determine if channel is active (has recent data)
+                                is_active = channel_row['Sent'] > 0
+                                
+                                # Card styling based on activity
+                                if is_active:
+                                    st.markdown(f"**{icon} {channel_name}**")
+                                    
+                                    # Show comparison if available
+                                    if channel_name in channel_comparison:
+                                        comp_info = channel_comparison[channel_name]
+                                        trend_indicator = comp_info['trend']
+                                        change_pct = comp_info['revenue_change']
+                                        
+                                        if change_pct > 0:
+                                            st.success(f"{trend_indicator} {change_pct:+.1f}%")
+                                        elif change_pct < 0:
+                                            st.error(f"{trend_indicator} {change_pct:+.1f}%")
+                                        else:
+                                            st.info(f"{trend_indicator} {change_pct:+.1f}%")
+                                    else:
+                                        st.markdown("✅ **Active**")
+                                    
+                                    # Key metrics
+                                    revenue_val = channel_row[revenue_col]
+                                    # Use selected conversion column (respects attribution choice)
+                                    conv_val = channel_row[conv_col_to_use] if conv_col_to_use in channel_row else channel_row.get('Unique Conversions', 0)
+                                    delivery_rate = channel_row['Delivery Rate']
+                                    ctr = channel_row['CTR']
+                                    aov_val = channel_row['AOV']
+                                    rpc_val = channel_row['RPC']
+                                    cost_val = channel_row['Cost']
+                                    roas_val = channel_row['ROAS']
+                                    rps_val = channel_row['RPS']
+                                    
+                                    # Get raw counts for better display
+                                    impressions = channel_row['Unique Impressions']
+                                    clicks = channel_row['Unique Clicks']
+                                    
+                                    st.metric("Revenue", format_metric(revenue_val, "SAR"))
+                                    st.metric("Conversions", format_metric(conv_val))
+                                    
+                                    # Always show AOV if there are conversions (important business metric)
+                                    if conv_val > 0:
+                                        st.markdown(f"<small>💰 <span title='Average Order Value - Revenue per conversion' style='cursor: help;'>AOV</span>: {format_metric(aov_val, 'SAR')}</small>", unsafe_allow_html=True)
+                                    
+                                    # Show cost efficiency (highlight for paid channels)
+                                    if cost_val > 0:
+                                        st.markdown(f"<small>💵 Cost: {format_metric(cost_val, 'SAR')}</small>", unsafe_allow_html=True)
+                                        # ROAS color coding with tooltip
+                                        if roas_val >= 4:
+                                            st.markdown(f"<small>📈 <span title='Return on Ad Spend - Revenue earned per SAR spent (4x = 4 SAR revenue per 1 SAR cost)' style='cursor: help;'>ROAS</span>: **{roas_val:.1f}x** 🟢</small>", unsafe_allow_html=True)
+                                        elif roas_val >= 2:
+                                            st.markdown(f"<small>📈 <span title='Return on Ad Spend - Revenue earned per SAR spent (4x = 4 SAR revenue per 1 SAR cost)' style='cursor: help;'>ROAS</span>: **{roas_val:.1f}x** 🟡</small>", unsafe_allow_html=True)
+                                        else:
+                                            st.markdown(f"<small>📈 <span title='Return on Ad Spend - Revenue earned per SAR spent (4x = 4 SAR revenue per 1 SAR cost)' style='cursor: help;'>ROAS</span>: **{roas_val:.1f}x** 🔴</small>", unsafe_allow_html=True)
+                                        st.markdown(f"<small>💰 <span title='Revenue Per Send - Revenue generated per message sent' style='cursor: help;'>RPS</span>: {rps_val:.4f} SAR</small>", unsafe_allow_html=True)
+                                    else:
+                                        # Free channels - show RPC
+                                        if clicks > 0:
+                                            st.markdown(f"<small>🎯 <span title='Revenue Per Click - Revenue generated per click' style='cursor: help;'>RPC</span>: {format_metric(rpc_val, 'SAR')}</small>", unsafe_allow_html=True)
+                                    
+                                    # Show rates in smaller text with context and tooltips
+                                    st.markdown(f"<small>📨 Delivery: {delivery_rate:.1f}%</small>", unsafe_allow_html=True)
+                                    
+                                    # Show CTR with context and tooltip - some channels don't track impressions
+                                    if impressions > 0:
+                                        st.markdown(f"<small>👆 <span title='Click-Through Rate - Percentage of impressions that resulted in clicks' style='cursor: help;'>CTR</span>: {ctr:.2f}% ({format_metric(clicks)} clicks)</small>", unsafe_allow_html=True)
+                                    else:
+                                        st.markdown(f"<small>👆 <span title='Click-Through Rate - Percentage of impressions that resulted in clicks' style='cursor: help;'>CTR</span>: N/A (no impression tracking)</small>", unsafe_allow_html=True)
+                                else:
+                                    st.markdown(f"**{icon} {channel_name}**")
+                                    st.warning("❌ Inactive")
+                                    st.caption("No activity this period")
+                            
+                            idx += 1
+                
+                # Detailed channel comparison table
+                st.markdown("---")
+                st.markdown("#### Detailed Channel Metrics")
+                st.caption("*Conversion Rate = Click-Through Conversions / Unique Clicks. Hover over abbreviated metrics for full names.*")
+                
+                # Create display dataframe
+                channel_display = channel_data.copy()
+                channel_display['Channel'] = channel_display['Channel'].apply(lambda x: f"{channel_icons.get(x, '📊')} {x}")
+                channel_display['Sent'] = channel_display['Sent'].apply(format_metric)
+                channel_display['Delivered'] = channel_display['Delivered'].apply(format_metric)
+                channel_display['Unique Clicks'] = channel_display['Unique Clicks'].apply(format_metric)
+                
+                # Format the selected conversion column
+                if conv_col_for_calc in channel_display.columns:
+                    channel_display[conv_col_for_calc] = channel_display[conv_col_for_calc].apply(format_metric)
+                
+                channel_display[revenue_col] = channel_display[revenue_col].apply(lambda x: format_metric(x, "SAR"))
+                
+                # Select columns to display - use selected conversion column
+                display_cols = ['Channel', 'Sent', 'Delivered', 'Delivery Rate', 'Unique Clicks', 
+                               'CTR', conv_col_for_calc, 'Conversion Rate', revenue_col]
+                channel_display = channel_display[display_cols]
+                
+                # Rename the conversion column header to show attribution type
+                attribution_labels = {
+                    'Selected Conversions': 'Conversions (Selected)',
+                    'Unique Conversions': 'Unique Conversions',
+                    'Unique Click-Through Conversions': 'Click-Through Conversions',
+                    'Unique Impression-Through Conversions': 'Impression-Through Conversions'
+                }
+                channel_display = channel_display.rename(columns={
+                    conv_col_for_calc: attribution_labels.get(conv_col_for_calc, conv_col_for_calc)
+                })
+                
+                st.dataframe(channel_display, use_container_width=True, hide_index=True)
+                
+                # Channel performance charts
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Revenue by channel
+                    fig_channel_revenue = px.bar(
+                        channel_data,
+                        x='Channel',
+                        y=revenue_col,
+                        title="Revenue by Channel",
+                        color=revenue_col,
+                        color_continuous_scale='Blues'
+                    )
+                    fig_channel_revenue.update_layout(showlegend=False)
+                    st.plotly_chart(fig_channel_revenue, use_container_width=True)
+                
+                with col2:
+                    # Conversions by channel
+                    fig_channel_conv = px.bar(
+                        channel_data,
+                        x='Channel',
+                        y='Unique Conversions',
+                        title="Conversions by Channel",
+                        color='Unique Conversions',
+                        color_continuous_scale='Greens'
+                    )
+                    fig_channel_conv.update_layout(showlegend=False)
+                    st.plotly_chart(fig_channel_conv, use_container_width=True)
+                
+                # Channel insights
+                st.markdown("#### 💡 Channel Insights")
+                
+                # Find best and worst performing channels
+                if len(channel_data) > 0:
+                    best_revenue_channel = channel_data.iloc[0]
+                    best_conv_rate_channel = channel_data.loc[channel_data['Conversion Rate'].idxmax()]
+                    best_ctr_channel = channel_data.loc[channel_data['CTR'].idxmax()]
+                    
+                    insight_col1, insight_col2, insight_col3 = st.columns(3)
+                    
+                    with insight_col1:
+                        st.success(f"**🏆 Top Revenue Channel**")
+                        st.markdown(f"{channel_icons.get(best_revenue_channel['Channel'], '📊')} **{best_revenue_channel['Channel']}**")
+                        st.markdown(f"Revenue: {format_metric(best_revenue_channel[revenue_col], 'SAR')}")
+                    
+                    with insight_col2:
+                        st.success(f"**🎯 Best Conversion Rate**")
+                        st.markdown(f"{channel_icons.get(best_conv_rate_channel['Channel'], '📊')} **{best_conv_rate_channel['Channel']}**")
+                        st.markdown(f"Conv Rate: {best_conv_rate_channel['Conversion Rate']:.2f}%")
+                    
+                    with insight_col3:
+                        st.success(f"**👆 Best Engagement**")
+                        st.markdown(f"{channel_icons.get(best_ctr_channel['Channel'], '📊')} **{best_ctr_channel['Channel']}**")
+                        st.markdown(f"CTR: {best_ctr_channel['CTR']:.2f}%")
+                    
+                    # Additional insights
+                    st.markdown("**Key Observations:**")
+                    observations = []
+                    
+                    # Check for inactive channels
+                    inactive_channels = channel_data[channel_data['Sent'] == 0]['Channel'].tolist()
+                    if inactive_channels:
+                        observations.append(f"⚠️ **Inactive Channels**: {', '.join(inactive_channels)} - Consider reactivating or investigating")
+                    
+                    # Check for low delivery rates
+                    low_delivery = channel_data[channel_data['Delivery Rate'] < 85]
+                    if not low_delivery.empty:
+                        for _, row in low_delivery.iterrows():
+                            observations.append(f"🚨 **{row['Channel']}**: Low delivery rate ({row['Delivery Rate']:.1f}%) - Check ESP settings")
+                    
+                    # Check for high CTR but low conversions
+                    high_ctr_low_conv = channel_data[(channel_data['CTR'] > 3) & (channel_data['Conversion Rate'] < 5)]
+                    if not high_ctr_low_conv.empty:
+                        for _, row in high_ctr_low_conv.iterrows():
+                            observations.append(f"💡 **{row['Channel']}**: Good engagement ({row['CTR']:.2f}% CTR) but low conversion ({row['Conversion Rate']:.2f}%) - Optimize landing pages")
+                    
+                    # Show observations
+                    if observations:
+                        for obs in observations:
+                            st.markdown(f"- {obs}")
+                    else:
+                        st.info("✅ All channels are performing well with no major issues detected")
+            else:
+                st.info("No channel data available for the selected period")
+        else:
+            st.warning("⚠️ Channel information not available in the dataset")
 
         # Conversion Funnel
+        st.markdown("---")
         st.subheader("Conversion Funnel")
         funnel_data = {
             'Stage': ['Sent', 'Impressions', 'Clicks', 'Conversions'],
@@ -2601,9 +3829,50 @@ if uploaded_file is not None:
     elif page == "Campaigns":
         st.header("Campaign Analysis")
         
+        # Show comparison summary if enabled
+        if comparison_result:
+            st.info(f"📊 Period Comparison Active: {comparison_result['current_label']} vs {comparison_result['comparison_label']}")
+            
+            # Calculate campaign metrics for both periods
+            current_metrics = calculate_period_metrics(comparison_result['current_data'], comparison_result['current_days'])
+            comp_metrics = calculate_period_metrics(comparison_result['comparison_data'], comparison_result['comparison_days'])
+            metric_changes = calculate_metric_changes(current_metrics, comp_metrics)
+            
+            # Show quick comparison
+            comp_col1, comp_col2, comp_col3, comp_col4 = st.columns(4)
+            with comp_col1:
+                change_data = metric_changes['selected_revenue']
+                st.metric("Revenue", format_metric(change_data['current'], "SAR"), 
+                         delta=f"{change_data['pct_change']:+.1f}%")
+            with comp_col2:
+                change_data = metric_changes['selected_conversions']
+                st.metric("Conversions", format_metric(change_data['current']), 
+                         delta=f"{change_data['pct_change']:+.1f}%")
+            with comp_col3:
+                change_data = metric_changes['ctr']
+                st.metric("CTR", f"{change_data['current']:.2%}", 
+                         delta=f"{change_data['pct_change']:+.1f}%")
+            with comp_col4:
+                change_data = metric_changes['conversion_rate']
+                st.metric("Conv Rate", f"{change_data['current']:.2%}", 
+                         delta=f"{change_data['pct_change']:+.1f}%")
+            
+            st.markdown("---")
+        
         # Top Campaigns
         st.subheader("Top Campaigns")
-        camp_metric = st.selectbox("Metric", ['Unique Conversions', 'Revenue (SAR)', 'Unique Clicks', 'Click-Through Revenue (SAR)', 'Impression-Through Revenue (SAR)', 'CTR', 'Conversion Rate'], key='camp_metric')
+        camp_metric = st.selectbox("Metric", [
+            'Unique Conversions', 
+            'Revenue (SAR)', 
+            'Unique Clicks', 
+            'Click-Through Revenue (SAR)', 
+            'Impression-Through Revenue (SAR)', 
+            'CTR', 
+            'Conversion Rate',
+            'AOV',
+            'Revenue Per Click',
+            'Engagement Rate'
+        ], key='camp_metric')
         top_camp = top_campaigns(filtered_df, camp_metric)
         
         # Create display version for table
@@ -2632,20 +3901,41 @@ if uploaded_file is not None:
         if selected_campaigns:
             camp_details = filtered_df[filtered_df['Campaign Name'].isin(selected_campaigns)]
             
-            # Summary KPIs
+            # Summary KPIs - Row 1: Volume Metrics
             col1, col2, col3, col4, col5, col6 = st.columns(6)
             with col1:
                 st.metric("Total Sent", format_metric(camp_details['Sent'].sum()))
             with col2:
                 st.metric("Total Delivered", format_metric(camp_details['Delivered'].sum()))
             with col3:
-                st.metric("Total Conversions", format_metric(camp_details['Unique Conversions'].sum()))
+                st.metric("Total Clicks", format_metric(camp_details['Unique Clicks'].sum()))
             with col4:
-                st.metric("Send-Through Revenue", format_metric(camp_details['Revenue (SAR)'].sum(), "SAR"))
+                st.metric("Total Conversions", format_metric(camp_details['Unique Conversions'].sum()))
             with col5:
-                st.metric("Impression-Through Revenue", format_metric(camp_details['Impression-Through Revenue (SAR)'].sum(), "SAR"))
+                st.metric("Send-Through Revenue", format_metric(camp_details['Revenue (SAR)'].sum(), "SAR"))
             with col6:
                 st.metric("Click-Through Revenue", format_metric(camp_details['Click-Through Revenue (SAR)'].sum(), "SAR"))
+            
+            # Row 2: Business Metrics
+            st.markdown("#### 💰 Business Intelligence")
+            biz_col1, biz_col2, biz_col3, biz_col4 = st.columns(4)
+            
+            total_revenue = camp_details['Revenue (SAR)'].sum()
+            total_conversions = camp_details['Unique Conversions'].sum()
+            total_clicks = camp_details['Unique Clicks'].sum()
+            
+            with biz_col1:
+                aov = (total_revenue / total_conversions) if total_conversions > 0 else 0
+                st.metric("Average Order Value", format_metric(aov, "SAR"), help="Revenue per conversion")
+            with biz_col2:
+                rpc = (total_revenue / total_clicks) if total_clicks > 0 else 0
+                st.metric("Revenue Per Click", format_metric(rpc, "SAR"), help="Revenue generated per click")
+            with biz_col3:
+                avg_ctr = camp_details['CTR'].mean()
+                st.metric("Avg CTR", f"{avg_ctr:.2%}", help="Average click-through rate")
+            with biz_col4:
+                avg_conv_rate = camp_details['Conversion Rate'].mean()
+                st.metric("Avg Conversion Rate", f"{avg_conv_rate:.2%}", help="Average conversion rate")
             
             # Performance by Channel
             st.subheader("Performance by Channel")
@@ -3267,6 +4557,36 @@ if uploaded_file is not None:
 
     elif page == "Journeys":
         st.header("Journey Analysis")
+        
+        # Show comparison summary if enabled
+        if comparison_result:
+            st.info(f"📊 Period Comparison Active: {comparison_result['current_label']} vs {comparison_result['comparison_label']}")
+            
+            # Calculate journey metrics for both periods
+            current_metrics = calculate_period_metrics(comparison_result['current_data'], comparison_result['current_days'])
+            comp_metrics = calculate_period_metrics(comparison_result['comparison_data'], comparison_result['comparison_days'])
+            metric_changes = calculate_metric_changes(current_metrics, comp_metrics)
+            
+            # Show quick comparison
+            comp_col1, comp_col2, comp_col3, comp_col4 = st.columns(4)
+            with comp_col1:
+                change_data = metric_changes['selected_revenue']
+                st.metric("Revenue", format_metric(change_data['current'], "SAR"), 
+                         delta=f"{change_data['pct_change']:+.1f}%")
+            with comp_col2:
+                change_data = metric_changes['selected_conversions']
+                st.metric("Conversions", format_metric(change_data['current']), 
+                         delta=f"{change_data['pct_change']:+.1f}%")
+            with comp_col3:
+                change_data = metric_changes['ctr']
+                st.metric("CTR", f"{change_data['current']:.2%}", 
+                         delta=f"{change_data['pct_change']:+.1f}%")
+            with comp_col4:
+                change_data = metric_changes['conversion_rate']
+                st.metric("Conv Rate", f"{change_data['current']:.2%}", 
+                         delta=f"{change_data['pct_change']:+.1f}%")
+            
+            st.markdown("---")
         
         # Revenue Type Selection - Revenue Attribution Models
         st.markdown("**💰 Revenue Attribution Model Selection**")
@@ -4636,6 +5956,17 @@ if uploaded_file is not None:
 
                     if stopped_journeys:
                         st.error(f"🚨 **{len(stopped_journeys)} Journeys Identified with Stopped Delivery**")
+                        
+                        # Check for journeys that were never active
+                        never_active_count = 0
+                        for journey in stopped_journeys:
+                            for period in journey['stopped_periods']['periods']:
+                                if not period.get('was_active_before', True):
+                                    never_active_count += 1
+                                    break  # Count journey only once
+                        
+                        if never_active_count > 0:
+                            st.warning(f"⚠️ **Note:** {never_active_count} journey(s) had zero delivery periods but were never active before. These might be journeys that haven't launched yet rather than journeys that stopped.")
 
                         # Summary metrics
                         total_revenue_loss = sum(journey['estimated_revenue_loss']['total_loss'] for journey in stopped_journeys)
@@ -4677,7 +6008,25 @@ if uploaded_file is not None:
                                     confidence_range = loss_data['confidence_interval']
                                     st.metric("🎯 Confidence Range",
                                             f"{format_metric(confidence_range[0], 'SAR')} - {format_metric(confidence_range[1], 'SAR')}")
-                                    st.metric("📊 Confidence Level", f"{int(confidence_level*100)}%")
+                                    
+                                    # Show model quality indicator
+                                    model_quality = loss_data.get('model_quality', 'medium')
+                                    if model_quality == 'high':
+                                        quality_icon = "✅"
+                                        quality_label = "High Reliability"
+                                        quality_color = "green"
+                                    elif model_quality == 'medium':
+                                        quality_icon = "⚠️"
+                                        quality_label = "Moderate Reliability"
+                                        quality_color = "orange"
+                                    else:
+                                        quality_icon = "ℹ️"
+                                        quality_label = "Directional Estimate"
+                                        quality_color = "gray"
+                                    
+                                    st.markdown(f"<div style='padding: 10px; border-left: 4px solid {quality_color};'>"
+                                              f"{quality_icon} <b>{quality_label}</b></div>", 
+                                              unsafe_allow_html=True)
 
                                 # Revenue attribution breakdown
                                 st.subheader("💰 Revenue Loss by Attribution Model")
@@ -4732,12 +6081,47 @@ if uploaded_file is not None:
                                     # Detailed periods table
                                     st.subheader("📋 Stopped Period Details")
                                     periods_display = periods_df.copy()
+                                    
+                                    # Calculate expected days from dates for verification
+                                    periods_display['calculated_days'] = (
+                                        (periods_display['end_date'] - periods_display['start_date']).dt.days + 1
+                                    )
+                                    
+                                    # Format dates
                                     periods_display['start_date'] = periods_display['start_date'].dt.strftime('%Y-%m-%d')
                                     periods_display['end_date'] = periods_display['end_date'].dt.strftime('%Y-%m-%d')
+                                    
+                                    # Add verification indicator
+                                    periods_display['days_match'] = periods_display.apply(
+                                        lambda row: '✓' if row['days_stopped'] == row['calculated_days'] else f'⚠️ Mismatch!',
+                                        axis=1
+                                    )
+                                    
                                     periods_display['days_stopped'] = periods_display['days_stopped'].apply(format_metric)
-                                    periods_display['estimated_daily_loss'] = periods_display['estimated_daily_loss'].apply(lambda x: format_metric(x, "SAR"))
-
-                                    st.dataframe(periods_display[['start_date', 'end_date', 'days_stopped', 'estimated_daily_loss']])
+                                    periods_display['calculated_days'] = periods_display['calculated_days'].apply(format_metric)
+                                    
+                                    # Add activity information
+                                    if 'was_active_before' in periods_display.columns:
+                                        periods_display['Status'] = periods_display.apply(
+                                            lambda row: f"✅ Was Active ({format_metric(row['active_days_before_stop'])} days, avg: {format_metric(row['avg_delivery_before_stop'])} delivered)" 
+                                            if row.get('was_active_before', False) 
+                                            else "⚠️ Never Active", 
+                                            axis=1
+                                        )
+                                        display_cols = ['start_date', 'end_date', 'days_stopped', 'calculated_days', 'days_match', 'Status']
+                                    else:
+                                        display_cols = ['start_date', 'end_date', 'days_stopped', 'calculated_days', 'days_match']
+                                    
+                                    # Add estimated_daily_loss if available
+                                    if 'estimated_daily_loss' in periods_display.columns:
+                                        periods_display['estimated_daily_loss'] = periods_display['estimated_daily_loss'].apply(lambda x: format_metric(x, "SAR"))
+                                        display_cols.append('estimated_daily_loss')
+                                    else:
+                                        # Add placeholder if missing
+                                        periods_display['estimated_daily_loss'] = 'N/A'
+                                        display_cols.append('estimated_daily_loss')
+                                    
+                                    st.dataframe(periods_display[display_cols], use_container_width=True)
 
                                 # Recommendations
                                 st.subheader("💡 Recommendations & Actions")
@@ -4970,78 +6354,401 @@ if uploaded_file is not None:
             st.download_button("Download Excel", buffer, "aggregated_report.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key='excel_dl')
 
     elif page == "Comparisons":
-        st.header("Month-over-Month Comparisons")
+        st.header("📊 Period-over-Period Comparisons")
+        st.markdown("*Analyze performance trends across different time periods with detailed metrics*")
         
-        # Group by month
-        monthly_df = filtered_df.copy()
-        monthly_df['Month'] = monthly_df['Reporting Period Start Date'].dt.to_period('M').astype(str)
-        
-        monthly_agg = monthly_df.groupby('Month').agg({
-            'Revenue (SAR)': 'sum',
-            'Unique Conversions': 'sum',
-            'Unique Clicks': 'sum',
-            'Sent': 'sum',
-            'Delivered': 'sum'
-        }).reset_index()
-        
-        # Sort by month
-        monthly_agg['Month'] = pd.to_datetime(monthly_agg['Month'] + '-01')
-        monthly_agg = monthly_agg.sort_values('Month')
-        monthly_agg['Month'] = monthly_agg['Month'].dt.strftime('%Y-%m')
-        
-        if not monthly_agg.empty:
-            st.subheader("Monthly Summary")
-            # Format columns for display
-            monthly_agg_display = monthly_agg.copy()
-            monthly_agg_display['Revenue (SAR)'] = monthly_agg_display['Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
-            monthly_agg_display['Unique Conversions'] = monthly_agg_display['Unique Conversions'].apply(format_metric)
-            monthly_agg_display['Unique Clicks'] = monthly_agg_display['Unique Clicks'].apply(format_metric)
-            monthly_agg_display['Sent'] = monthly_agg_display['Sent'].apply(format_metric)
-            monthly_agg_display['Delivered'] = monthly_agg_display['Delivered'].apply(format_metric)
-            st.dataframe(monthly_agg_display)
+        # Check if comparison is enabled
+        if comparison_result:
+            st.success(f"✅ Comparison Mode Active: **{comparison_result['current_label']}** vs **{comparison_result['comparison_label']}**")
             
-            # Chart
-            fig_comp = px.line(monthly_agg, x='Month', y='Revenue (SAR)', title="Revenue Over Months")
-            st.plotly_chart(fig_comp)
+            # Calculate comprehensive metrics
+            current_metrics = calculate_period_metrics(comparison_result['current_data'], comparison_result['current_days'])
+            comp_metrics = calculate_period_metrics(comparison_result['comparison_data'], comparison_result['comparison_days'])
+            metric_changes = calculate_metric_changes(current_metrics, comp_metrics)
             
-            # Comparison between two months
-            st.subheader("Compare Two Months")
-            months = monthly_agg['Month'].tolist()
-            if len(months) >= 2:
-                col1, col2 = st.columns(2)
-                with col1:
-                    month1 = st.selectbox("Select First Month", months, index=0)
-                with col2:
-                    month2 = st.selectbox("Select Second Month", [m for m in months if m != month1], index=0 if len(months) > 1 else None)
-                
-                if month1 and month2:
-                    data1 = monthly_agg[monthly_agg['Month'] == month1].iloc[0]
-                    data2 = monthly_agg[monthly_agg['Month'] == month2].iloc[0]
-                    
-                    st.write(f"### Comparison: {month1} vs {month2}")
-                    
-                    metrics = ['Revenue (SAR)', 'Unique Conversions', 'Unique Clicks', 'Sent', 'Delivered']
-                    
-                    for metric in metrics:
-                        val1 = data1[metric]
-                        val2 = data2[metric]
-                        delta = val2 - val1
-                        delta_pct = (delta / val1 * 100) if val1 != 0 else 0
-                        
-                        unit = "SAR" if "Revenue" in metric else ""
-                        st.metric(
-                            f"{metric} ({month1})", 
-                            format_metric(val1, unit), 
-                            delta=format_metric(delta, unit) + f" ({delta_pct:+.1f}%)"
-                        )
-                        st.metric(
-                            f"{metric} ({month2})", 
-                            format_metric(val2, unit)
-                        )
+            # === EXECUTIVE SUMMARY ===
+            st.markdown("---")
+            st.subheader("📈 Executive Summary")
+            
+            # Key highlights
+            revenue_trend = metric_changes['selected_revenue']
+            conv_trend = metric_changes['selected_conversions']
+            ctr_trend = metric_changes['ctr']
+            delivery_trend = metric_changes['delivery_rate']
+            
+            # Determine overall trend
+            positive_trends = sum([
+                revenue_trend['pct_change'] > 0,
+                conv_trend['pct_change'] > 0,
+                ctr_trend['pct_change'] > 0,
+                delivery_trend['pct_change'] > 0
+            ])
+            
+            if positive_trends >= 3:
+                st.success("🎯 **Overall Trend: POSITIVE** - Most metrics are improving")
+            elif positive_trends >= 2:
+                st.info("➡️ **Overall Trend: MIXED** - Some metrics improving, others declining")
             else:
-                st.write("Not enough months to compare.")
+                st.warning("⚠️ **Overall Trend: NEEDS ATTENTION** - Most metrics are declining")
+            
+            # Key metrics comparison
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric(
+                    "Revenue Change",
+                    f"{revenue_trend['pct_change']:+.1f}%",
+                    delta=format_metric(revenue_trend['absolute_change'], "SAR")
+                )
+            
+            with col2:
+                st.metric(
+                    "Conversion Change",
+                    f"{conv_trend['pct_change']:+.1f}%",
+                    delta=format_metric(conv_trend['absolute_change'])
+                )
+            
+            with col3:
+                st.metric(
+                    "CTR Change",
+                    f"{ctr_trend['pct_change']:+.1f}%",
+                    delta=f"{ctr_trend['absolute_change']:+.2%}"
+                )
+            
+            with col4:
+                st.metric(
+                    "Delivery Rate Change",
+                    f"{delivery_trend['pct_change']:+.1f}%",
+                    delta=f"{delivery_trend['absolute_change']:+.2%}"
+                )
+            
+            # Business Intelligence Metrics
+            st.markdown("#### 💰 Business Intelligence")
+            biz_col1, biz_col2, biz_col3 = st.columns(3)
+            
+            aov_trend = metric_changes['aov']
+            rpc_trend = metric_changes['revenue_per_click']
+            eng_trend = metric_changes['engagement_rate']
+            
+            with biz_col1:
+                st.metric(
+                    "AOV Change",
+                    f"{aov_trend['pct_change']:+.1f}%",
+                    delta=format_metric(aov_trend['absolute_change'], "SAR"),
+                    help="Average Order Value - Revenue per conversion"
+                )
+            
+            with biz_col2:
+                st.metric(
+                    "RPC Change",
+                    f"{rpc_trend['pct_change']:+.1f}%",
+                    delta=format_metric(rpc_trend['absolute_change'], "SAR"),
+                    help="Revenue Per Click - Measures click quality"
+                )
+            
+            with biz_col3:
+                st.metric(
+                    "Engagement Rate Change",
+                    f"{eng_trend['pct_change']:+.1f}%",
+                    delta=f"{eng_trend['absolute_change']:+.2%}",
+                    help="Combined engagement (clicks + opens) / impressions"
+                )
+            
+            # ROI & Cost Efficiency
+            st.markdown("#### 💵 ROI & Cost Efficiency")
+            cost_col1, cost_col2, cost_col3, cost_col4 = st.columns(4)
+            
+            roas_trend = metric_changes['roas']
+            rps_trend = metric_changes['revenue_per_send']
+            cpc_trend = metric_changes['cost_per_conversion']
+            profit_trend = metric_changes['profit']
+            
+            with cost_col1:
+                current_roas = roas_trend['current']
+                if current_roas >= 4:
+                    roas_status = "🟢"
+                elif current_roas >= 2:
+                    roas_status = "🟡"
+                else:
+                    roas_status = "🔴"
+                
+                st.metric(
+                    f"ROAS Change {roas_status}",
+                    f"{roas_trend['pct_change']:+.1f}%",
+                    delta=f"{roas_trend['current']:.2f}x now",
+                    help=f"Return on Ad Spend: {roas_trend['current']:.2f}x (was {roas_trend['comparison']:.2f}x)"
+                )
+            
+            with cost_col2:
+                st.metric(
+                    "Revenue Per Send Change",
+                    f"{rps_trend['pct_change']:+.1f}%",
+                    delta=f"{rps_trend['absolute_change']:.4f} SAR",
+                    help="KEY efficiency metric - answers your 'doubled sends, less revenue' question"
+                )
+            
+            with cost_col3:
+                st.metric(
+                    "Cost Per Conversion",
+                    f"{cpc_trend['pct_change']:+.1f}%",
+                    delta=format_metric(cpc_trend['absolute_change'], "SAR"),
+                    delta_color="inverse" if cpc_trend['pct_change'] >= 0 else "normal",
+                    help="Lower is better"
+                )
+            
+            with cost_col4:
+                st.metric(
+                    "Profit Change",
+                    f"{profit_trend['pct_change']:+.1f}%",
+                    delta=format_metric(profit_trend['absolute_change'], "SAR"),
+                    help="Revenue - Cost"
+                )
+            
+            # === DETAILED METRICS TABLE ===
+            st.markdown("---")
+            st.subheader("📊 Detailed Metrics Comparison")
+            
+            # Create comparison dataframe
+            comparison_data = []
+            metric_names = {
+                'selected_revenue': ('Total Revenue (SAR)', 'SAR'),
+                'selected_conversions': ('Total Conversions', ''),
+                'total_clicks': ('Total Clicks', ''),
+                'total_impressions': ('Total Impressions', ''),
+                'total_sent': ('Total Sent', ''),
+                'total_delivered': ('Total Delivered', ''),
+                'total_cost': ('Total Campaign Cost', 'SAR'),
+                'profit': ('Profit (Revenue - Cost)', 'SAR'),
+                'ctr': ('Click-Through Rate', '%'),
+                'conversion_rate': ('Conversion Rate', '%'),
+                'delivery_rate': ('Delivery Rate', '%'),
+                'aov': ('Average Order Value (AOV)', 'SAR'),
+                'revenue_per_click': ('Revenue Per Click (RPC)', 'SAR'),
+                'revenue_per_send': ('Revenue Per Send (RPS)', 'SAR'),
+                'engagement_rate': ('Engagement Rate', '%'),
+                'roas': ('ROAS (Return on Ad Spend)', 'ratio'),
+                'cost_per_conversion': ('Cost Per Conversion', 'SAR'),
+                'cost_per_click': ('Cost Per Click', 'SAR'),
+                'profit_margin': ('Profit Margin', '%'),
+                'revenue_per_conversion': ('Revenue per Conversion', 'SAR'),
+                'daily_revenue': ('Daily Avg Revenue', 'SAR'),
+                'daily_conversions': ('Daily Avg Conversions', ''),
+                'daily_cost': ('Daily Avg Cost', 'SAR'),
+            }
+            
+            for metric_key, (metric_label, unit) in metric_names.items():
+                if metric_key in metric_changes:
+                    change_data = metric_changes[metric_key]
+                    
+                    if unit == '%':
+                        current_val = f"{change_data['current']:.2%}"
+                        comp_val = f"{change_data['comparison']:.2%}"
+                    elif unit == 'SAR':
+                        current_val = format_metric(change_data['current'], 'SAR')
+                        comp_val = format_metric(change_data['comparison'], 'SAR')
+                    elif unit == 'ratio':
+                        current_val = f"{change_data['current']:.2f}x"
+                        comp_val = f"{change_data['comparison']:.2f}x"
+                    else:
+                        current_val = format_metric(change_data['current'])
+                        comp_val = format_metric(change_data['comparison'])
+                    
+                    comparison_data.append({
+                        'Metric': metric_label,
+                        'Current Period': current_val,
+                        'Comparison Period': comp_val,
+                        'Change %': f"{change_data['pct_change']:+.1f}%",
+                        'Trend': change_data['trend']
+                    })
+            
+            comparison_df = pd.DataFrame(comparison_data)
+            st.dataframe(comparison_df, use_container_width=True)
+            
+            # === VISUALIZATION ===
+            st.markdown("---")
+            st.subheader("📈 Visual Comparison")
+            
+            # Select metric to visualize
+            viz_metric = st.selectbox(
+                "Select Metric to Visualize",
+                ["Revenue (SAR)", "Conversions", "Clicks", "CTR", "Conversion Rate", "Delivery Rate"],
+                key="comparison_viz_metric"
+            )
+            
+            # Map selection to data keys
+            viz_mapping = {
+                "Revenue (SAR)": 'selected_revenue',
+                "Conversions": 'selected_conversions',
+                "Clicks": 'total_clicks',
+                "CTR": 'ctr',
+                "Conversion Rate": 'conversion_rate',
+                "Delivery Rate": 'delivery_rate'
+            }
+            
+            selected_key = viz_mapping[viz_metric]
+            change_data = metric_changes[selected_key]
+            
+            # Create comparison bar chart
+            fig_comparison = go.Figure()
+            
+            fig_comparison.add_trace(go.Bar(
+                name='Comparison Period',
+                x=[comparison_result['comparison_label']],
+                y=[change_data['comparison']],
+                marker_color='lightblue',
+                text=[format_metric(change_data['comparison'], 'SAR' if 'Revenue' in viz_metric else '')],
+                textposition='auto'
+            ))
+            
+            fig_comparison.add_trace(go.Bar(
+                name='Current Period',
+                x=[comparison_result['current_label']],
+                y=[change_data['current']],
+                marker_color='green' if change_data['pct_change'] > 0 else 'red',
+                text=[format_metric(change_data['current'], 'SAR' if 'Revenue' in viz_metric else '')],
+                textposition='auto'
+            ))
+            
+            fig_comparison.update_layout(
+                title=f"{viz_metric} Comparison",
+                xaxis_title="Period",
+                yaxis_title=viz_metric,
+                barmode='group',
+                height=400
+            )
+            
+            st.plotly_chart(fig_comparison, use_container_width=True)
+            
+            # === CHANNEL-LEVEL COMPARISON ===
+            if 'Channel' in comparison_result['current_data'].columns:
+                st.markdown("---")
+                st.subheader("📡 Channel-Level Comparison")
+                
+                # Aggregate by channel for both periods
+                current_by_channel = comparison_result['current_data'].groupby('Channel').agg({
+                    'Selected Revenue (SAR)': 'sum',
+                    'Selected Conversions': 'sum',
+                    'Unique Clicks': 'sum'
+                }).reset_index()
+                
+                comp_by_channel = comparison_result['comparison_data'].groupby('Channel').agg({
+                    'Selected Revenue (SAR)': 'sum',
+                    'Selected Conversions': 'sum',
+                    'Unique Clicks': 'sum'
+                }).reset_index()
+                
+                # Merge and calculate changes
+                channel_comparison = current_by_channel.merge(
+                    comp_by_channel, 
+                    on='Channel', 
+                    how='outer',
+                    suffixes=('_current', '_comp')
+                ).fillna(0)
+                
+                channel_comparison['Revenue Change %'] = ((channel_comparison['Selected Revenue (SAR)_current'] - channel_comparison['Selected Revenue (SAR)_comp']) / 
+                                                          channel_comparison['Selected Revenue (SAR)_comp'].replace(0, 1) * 100)
+                
+                channel_comparison['Conversion Change %'] = ((channel_comparison['Selected Conversions_current'] - channel_comparison['Selected Conversions_comp']) / 
+                                                             channel_comparison['Selected Conversions_comp'].replace(0, 1) * 100)
+                
+                # Display
+                channel_display = channel_comparison[['Channel', 'Revenue Change %', 'Conversion Change %']].copy()
+                st.dataframe(channel_display, use_container_width=True)
+                
+                # Channel comparison chart
+                fig_channel = go.Figure()
+                
+                fig_channel.add_trace(go.Bar(
+                    name='Revenue Change %',
+                    x=channel_comparison['Channel'],
+                    y=channel_comparison['Revenue Change %'],
+                    marker_color=['green' if x > 0 else 'red' for x in channel_comparison['Revenue Change %']]
+                ))
+                
+                fig_channel.update_layout(
+                    title="Revenue Change % by Channel",
+                    xaxis_title="Channel",
+                    yaxis_title="Change %",
+                    height=400
+                )
+                
+                st.plotly_chart(fig_channel, use_container_width=True)
+            
+            # === INSIGHTS & RECOMMENDATIONS ===
+            st.markdown("---")
+            st.subheader("💡 Insights & Recommendations")
+            
+            insights = []
+            
+            # Revenue insights
+            if revenue_trend['pct_change'] > 10:
+                insights.append(f"✅ **Strong Revenue Growth**: Revenue increased by {revenue_trend['pct_change']:.1f}%. Consider scaling successful campaigns.")
+            elif revenue_trend['pct_change'] < -10:
+                insights.append(f"⚠️ **Revenue Decline**: Revenue decreased by {abs(revenue_trend['pct_change']):.1f}%. Investigate underperforming channels and campaigns.")
+            
+            # Conversion insights
+            if conv_trend['pct_change'] > 10:
+                insights.append(f"✅ **Conversion Improvement**: Conversions up {conv_trend['pct_change']:.1f}%. Current strategies are working well.")
+            elif conv_trend['pct_change'] < -10:
+                insights.append(f"⚠️ **Conversion Drop**: Conversions down {abs(conv_trend['pct_change']):.1f}%. Review landing pages and offers.")
+            
+            # CTR insights
+            if ctr_trend['pct_change'] > 10:
+                insights.append(f"✅ **Engagement Increase**: CTR improved by {ctr_trend['pct_change']:.1f}%. Content resonates with audience.")
+            elif ctr_trend['pct_change'] < -10:
+                insights.append(f"⚠️ **Engagement Decline**: CTR down {abs(ctr_trend['pct_change']):.1f}%. Consider refreshing creative assets.")
+            
+            # Delivery insights
+            if delivery_trend['pct_change'] < -5:
+                insights.append(f"🚨 **Delivery Issue**: Delivery rate dropped {abs(delivery_trend['pct_change']):.1f}%. Check ESP settings and sender reputation.")
+            
+            # Display insights
+            if insights:
+                for insight in insights:
+                    st.markdown(f"- {insight}")
+            else:
+                st.info("Performance is relatively stable with no significant changes to highlight.")
+        
         else:
-            st.write("No monthly data available.")
+            st.info("🔍 **No Comparison Selected** - Enable comparison mode in the sidebar to analyze period-over-period trends")
+            st.markdown("---")
+            
+            # Show month-over-month trend analysis as fallback
+            st.subheader("📅 Monthly Trend Analysis")
+            
+            # Group by month
+            monthly_df = filtered_df.copy()
+            monthly_df['Month'] = monthly_df['Reporting Period Start Date'].dt.to_period('M').astype(str)
+            
+            monthly_agg = monthly_df.groupby('Month').agg({
+                'Revenue (SAR)': 'sum',
+                'Unique Conversions': 'sum',
+                'Unique Clicks': 'sum',
+                'Sent': 'sum',
+                'Delivered': 'sum'
+            }).reset_index()
+            
+            # Sort by month
+            monthly_agg['Month'] = pd.to_datetime(monthly_agg['Month'] + '-01')
+            monthly_agg = monthly_agg.sort_values('Month')
+            monthly_agg['Month'] = monthly_agg['Month'].dt.strftime('%Y-%m')
+            
+            if not monthly_agg.empty and len(monthly_agg) > 1:
+                st.subheader("Monthly Summary")
+                # Format columns for display
+                monthly_agg_display = monthly_agg.copy()
+                monthly_agg_display['Revenue (SAR)'] = monthly_agg_display['Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
+                monthly_agg_display['Unique Conversions'] = monthly_agg_display['Unique Conversions'].apply(format_metric)
+                monthly_agg_display['Unique Clicks'] = monthly_agg_display['Unique Clicks'].apply(format_metric)
+                monthly_agg_display['Sent'] = monthly_agg_display['Sent'].apply(format_metric)
+                monthly_agg_display['Delivered'] = monthly_agg_display['Delivered'].apply(format_metric)
+                st.dataframe(monthly_agg_display)
+                
+                # Chart
+                fig_comp = px.line(monthly_agg, x='Month', y='Revenue (SAR)', title="Revenue Over Months", markers=True)
+                st.plotly_chart(fig_comp, use_container_width=True)
+            else:
+                st.write("Not enough monthly data for trend analysis.")
 
     elif page == "AI Insights":
         st.header("🤖 AI-Powered Insights")
