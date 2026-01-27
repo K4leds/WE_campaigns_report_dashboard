@@ -6,9 +6,40 @@ Generates narrative insights, predictions, and actionable recommendations
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from prophet import Prophet
+try:
+    from prophet import Prophet
+except ImportError:
+    Prophet = None
+import logging
 import warnings
 warnings.filterwarnings('ignore')
+
+logger = logging.getLogger(__name__)
+
+
+def _approx_ramadan_month(year):
+    """
+    Approximate the Gregorian month in which Ramadan starts for a given year.
+    Ramadan shifts ~11 days earlier each Gregorian year.
+    Reference point: Ramadan 2025 starts ~March 1 (month 3).
+    """
+    from datetime import date
+    # Approximate start date of Ramadan 2025: March 1
+    ref_year = 2025
+    ref_start = date(2025, 3, 1)
+    years_diff = year - ref_year
+    # Shift ~10.63 days earlier per year (average Hijri drift)
+    approx_start = date(ref_start.year, ref_start.month, ref_start.day)
+    shift_days = int(round(years_diff * 10.63))
+    try:
+        approx_start = ref_start - timedelta(days=shift_days)
+        # Adjust year if it wraps
+        approx_start = approx_start.replace(year=year)
+    except ValueError:
+        # Handle edge cases (e.g., Feb 29)
+        approx_start = ref_start.replace(year=year, day=min(ref_start.day, 28))
+        approx_start = approx_start - timedelta(days=shift_days % 365)
+    return approx_start.month
 
 
 def generate_narrative_insights(df, journey_name=None, lookback_days=30):
@@ -33,6 +64,8 @@ def generate_narrative_insights(df, journey_name=None, lookback_days=30):
     }
     
     try:
+        df = df.copy()  # Avoid mutating caller's DataFrame
+
         # Ensure date column exists
         if 'Reporting Period Start Date' in df.columns:
             df['date'] = pd.to_datetime(df['Reporting Period Start Date'])
@@ -40,7 +73,7 @@ def generate_narrative_insights(df, journey_name=None, lookback_days=30):
             df['date'] = pd.to_datetime(df['Day'])
         else:
             return insights
-        
+
         # Filter by journey if specified
         if journey_name:
             df = df[df['Journey Name'] == journey_name]
@@ -132,7 +165,8 @@ def analyze_recovery_or_decline_pattern(df):
     try:
         if 'date' not in df.columns or 'Revenue (SAR)' not in df.columns:
             return None
-        
+
+        df = df.copy()  # Avoid mutating caller's DataFrame
         # Get monthly aggregates
         df['month'] = pd.to_datetime(df['date']).dt.to_period('M')
         monthly_revenue = df.groupby('month')['Revenue (SAR)'].sum().sort_index()
@@ -224,14 +258,18 @@ def detect_decline_reason(df, recent_df):
         if recent_sent < overall_avg_sent * 0.7:
             reasons.append("reduced campaign activity")
         
-        # Check seasonality (basic check for current month)
-        current_month = recent_df['date'].max().month
-        if current_month in [6, 7]:  # Ramadan typically falls around these months
+        # Check seasonality - approximate Ramadan month for the data year
+        # Ramadan shifts ~11 days earlier each Gregorian year
+        # Reference: Ramadan 2025 starts ~Feb 28. Adjust by -11 days/year from there.
+        current_date = recent_df['date'].max()
+        ramadan_month = _approx_ramadan_month(current_date.year)
+        post_ramadan_month = ramadan_month + 1 if ramadan_month < 12 else 1
+        if current_date.month in [post_ramadan_month]:
             reasons.append("post-Ramadan seasonal effect")
         
-    except Exception:
-        pass
-    
+    except Exception as e:
+        logger.warning(f"detect_decline_reason failed: {e}")
+
     return reasons[0] if reasons else "various performance factors"
 
 
@@ -283,9 +321,9 @@ def detect_performance_alerts(df, recent_df):
                     'action': 'Refresh creative assets, test new messaging, expand audience'
                 })
         
-    except Exception:
-        pass
-    
+    except Exception as e:
+        logger.warning(f"detect_performance_alerts failed: {e}")
+
     return alerts
 
 
@@ -349,9 +387,9 @@ def identify_optimization_opportunities(df, recent_df):
                             'expected_impact': f"Potential recovery of previous revenue levels"
                         })
         
-    except Exception:
-        pass
-    
+    except Exception as e:
+        logger.warning(f"identify_optimization_opportunities failed: {e}")
+
     return opportunities
 
 
@@ -368,9 +406,13 @@ def add_business_context(df):
         
         current_date = df['date'].max()
         current_month = current_date.month
-        
-        # Ramadan context (approximate - varies by year)
-        if current_month in [4, 5, 6]:
+        current_year = current_date.year
+
+        # Ramadan context (dynamically calculated per year)
+        ramadan_month = _approx_ramadan_month(current_year)
+        post_ramadan_month = ramadan_month + 1 if ramadan_month < 12 else 1
+        ramadan_adjacent = [ramadan_month, post_ramadan_month]
+        if current_month in ramadan_adjacent:
             context_notes.append({
                 'emoji': '🌙',
                 'title': 'Seasonal Context: Ramadan/Eid Period',
@@ -396,9 +438,9 @@ def add_business_context(df):
                 'severity': 'info'
             })
         
-    except Exception:
-        pass
-    
+    except Exception as e:
+        logger.warning(f"add_business_context failed: {e}")
+
     return context_notes
 
 
@@ -415,6 +457,11 @@ def predict_revenue_forecast(df, journey_name=None, forecast_days=30):
         dict with forecast data and insights
     """
     try:
+        if Prophet is None:
+            return None
+
+        df = df.copy()  # Avoid mutating caller's DataFrame
+
         # Ensure date column exists
         if 'Reporting Period Start Date' in df.columns:
             df['date'] = pd.to_datetime(df['Reporting Period Start Date'])
@@ -422,7 +469,7 @@ def predict_revenue_forecast(df, journey_name=None, forecast_days=30):
             df['date'] = pd.to_datetime(df['Day'])
         else:
             return None
-        
+
         # Filter by journey if specified
         if journey_name:
             df = df[df['Journey Name'] == journey_name]
@@ -512,13 +559,15 @@ def generate_top_actions(df, journey_name=None, max_actions=5):
     actions = []
     
     try:
+        df = df.copy()  # Avoid mutating caller's DataFrame
+
         # Filter by journey if specified
         if journey_name:
             df = df[df['Journey Name'] == journey_name]
-        
+
         if df.empty:
             return actions
-        
+
         # Ensure date column exists
         if 'Reporting Period Start Date' in df.columns:
             df['date'] = pd.to_datetime(df['Reporting Period Start Date'])
@@ -646,7 +695,95 @@ def generate_top_actions(df, journey_name=None, max_actions=5):
                         'score': historical_revenue * 0.5
                     })
                     break  # Only suggest one reactivation
-        
+
+        # Action 6: Campaign-type-aware recommendations
+        if 'Type of Campaign' in df.columns:
+            # One-time campaign specific actions
+            onetime_df = recent_df[recent_df['Type of Campaign'].str.lower().str.contains('one-time', na=False)]
+            if not onetime_df.empty and 'Revenue (SAR)' in onetime_df.columns:
+                campaign_perf = onetime_df.groupby('Campaign Name').agg({
+                    'Revenue (SAR)': 'sum',
+                    'Sent': 'sum',
+                    'Unique Conversions': 'sum'
+                }).reset_index()
+                campaign_perf['RPS'] = campaign_perf['Revenue (SAR)'] / campaign_perf['Sent'].replace(0, 1)
+
+                # Find top one-time campaign to replicate
+                top_onetime = campaign_perf.nlargest(1, 'Revenue (SAR)')
+                if not top_onetime.empty and top_onetime['Revenue (SAR)'].iloc[0] > 0:
+                    camp_name = top_onetime['Campaign Name'].iloc[0]
+                    camp_rev = top_onetime['Revenue (SAR)'].iloc[0]
+                    camp_rps = top_onetime['RPS'].iloc[0]
+                    actions.append({
+                        'priority': 'HIGH',
+                        'title': 'Repeat High-Performing One-Time Campaign',
+                        'action': (f"Re-send '{camp_name}' to untargeted or new segments. "
+                                   f"Original generated {format_sar(camp_rev)} at {camp_rps:.4f} SAR/send."),
+                        'expected_impact': f"+{format_sar(camp_rev * 0.5)} from new audience reach",
+                        'confidence': '75%',
+                        'implementation_time': '1-2 days',
+                        'score': camp_rev * 0.5
+                    })
+
+                # Find one-time campaigns with high engagement but low conversion
+                if 'Unique Clicks' in onetime_df.columns:
+                    camp_engage = onetime_df.groupby('Campaign Name').agg({
+                        'Unique Clicks': 'sum', 'Unique Conversions': 'sum',
+                        'Revenue (SAR)': 'sum', 'Sent': 'sum'
+                    }).reset_index()
+                    camp_engage['CVR'] = camp_engage['Unique Conversions'] / camp_engage['Unique Clicks'].replace(0, 1)
+                    high_click_low_conv = camp_engage[
+                        (camp_engage['Unique Clicks'] > 50) & (camp_engage['CVR'] < 0.03)
+                    ].nlargest(1, 'Unique Clicks')
+                    if not high_click_low_conv.empty:
+                        lc_name = high_click_low_conv['Campaign Name'].iloc[0]
+                        lc_clicks = int(high_click_low_conv['Unique Clicks'].iloc[0])
+                        lc_cvr = high_click_low_conv['CVR'].iloc[0]
+                        potential_convs = lc_clicks * 0.03  # target 3% CVR
+                        avg_rev_per_conv = recent_df['Revenue (SAR)'].sum() / max(recent_df['Unique Conversions'].sum(), 1) if 'Unique Conversions' in recent_df.columns else 100
+                        expected_rev = potential_convs * avg_rev_per_conv
+                        actions.append({
+                            'priority': 'MEDIUM',
+                            'title': 'Fix Landing Page for Clicked-But-Not-Converted Campaign',
+                            'action': (f"'{lc_name}' got {lc_clicks:,} clicks but only {lc_cvr:.1%} converted. "
+                                       f"Review the landing page, offer, or conversion flow."),
+                            'expected_impact': f"+{format_sar(expected_rev)} if CVR reaches 3%",
+                            'confidence': '70%',
+                            'implementation_time': '3-5 days',
+                            'score': expected_rev
+                        })
+
+            # Journey-specific: find journeys with low send volume vs. peers
+            journey_df = recent_df[recent_df['Type of Campaign'].str.lower().str.contains('journey', na=False)]
+            if not journey_df.empty and 'Journey Name' in journey_df.columns:
+                journey_perf = journey_df.groupby('Journey Name').agg({
+                    'Revenue (SAR)': 'sum', 'Sent': 'sum'
+                }).reset_index()
+                journey_perf['RPS'] = journey_perf['Revenue (SAR)'] / journey_perf['Sent'].replace(0, 1)
+                # Find high-RPS journeys with room to scale
+                median_sent = journey_perf['Sent'].median()
+                high_rps_low_vol = journey_perf[
+                    (journey_perf['RPS'] > journey_perf['RPS'].median()) &
+                    (journey_perf['Sent'] < median_sent)
+                ].nlargest(1, 'RPS')
+                if not high_rps_low_vol.empty:
+                    j_name = high_rps_low_vol['Journey Name'].iloc[0]
+                    j_rps = high_rps_low_vol['RPS'].iloc[0]
+                    j_sent = int(high_rps_low_vol['Sent'].iloc[0])
+                    potential_rev = (median_sent - j_sent) * j_rps
+                    if potential_rev > 0:
+                        actions.append({
+                            'priority': 'MEDIUM',
+                            'title': 'Expand High-Efficiency Journey Audience',
+                            'action': (f"'{j_name}' has above-average RPS ({j_rps:.4f} SAR/send) "
+                                       f"but below-average volume ({j_sent:,} sends). "
+                                       f"Broaden the trigger criteria or audience segment."),
+                            'expected_impact': f"+{format_sar(potential_rev)} from increased reach",
+                            'confidence': '70%',
+                            'implementation_time': '3-5 days',
+                            'score': potential_rev
+                        })
+
         # Sort by expected impact (score) and take top N
         actions.sort(key=lambda x: x['score'], reverse=True)
         actions = actions[:max_actions]
@@ -657,8 +794,8 @@ def generate_top_actions(df, journey_name=None, max_actions=5):
                 del action['score']
         
     except Exception as e:
-        pass
-    
+        logger.warning(f"generate_top_actions failed: {e}")
+
     return actions
 
 
@@ -688,6 +825,8 @@ def generate_executive_summary(df):
     }
     
     try:
+        df = df.copy()  # Avoid mutating caller's DataFrame
+
         # Get date range
         if 'Reporting Period Start Date' in df.columns:
             df['date'] = pd.to_datetime(df['Reporting Period Start Date'])

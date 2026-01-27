@@ -5,21 +5,41 @@ Automatically detects time periods in data and generates comparative insights
 
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date as _date_cls
 import calendar
+
+
+def _approx_ramadan_month(year):
+    """
+    Approximate the Gregorian month in which Ramadan starts for a given year.
+    Ramadan shifts ~11 days earlier each Gregorian year.
+    Reference point: Ramadan 2025 starts ~March 1 (month 3).
+    """
+    ref_start = _date_cls(2025, 3, 1)
+    years_diff = year - 2025
+    shift_days = int(round(years_diff * 10.63))
+    try:
+        approx_start = ref_start - timedelta(days=shift_days)
+        approx_start = approx_start.replace(year=year)
+    except ValueError:
+        approx_start = ref_start.replace(year=year, day=min(ref_start.day, 28))
+        approx_start = approx_start - timedelta(days=shift_days % 365)
+    return approx_start.month
 
 def detect_time_periods(df):
     """
     Automatically detect what time periods are present in the data
     Returns: period_type, periods_list, date_range
     """
+    df = df.copy()  # Avoid mutating caller's DataFrame
+
     if 'Reporting Period Start Date' in df.columns:
         date_col = 'Reporting Period Start Date'
     elif 'Day' in df.columns:
         date_col = 'Day'
     else:
         return None
-    
+
     df['_date'] = pd.to_datetime(df[date_col])
     min_date = df['_date'].min()
     max_date = df['_date'].max()
@@ -190,15 +210,15 @@ def generate_temporal_insights(df, period_metrics, period_info):
     first_period = periods[0]
     first_data = period_metrics[period_metrics['_period'] == first_period].iloc[0]
     
+    first_rev = first_data['Revenue (SAR)']
+    first_conv = first_data['Unique Conversions']
     overall_revenue_change = (
-        (latest_data['Revenue (SAR)'] - first_data['Revenue (SAR)']) / 
-        first_data['Revenue (SAR)']
-    ) * 100
-    
+        ((latest_data['Revenue (SAR)'] - first_rev) / first_rev) * 100
+    ) if first_rev > 0 else 0
+
     overall_conv_change = (
-        (latest_data['Unique Conversions'] - first_data['Unique Conversions']) / 
-        first_data['Unique Conversions']
-    ) * 100
+        ((latest_data['Unique Conversions'] - first_conv) / first_conv) * 100
+    ) if first_conv > 0 else 0
     
     insights.append(
         f"📊 **Overall Period Performance** ({first_period} to {latest_period}): "
@@ -250,7 +270,7 @@ def generate_quarterly_insights(df, period_metrics):
     
     best_revenue = best_month['Revenue (SAR)']
     worst_revenue = worst_month['Revenue (SAR)']
-    performance_gap = ((best_revenue - worst_revenue) / worst_revenue) * 100
+    performance_gap = ((best_revenue - worst_revenue) / worst_revenue) * 100 if worst_revenue > 0 else 0
     
     insights.append(
         f"🏆 **Best Performing Period**: {best_month['_period']} with "
@@ -275,7 +295,7 @@ def generate_quarterly_insights(df, period_metrics):
     # Identify momentum
     recent_3 = period_metrics.tail(3)['Revenue (SAR)'].mean()
     early_3 = period_metrics.head(3)['Revenue (SAR)'].mean()
-    momentum = ((recent_3 - early_3) / early_3) * 100
+    momentum = ((recent_3 - early_3) / early_3) * 100 if early_3 > 0 else 0
     
     if momentum > 20:
         insights.append(
@@ -307,25 +327,34 @@ def generate_seasonality_insights(df, period_metrics):
         lambda x: pd.Period(x).month if isinstance(x, str) and '-' in str(x) else None
     )
     
-    # Check for Ramadan effect (if applicable)
-    # Ramadan 2025: March 1 - March 30
-    ramadan_months = [3]  # March
-    post_ramadan_months = [4]  # April
-    
+    # Check for Ramadan effect (dynamically calculated per year in the data)
     if period_metrics['month_num'].notna().any():
+        # Determine approximate Ramadan month from data's year range
+        data_years = period_metrics['_period'].apply(
+            lambda x: pd.Period(x).year if isinstance(x, str) and '-' in str(x) else None
+        ).dropna().unique()
+        ramadan_months = set()
+        post_ramadan_months = set()
+        for yr in data_years:
+            rm = _approx_ramadan_month(int(yr))
+            ramadan_months.add(rm)
+            post_ramadan_months.add(rm + 1 if rm < 12 else 1)
+
         ramadan_data = period_metrics[period_metrics['month_num'].isin(ramadan_months)]
         post_ramadan_data = period_metrics[period_metrics['month_num'].isin(post_ramadan_months)]
-        
+
         if not ramadan_data.empty and not post_ramadan_data.empty:
             ramadan_revenue = ramadan_data['Revenue (SAR)'].mean()
             post_ramadan_revenue = post_ramadan_data['Revenue (SAR)'].mean()
-            
-            if post_ramadan_revenue < ramadan_revenue * 0.8:
+
+            if ramadan_revenue > 0 and post_ramadan_revenue < ramadan_revenue * 0.8:
+                post_month_names = ", ".join(calendar.month_name[m] for m in sorted(post_ramadan_months))
+                ram_month_names = ", ".join(calendar.month_name[m] for m in sorted(ramadan_months))
                 insights.append(
-                    f"🌙 **Post-Ramadan Effect Detected**: Revenue in April "
+                    f"🌙 **Post-Ramadan Effect Detected**: Revenue in {post_month_names} "
                     f"({format_sar(post_ramadan_revenue)}) dropped significantly from "
-                    f"Ramadan period ({format_sar(ramadan_revenue)}). This drastic drop "
-                    f"suggests lack of sustained engagement after the month of Ramadan. "
+                    f"Ramadan period in {ram_month_names} ({format_sar(ramadan_revenue)}). "
+                    f"This drastic drop suggests lack of sustained engagement after the month of Ramadan. "
                     f"Consider implementing reminder campaigns and special post-Ramadan offers."
                 )
     
@@ -338,7 +367,7 @@ def generate_seasonality_insights(df, period_metrics):
         q_end = period_metrics[period_metrics['quarter_month'] == 'Q-end']['Revenue (SAR)'].mean()
         q_mid = period_metrics[period_metrics['quarter_month'] == 'Q-mid']['Revenue (SAR)'].mean()
         
-        if q_end > q_mid * 1.2:
+        if q_mid > 0 and q_end > q_mid * 1.2:
             insights.append(
                 f"📅 **Quarter-End Spike Pattern**: Revenue is {((q_end/q_mid - 1)*100):.1f}% "
                 f"higher in quarter-end months. Consider increasing marketing investment "

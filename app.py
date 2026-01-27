@@ -16,6 +16,85 @@ except ImportError:
 import warnings
 warnings.filterwarnings('ignore')
 
+# === CENTRALIZED CONFIGURATION ===
+# Channel cost per 1000 sends (SAR) - adjust these to match your actual rates
+CHANNEL_COSTS = {
+    'Email': 1.2,       # SAR per 1000 emails
+    'SMS': 43.2,        # SAR per 1000 SMS
+    'WhatsApp': 200.0,  # SAR per 1000 WhatsApp messages
+    'Push': 0.0,
+    'Mobile Push': 0.0,
+    'App Push': 0.0,
+    'Web Push': 0.0,
+    'In-App': 0.0,
+    'On-Site': 0.0,
+    'Onsite': 0.0,
+    'On-site': 0.0,
+}
+
+# Minimum columns required in uploaded CSV for the dashboard to work
+REQUIRED_COLUMNS = ['Day', 'Campaign Name', 'Channel', 'Sent', 'Delivered']
+
+# === CHART THEME & COLORS ===
+# Professional color palette for client-ready charts
+COLORS = {
+    'primary': '#2563EB',      # Blue
+    'secondary': '#7C3AED',    # Purple
+    'success': '#059669',      # Green
+    'warning': '#D97706',      # Amber
+    'danger': '#DC2626',       # Red
+    'info': '#0891B2',         # Cyan
+    'muted': '#6B7280',        # Gray
+}
+# Ordered sequence for multi-series charts
+COLOR_SEQUENCE = ['#2563EB', '#059669', '#D97706', '#DC2626', '#7C3AED', '#0891B2',
+                  '#4F46E5', '#0D9488', '#EA580C', '#E11D48', '#9333EA', '#0284C7']
+# Channel-specific colors for consistent channel identity across all charts
+CHANNEL_COLORS = {
+    'Email': '#2563EB',
+    'SMS': '#7C3AED',
+    'WhatsApp': '#059669',
+    'Push': '#D97706',
+    'Mobile Push': '#EA580C',
+    'App Push': '#EA580C',
+    'Web Push': '#0891B2',
+    'In-App': '#4F46E5',
+    'On-Site': '#0D9488',
+    'Onsite': '#0D9488',
+    'On-site': '#0D9488',
+}
+
+# Register a global Plotly template for consistent styling
+import plotly.io as pio
+
+_we_template = go.layout.Template()
+_we_template.layout = go.Layout(
+    font=dict(family='Inter, Segoe UI, Roboto, sans-serif', size=13, color='#1F2937'),
+    title=dict(font=dict(size=18, color='#111827'), x=0, xanchor='left'),
+    paper_bgcolor='white',
+    plot_bgcolor='white',
+    colorway=COLOR_SEQUENCE,
+    xaxis=dict(showgrid=False, linecolor='#E5E7EB', linewidth=1),
+    yaxis=dict(gridcolor='#F3F4F6', gridwidth=1, linecolor='#E5E7EB', linewidth=1, zerolinecolor='#E5E7EB'),
+    legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1, bgcolor='rgba(0,0,0,0)'),
+    margin=dict(l=40, r=20, t=50, b=40),
+    hovermode='x unified',
+)
+pio.templates['we_dashboard'] = _we_template
+pio.templates.default = 'plotly_white+we_dashboard'
+
+
+def export_chart_image(fig, filename='chart', fmt='png', width=1200, height=600):
+    """Export a Plotly figure as a downloadable image buffer.
+    Returns BytesIO buffer or None if kaleido is not installed."""
+    try:
+        buf = BytesIO()
+        fig.write_image(buf, format=fmt, width=width, height=height, scale=2)
+        buf.seek(0)
+        return buf
+    except Exception:
+        return None
+
 # Import our new insights engine
 from insights_engine import (
     generate_narrative_insights,
@@ -174,25 +253,10 @@ def clean_data(df):
         df['Engagement Rate'] = 0
     
     # === COST-BASED METRICS ===
-    # Channel cost configuration (cost per 1000 sends)
-    channel_costs = {
-        'Email': 1.2,  # SAR per 1000 emails
-        'SMS': 43.2,   # Estimated - adjust based on your rates
-        'WhatsApp': 200.0,  # Estimated - adjust based on your rates
-        'Push': 0.0,   # Usually free
-        'Mobile Push': 0.0,
-        'App Push': 0.0,
-        'Web Push': 0.0,
-        'In-App': 0.0,
-        'On-Site': 0.0,
-        'Onsite': 0.0,
-        'On-site': 0.0
-    }
-    
-    # Calculate campaign cost based on channel and sends
+    # Calculate campaign cost based on channel and sends (uses centralized CHANNEL_COSTS)
     if 'Channel' in df.columns and 'Sent' in df.columns:
         df['Campaign Cost'] = df.apply(
-            lambda row: (row['Sent'] / 1000) * channel_costs.get(row['Channel'], 0), 
+            lambda row: (row['Sent'] / 1000) * CHANNEL_COSTS.get(row['Channel'], 0),
             axis=1
         )
     else:
@@ -238,14 +302,27 @@ def clean_data(df):
     
     return df
 
+# Rate columns should be averaged; absolute columns should be summed
+_RATE_KEYWORDS = {'rate', 'ctr', 'roas', 'aov', 'rpc', 'rps', 'engagement rate', 'revenue per'}
+
+def _metric_agg(metric):
+    """Return 'mean' for rate/ratio metrics, 'sum' for absolute metrics."""
+    lower = metric.lower()
+    if any(kw in lower for kw in _RATE_KEYWORDS):
+        return 'mean'
+    return 'sum'
+
 def top_campaigns(df, metric='Unique Conversions', top_n=10):
-    return df.groupby('Campaign Name')[metric].sum().nlargest(top_n).reset_index()
+    agg = _metric_agg(metric)
+    return df.groupby('Campaign Name')[metric].agg(agg).nlargest(top_n).reset_index()
 
 def get_top_journeys(df, metric='Delivered Rate', top_n=10):
-    return df.groupby('Journey Name')[metric].mean().nlargest(top_n).reset_index()
+    agg = _metric_agg(metric)
+    return df.groupby('Journey Name')[metric].agg(agg).nlargest(top_n).reset_index()
 
 def top_segments(df, metric='Unique Conversions', top_n=10):
-    return df.groupby('Segment Name')[metric].sum().nlargest(top_n).reset_index()
+    agg = _metric_agg(metric)
+    return df.groupby('Segment Name')[metric].agg(agg).nlargest(top_n).reset_index()
 
 def channel_analysis(df):
     agg_dict = {
@@ -295,15 +372,47 @@ def esp_analysis(df):
     return df.groupby('ESP/SSP/WSP/RSP name').agg(agg_dict).reset_index()
 
 def ab_testing_analysis(df):
-    # Calculate lift for campaigns with control group
+    """Calculate lift and statistical significance for campaigns with control groups."""
     df_ab = df[df['Total in Control Group'] > 0].copy()
     if not df_ab.empty:
         df_ab['Test Conversion Rate'] = df_ab['Unique Conversions'] / df_ab['Sent']
         df_ab['Control Conversion Rate'] = df_ab['Unique Control Group Conversions'] / df_ab['Total in Control Group']
-        df_ab['Lift'] = np.where(df_ab['Control Conversion Rate'] > 0, 
-                                (df_ab['Test Conversion Rate'] - df_ab['Control Conversion Rate']) / df_ab['Control Conversion Rate'], 
+        df_ab['Lift'] = np.where(df_ab['Control Conversion Rate'] > 0,
+                                (df_ab['Test Conversion Rate'] - df_ab['Control Conversion Rate']) / df_ab['Control Conversion Rate'],
                                 np.nan)
-        return df_ab[['Campaign Name', 'Test Conversion Rate', 'Control Conversion Rate', 'Lift']].dropna()
+
+        # Statistical significance using two-proportion z-test
+        p_values = []
+        significant = []
+        for _, row in df_ab.iterrows():
+            n_test = row['Sent']
+            n_control = row['Total in Control Group']
+            x_test = row['Unique Conversions']
+            x_control = row['Unique Control Group Conversions']
+            if n_test > 0 and n_control > 0:
+                p_test = x_test / n_test
+                p_control = x_control / n_control
+                p_pooled = (x_test + x_control) / (n_test + n_control)
+                se = np.sqrt(p_pooled * (1 - p_pooled) * (1/n_test + 1/n_control))
+                if se > 0:
+                    z_stat = (p_test - p_control) / se
+                    # Two-tailed p-value using normal approximation
+                    from scipy import stats as scipy_stats
+                    p_val = 2 * (1 - scipy_stats.norm.cdf(abs(z_stat)))
+                    p_values.append(p_val)
+                    significant.append(p_val < 0.05)
+                else:
+                    p_values.append(np.nan)
+                    significant.append(False)
+            else:
+                p_values.append(np.nan)
+                significant.append(False)
+
+        df_ab['P-Value'] = p_values
+        df_ab['Significant (95%)'] = significant
+
+        return df_ab[['Campaign Name', 'Test Conversion Rate', 'Control Conversion Rate',
+                       'Lift', 'P-Value', 'Significant (95%)']].dropna(subset=['Lift'])
     return pd.DataFrame()
 
 def attribution_analysis(df):
@@ -508,15 +617,15 @@ def calculate_journey_health_score(df_journey, all_journeys_df=None):
         scores['engagement'] = calculate_percentile_score(smoothed_ctr, baseline_ctr)
         
         # 3. Conversion Performance Score (30% weight) - WITH EMPIRICAL BAYES SMOOTHING
-        # FIXED: Use the direct Conversion Rate column when available (more reliable than manual calculation)
+        # Use the Conversion Rate column when available (calculated in clean_data as decimal: conversions/clicks)
         if 'Conversion Rate' in df_journey.columns and df_journey['Conversion Rate'].notna().any():
-            # Use the provided conversion rate column (already calculated correctly by WebEngage)
-            conv_rate = df_journey['Conversion Rate'].mean() / 100.0  # Convert percentage to decimal
+            # Conversion Rate is already a decimal from clean_data() (e.g., 0.05 = 5%)
+            conv_rate = df_journey['Conversion Rate'].mean()
             # Create baseline from all journeys' conversion rates
             if 'Conversion Rate' in baseline_df.columns:
                 baseline_conv_values = []
                 for name, group in baseline_df.groupby('Journey Name'):
-                    journey_conv_rate = group['Conversion Rate'].mean() / 100.0
+                    journey_conv_rate = group['Conversion Rate'].mean()
                     if not pd.isna(journey_conv_rate):
                         baseline_conv_values.append(journey_conv_rate)
                 baseline_conv = pd.Series(baseline_conv_values)
@@ -822,15 +931,15 @@ def calculate_campaign_health_score(df_campaign, all_campaigns_df=None):
         scores['engagement'] = calculate_percentile_score(smoothed_ctr, baseline_ctr)
 
         # 3. Conversion Performance Score (30% weight) - WITH EMPIRICAL BAYES SMOOTHING
-        # FIXED: Use the direct Conversion Rate column when available (more reliable than manual calculation)
+        # Use the Conversion Rate column when available (calculated in clean_data as decimal: conversions/clicks)
         if 'Conversion Rate' in df_campaign.columns and df_campaign['Conversion Rate'].notna().any():
-            # Use the provided conversion rate column (already calculated correctly by WebEngage)
-            conv_rate = df_campaign['Conversion Rate'].mean() / 100.0  # Convert percentage to decimal
+            # Conversion Rate is already a decimal from clean_data() (e.g., 0.05 = 5%)
+            conv_rate = df_campaign['Conversion Rate'].mean()
             # Create baseline from all campaigns' conversion rates
             if 'Conversion Rate' in baseline_df.columns:
                 baseline_conv_values = []
                 for name, group in baseline_df.groupby('Campaign Name'):
-                    campaign_conv_rate = group['Conversion Rate'].mean() / 100.0
+                    campaign_conv_rate = group['Conversion Rate'].mean()
                     if not pd.isna(campaign_conv_rate):
                         baseline_conv_values.append(campaign_conv_rate)
                 baseline_conv = pd.Series(baseline_conv_values)
@@ -2554,8 +2663,8 @@ def analyze_individual_journey(journey_name, filtered_df):
         
         # Conversion metrics - Use the Conversion Rate column when available
         if 'Conversion Rate' in journey_data.columns and journey_data['Conversion Rate'].notna().any():
-            # Use the provided conversion rate column (already calculated correctly by WebEngage)
-            conv_rate = journey_data['Conversion Rate'].mean() / 100.0  # Convert percentage to decimal
+            # Conversion Rate is already a decimal from clean_data() (e.g., 0.05 = 5%)
+            conv_rate = journey_data['Conversion Rate'].mean()
             # Also get the raw numbers for display
             total_conversions = journey_data['Unique Conversions'].sum() if 'Unique Conversions' in journey_data.columns else 0
             total_clicks = journey_data['Unique Clicks'].sum() if 'Unique Clicks' in journey_data.columns else 0
@@ -2628,7 +2737,7 @@ def analyze_individual_journey(journey_name, filtered_df):
             # Use the same method as in the scoring function for consistency
             if 'Conversion Rate' in filtered_df.columns:
                 for name, group in journey_groups:
-                    journey_conv_rate = group['Conversion Rate'].mean() / 100.0
+                    journey_conv_rate = group['Conversion Rate'].mean()
                     if not pd.isna(journey_conv_rate):
                         conv_rates.append(journey_conv_rate)
             else:
@@ -2701,6 +2810,23 @@ if uploaded_file is not None:
         return df
     
     df = load_and_clean_data(uploaded_file)
+
+    # Validate required columns exist
+    missing_cols = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+    if missing_cols:
+        st.error(
+            f"**Missing required columns:** {', '.join(missing_cols)}. "
+            f"This does not appear to be a standard WebEngage daily campaign export. "
+            f"Expected columns: {', '.join(REQUIRED_COLUMNS)}"
+        )
+        st.stop()
+
+    # Warn about recommended columns
+    recommended_cols = ['Unique Impressions', 'Unique Clicks', 'Unique Conversions', 'Revenue (SAR)', 'Journey Name']
+    missing_recommended = [col for col in recommended_cols if col not in df.columns]
+    if missing_recommended:
+        st.warning(f"**Optional columns missing** (some features will be limited): {', '.join(missing_recommended)}")
+
     st.success("Data cleaned and normalized!")
 
     # Filters
@@ -2720,22 +2846,19 @@ if uploaded_file is not None:
         help="Select which type of conversion attribution to use throughout the dashboard"
     )
     
-    # Apply attribution settings
-    @st.cache_data
-    def apply_filters_and_attribution(df, revenue_attribution, conversion_attribution, date_range, channels, campaigns, segments, journeys):
-        # Apply attribution settings
-        df = df.copy()
+    # Shared attribution + filter helpers (single source of truth)
+    def _apply_attribution(df, revenue_attribution, conversion_attribution):
+        """Map selected attribution model to 'Selected Revenue/Conversions' columns."""
         if 'Revenue (SAR)' in df.columns:
             if revenue_attribution == "Click-Through" and 'Click-Through Revenue (SAR)' in df.columns:
                 df['Selected Revenue (SAR)'] = df['Click-Through Revenue (SAR)']
             elif revenue_attribution == "Impression-Through" and 'Impression-Through Revenue (SAR)' in df.columns:
                 df['Selected Revenue (SAR)'] = df['Impression-Through Revenue (SAR)']
             else:
-                # For "Total" attribution, use the main Revenue column (send-through attribution)
                 df['Selected Revenue (SAR)'] = df['Revenue (SAR)']
         else:
             df['Selected Revenue (SAR)'] = 0
-        
+
         if 'Unique Conversions' in df.columns:
             if conversion_attribution == "Click-Through" and 'Unique Click-Through Conversions' in df.columns:
                 df['Selected Conversions'] = df['Unique Click-Through Conversions']
@@ -2745,21 +2868,29 @@ if uploaded_file is not None:
                 df['Selected Conversions'] = df['Unique Conversions']
         else:
             df['Selected Conversions'] = 0
-        
-        # Apply filters
+        return df
+
+    def _apply_dimension_filters(df, channels, campaigns, segments, journeys):
+        """Apply sidebar dimension filters."""
+        if channels:
+            df = df[df['Channel'].isin(channels)]
+        if campaigns:
+            df = df[df['Campaign Name'].isin(campaigns)]
+        if segments:
+            df = df[df['Segment Name'].isin(segments)]
+        if journeys:
+            df = df[df['Journey Name'].isin(journeys)]
+        return df
+
+    @st.cache_data
+    def apply_filters_and_attribution(df, revenue_attribution, conversion_attribution, date_range, channels, campaigns, segments, journeys):
+        df = df.copy()
+        df = _apply_attribution(df, revenue_attribution, conversion_attribution)
         filtered_df = df.copy()
         if date_range and len(date_range) == 2:
-            filtered_df = filtered_df[(filtered_df['Reporting Period Start Date'] >= pd.to_datetime(date_range[0])) & 
+            filtered_df = filtered_df[(filtered_df['Reporting Period Start Date'] >= pd.to_datetime(date_range[0])) &
                                       (filtered_df['Reporting Period End Date'] <= pd.to_datetime(date_range[1]))]
-        if channels:
-            filtered_df = filtered_df[filtered_df['Channel'].isin(channels)]
-        if campaigns:
-            filtered_df = filtered_df[filtered_df['Campaign Name'].isin(campaigns)]
-        if segments:
-            filtered_df = filtered_df[filtered_df['Segment Name'].isin(segments)]
-        if journeys:
-            filtered_df = filtered_df[filtered_df['Journey Name'].isin(journeys)]
-        
+        filtered_df = _apply_dimension_filters(filtered_df, channels, campaigns, segments, journeys)
         return filtered_df
     
     if not df.empty:
@@ -2801,43 +2932,14 @@ if uploaded_file is not None:
     # Calculate comparison data if comparison mode is enabled
     comparison_result = None
     if comparison_mode != "None":
-        # First, apply attribution to full dataset
         df_with_attribution = df.copy()
-        if 'Revenue (SAR)' in df_with_attribution.columns:
-            if revenue_attribution == "Click-Through" and 'Click-Through Revenue (SAR)' in df_with_attribution.columns:
-                df_with_attribution['Selected Revenue (SAR)'] = df_with_attribution['Click-Through Revenue (SAR)']
-            elif revenue_attribution == "Impression-Through" and 'Impression-Through Revenue (SAR)' in df_with_attribution.columns:
-                df_with_attribution['Selected Revenue (SAR)'] = df_with_attribution['Impression-Through Revenue (SAR)']
-            else:
-                df_with_attribution['Selected Revenue (SAR)'] = df_with_attribution['Revenue (SAR)']
-        else:
-            df_with_attribution['Selected Revenue (SAR)'] = 0
-        
-        if 'Unique Conversions' in df_with_attribution.columns:
-            if conversion_attribution == "Click-Through" and 'Unique Click-Through Conversions' in df_with_attribution.columns:
-                df_with_attribution['Selected Conversions'] = df_with_attribution['Unique Click-Through Conversions']
-            elif conversion_attribution == "Impression-Through" and 'Unique Impression-Through Conversions' in df_with_attribution.columns:
-                df_with_attribution['Selected Conversions'] = df_with_attribution['Unique Impression-Through Conversions']
-            else:
-                df_with_attribution['Selected Conversions'] = df_with_attribution['Unique Conversions']
-        else:
-            df_with_attribution['Selected Conversions'] = 0
-        
-        # Apply same dimension filters (channels, campaigns, etc.)
-        if channels:
-            df_with_attribution = df_with_attribution[df_with_attribution['Channel'].isin(channels)]
-        if campaigns:
-            df_with_attribution = df_with_attribution[df_with_attribution['Campaign Name'].isin(campaigns)]
-        if segments:
-            df_with_attribution = df_with_attribution[df_with_attribution['Segment Name'].isin(segments)]
-        if journeys:
-            df_with_attribution = df_with_attribution[df_with_attribution['Journey Name'].isin(journeys)]
-        
-        # Calculate comparison periods
+        df_with_attribution = _apply_attribution(df_with_attribution, revenue_attribution, conversion_attribution)
+        df_with_attribution = _apply_dimension_filters(df_with_attribution, channels, campaigns, segments, journeys)
+
         comparison_result = calculate_comparison_periods(
-            df_with_attribution, 
-            date_range, 
-            comparison_mode, 
+            df_with_attribution,
+            date_range,
+            comparison_mode,
             comparison_date_range
         )
 
@@ -3292,7 +3394,8 @@ if uploaded_file is not None:
             # NEW: ROI & Cost Efficiency Metrics
             st.markdown("---")
             st.subheader("💵 ROI & Cost Efficiency")
-            st.caption("*Based on channel costs: Email (1.2 SAR/1k), SMS (15 SAR/1k), WhatsApp (8 SAR/1k)*")
+            cost_display = ", ".join(f"{ch} ({c} SAR/1k)" for ch, c in CHANNEL_COSTS.items() if c > 0)
+            st.caption(f"*Based on channel costs: {cost_display}*")
             
             roi_col1, roi_col2, roi_col3, roi_col4 = st.columns(4)
             
@@ -3488,17 +3591,9 @@ if uploaded_file is not None:
                 0
             ).round(2)
             
-            # Calculate cost-based metrics for channels
-            channel_costs = {
-                'Email': 1.2, 'SMS': 15.0, 'WhatsApp': 8.0,
-                'Push': 0.0, 'Mobile Push': 0.0, 'App Push': 0.0,
-                'Web Push': 0.0, 'In-App': 0.0, 'On-Site': 0.0,
-                'Onsite': 0.0, 'On-site': 0.0
-            }
-            
-            # Channel Cost
+            # Calculate cost-based metrics for channels (uses centralized CHANNEL_COSTS)
             channel_data['Cost'] = channel_data.apply(
-                lambda row: (row['Sent'] / 1000) * channel_costs.get(row['Channel'], 0),
+                lambda row: (row['Sent'] / 1000) * CHANNEL_COSTS.get(row['Channel'], 0),
                 axis=1
             ).round(2)
             
@@ -3801,6 +3896,67 @@ if uploaded_file is not None:
         else:
             st.warning("⚠️ Channel information not available in the dataset")
 
+        # === REVENUE TREEMAP: Where does revenue come from? ===
+        st.markdown("---")
+        st.subheader("🗺️ Revenue Breakdown")
+        st.caption("*Hierarchical view: Channel → Journey/Campaign (size = revenue)*")
+
+        if 'Channel' in filtered_df.columns and 'Revenue (SAR)' in filtered_df.columns:
+            rev_col = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in filtered_df.columns else 'Revenue (SAR)'
+            # Build hierarchy: Channel > Campaign Name
+            treemap_df = filtered_df.groupby(['Channel', 'Campaign Name'], dropna=False).agg({
+                rev_col: 'sum', 'Unique Conversions': 'sum'
+            }).reset_index()
+            treemap_df = treemap_df[treemap_df[rev_col] > 0]
+
+            if not treemap_df.empty:
+                fig_treemap = px.treemap(
+                    treemap_df,
+                    path=['Channel', 'Campaign Name'],
+                    values=rev_col,
+                    color='Channel',
+                    color_discrete_map=CHANNEL_COLORS,
+                    title='Revenue by Channel & Campaign',
+                )
+                fig_treemap.update_traces(
+                    textinfo='label+value+percent parent',
+                    hovertemplate='<b>%{label}</b><br>Revenue: %{value:,.0f} SAR<br>%{percentParent:.1%} of parent<extra></extra>',
+                )
+                fig_treemap.update_layout(margin=dict(l=10, r=10, t=50, b=10))
+                st.plotly_chart(fig_treemap, use_container_width=True)
+
+                # Chart export button
+                img_buf = export_chart_image(fig_treemap, 'revenue_treemap')
+                if img_buf:
+                    st.download_button("📥 Download Treemap (PNG)", img_buf, file_name="revenue_treemap.png", mime="image/png")
+
+        # === CHANNEL MIX OVER TIME: Stacked area ===
+        st.markdown("---")
+        st.subheader("📊 Channel Mix Over Time")
+        st.caption("*How your channel revenue distribution evolves*")
+
+        if 'Channel' in filtered_df.columns and 'Reporting Period Start Date' in filtered_df.columns:
+            rev_col = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in filtered_df.columns else 'Revenue (SAR)'
+            time_channel = filtered_df.groupby(
+                [pd.Grouper(key='Reporting Period Start Date', freq='W'), 'Channel']
+            )[rev_col].sum().reset_index()
+            time_channel.columns = ['Week', 'Channel', 'Revenue']
+
+            if not time_channel.empty:
+                fig_area = px.area(
+                    time_channel,
+                    x='Week', y='Revenue', color='Channel',
+                    color_discrete_map=CHANNEL_COLORS,
+                    title='Weekly Revenue by Channel',
+                    labels={'Revenue': 'Revenue (SAR)', 'Week': ''},
+                )
+                fig_area.update_layout(hovermode='x unified')
+                st.plotly_chart(fig_area, use_container_width=True)
+
+                img_buf = export_chart_image(fig_area, 'channel_mix')
+                if img_buf:
+                    st.download_button("📥 Download Channel Mix (PNG)", img_buf, file_name="channel_mix.png", mime="image/png")
+
         # Conversion Funnel
         st.markdown("---")
         st.subheader("Conversion Funnel")
@@ -3811,16 +3967,22 @@ if uploaded_file is not None:
         fig_funnel = go.Figure(go.Funnel(
             y=funnel_data['Stage'],
             x=funnel_data['Count'],
-            textinfo="value+percent initial"
+            textinfo="value+percent initial",
+            marker=dict(color=[COLORS['primary'], COLORS['info'], COLORS['warning'], COLORS['success']]),
         ))
-        st.plotly_chart(fig_funnel)
+        fig_funnel.update_layout(title='Conversion Funnel')
+        st.plotly_chart(fig_funnel, use_container_width=True)
+
+        img_buf = export_chart_image(fig_funnel, 'conversion_funnel')
+        if img_buf:
+            st.download_button("📥 Download Funnel (PNG)", img_buf, file_name="conversion_funnel.png", mime="image/png")
 
         # Failed reasons
         failed_df = failed_reasons_analysis(filtered_df)
         if not failed_df.empty:
             st.subheader("Failed Reasons Breakdown")
-            fig_fail = px.pie(failed_df, names='Reason', values='Count')
-            st.plotly_chart(fig_fail)
+            fig_fail = px.pie(failed_df, names='Reason', values='Count', color_discrete_sequence=COLOR_SEQUENCE)
+            st.plotly_chart(fig_fail, use_container_width=True)
 
         # Data Preview
         with st.expander("View Filtered Data"):
@@ -5150,38 +5312,38 @@ if uploaded_file is not None:
             waterfall_result = create_revenue_attribution_waterfall(waterfall_data_full)
             
             if waterfall_result['total_revenue'] > 0:
-                # Create waterfall chart
-                fig_waterfall = go.Figure()
-                
-                # Add bars for each attribution source
-                x_labels = []
-                y_values = []
-                colors = []
-                
-                for item in waterfall_result['waterfall_data']:
-                    if item['step'] != 'Starting Point':
-                        x_labels.append(item['step'])
-                        if item['step'] == 'Total Revenue':
-                            y_values.append(item['cumulative'])
-                            colors.append('green')
-                        else:
-                            y_values.append(item['value'])
-                            colors.append('lightblue')
-                
-                fig_waterfall.add_trace(go.Bar(
-                    x=x_labels,
-                    y=y_values,
-                    marker_color=colors,
-                    text=[format_metric(val, "SAR") for val in y_values],
-                    textposition='auto'
+                # Proper waterfall chart showing attribution flow
+                wf_data = waterfall_result['waterfall_data']
+                wf_labels = [d['step'] for d in wf_data if d['step'] != 'Starting Point']
+                wf_values = []
+                wf_measures = []
+                for d in wf_data:
+                    if d['step'] == 'Starting Point':
+                        continue
+                    if d['step'] == 'Total Revenue':
+                        wf_measures.append('total')
+                        wf_values.append(d['cumulative'])
+                    else:
+                        wf_measures.append('relative')
+                        wf_values.append(d['value'])
+
+                fig_waterfall = go.Figure(go.Waterfall(
+                    x=wf_labels,
+                    y=wf_values,
+                    measure=wf_measures,
+                    text=[format_metric(v, "SAR") for v in wf_values],
+                    textposition='outside',
+                    connector=dict(line=dict(color='#E5E7EB', width=1)),
+                    increasing=dict(marker=dict(color=COLORS['primary'])),
+                    decreasing=dict(marker=dict(color=COLORS['danger'])),
+                    totals=dict(marker=dict(color=COLORS['success'])),
                 ))
-                
                 fig_waterfall.update_layout(
                     title=f"Revenue Attribution Breakdown: {waterfall_journey}",
                     yaxis_title="Revenue (SAR)",
-                    showlegend=False
+                    showlegend=False,
                 )
-                st.plotly_chart(fig_waterfall)
+                st.plotly_chart(fig_waterfall, use_container_width=True)
                 
                 # Attribution breakdown table
                 st.subheader("📊 Attribution Breakdown")
@@ -6183,11 +6345,18 @@ if uploaded_file is not None:
         st.dataframe(chan_df_display)
         
         # Create charts with original numeric values
-        fig4 = px.bar(chan_df, x='Channel', y='Unique Conversions', title="Conversions by Channel")
-        st.plotly_chart(fig4)
-        if 'Revenue (SAR)' in chan_df.columns:
-            fig_rev = px.bar(chan_df, x='Channel', y='Revenue (SAR)', title="Revenue by Channel")
-            st.plotly_chart(fig_rev)
+        ch_col1, ch_col2 = st.columns(2)
+        with ch_col1:
+            fig4 = px.bar(chan_df, x='Channel', y='Unique Conversions', title="Conversions by Channel",
+                          color='Channel', color_discrete_map=CHANNEL_COLORS)
+            fig4.update_layout(showlegend=False)
+            st.plotly_chart(fig4, use_container_width=True)
+        with ch_col2:
+            if 'Revenue (SAR)' in chan_df.columns:
+                fig_rev = px.bar(chan_df, x='Channel', y='Revenue (SAR)', title="Revenue by Channel",
+                                 color='Channel', color_discrete_map=CHANNEL_COLORS)
+                fig_rev.update_layout(showlegend=False)
+                st.plotly_chart(fig_rev, use_container_width=True)
         
         # ESP Analysis
         esp_df = esp_analysis(filtered_df)
