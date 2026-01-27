@@ -2,7 +2,9 @@ streamlit
 pandas
 numpy
 plotly
+kaleido
 openpyxl
 scikit-learn
 statsmodels
 prophet
+scipy

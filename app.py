@@ -3813,27 +3813,27 @@ if uploaded_file is not None:
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    # Revenue by channel
+                    # Revenue by channel - use consistent channel colors
                     fig_channel_revenue = px.bar(
                         channel_data,
                         x='Channel',
                         y=revenue_col,
                         title="Revenue by Channel",
-                        color=revenue_col,
-                        color_continuous_scale='Blues'
+                        color='Channel',
+                        color_discrete_map=CHANNEL_COLORS,
                     )
                     fig_channel_revenue.update_layout(showlegend=False)
                     st.plotly_chart(fig_channel_revenue, use_container_width=True)
-                
+
                 with col2:
-                    # Conversions by channel
+                    # Conversions by channel - use consistent channel colors
                     fig_channel_conv = px.bar(
                         channel_data,
                         x='Channel',
                         y='Unique Conversions',
                         title="Conversions by Channel",
-                        color='Unique Conversions',
-                        color_continuous_scale='Greens'
+                        color='Channel',
+                        color_discrete_map=CHANNEL_COLORS,
                     )
                     fig_channel_conv.update_layout(showlegend=False)
                     st.plotly_chart(fig_channel_conv, use_container_width=True)
