@@ -138,7 +138,6 @@ page = st.sidebar.selectbox("Navigate to", [
     "A/B Testing", 
     "Attribution", 
     "Failed Reasons", 
-    "ESP Performance", 
     "Comparisons", 
     "AI Insights",
     "Export"
@@ -3140,27 +3139,27 @@ if uploaded_file is not None:
                         y=forecast_df['yhat'],
                         mode='lines',
                         name='Predicted Revenue',
-                        line=dict(color='blue', width=2)
+                        line=dict(color=COLORS['primary'], width=2)
                     ))
-                    
+
                     # Add confidence interval
                     fig_forecast.add_trace(go.Scatter(
                         x=forecast_df['ds'],
                         y=forecast_df['yhat_upper'],
                         mode='lines',
                         name='Upper Bound (95%)',
-                        line=dict(color='lightblue', width=1, dash='dash'),
+                        line=dict(color=COLORS['info'], width=1, dash='dash'),
                         showlegend=False
                     ))
-                    
+
                     fig_forecast.add_trace(go.Scatter(
                         x=forecast_df['ds'],
                         y=forecast_df['yhat_lower'],
                         mode='lines',
                         name='Lower Bound (95%)',
-                        line=dict(color='lightblue', width=1, dash='dash'),
+                        line=dict(color=COLORS['info'], width=1, dash='dash'),
                         fill='tonexty',
-                        fillcolor='rgba(173, 216, 230, 0.2)',
+                        fillcolor='rgba(8, 145, 178, 0.15)',
                         showlegend=False
                     ))
                     
@@ -3172,7 +3171,10 @@ if uploaded_file is not None:
                     )
                     
                     st.plotly_chart(fig_forecast, use_container_width=True)
-                    
+                    forecast_img = export_chart_image(fig_forecast, 'revenue_forecast')
+                    if forecast_img:
+                        st.download_button("Download Forecast Chart", forecast_img, "revenue_forecast.png", "image/png", key='dl_forecast')
+
                     # Show confidence interval info
                     st.caption(f"📊 95% Confidence Interval: {format_metric(forecast.get('confidence_lower', 0), 'SAR')} - {format_metric(forecast.get('confidence_upper', 0), 'SAR')}")
         
@@ -4054,8 +4056,9 @@ if uploaded_file is not None:
         st.dataframe(top_camp_display)
         
         # Create chart with original numeric values
-        fig = px.bar(top_camp, x='Campaign Name', y=camp_metric, title=f"Top Campaigns by {camp_metric}")
-        st.plotly_chart(fig)
+        fig = px.bar(top_camp, x='Campaign Name', y=camp_metric, title=f"Top Campaigns by {camp_metric}",
+                     color_discrete_sequence=COLOR_SEQUENCE)
+        st.plotly_chart(fig, use_container_width=True)
         
         # Campaign Drill-Down
         st.subheader("Campaign Drill-Down")
@@ -4117,15 +4120,20 @@ if uploaded_file is not None:
             chan_perf['Impression-Through Revenue (SAR)'] = chan_perf['Impression-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
             chan_perf['Click-Through Revenue (SAR)'] = chan_perf['Click-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
             st.dataframe(chan_perf)
-            fig_chan = px.bar(chan_perf, x='Channel', y='Unique Conversions', title="Conversions by Channel for Selected Campaigns")
-            st.plotly_chart(fig_chan)
+            fig_chan = px.bar(chan_perf, x='Channel', y='Unique Conversions', title="Conversions by Channel for Selected Campaigns",
+                              color='Channel', color_discrete_map=CHANNEL_COLORS)
+            fig_chan.update_layout(showlegend=False)
+            st.plotly_chart(fig_chan, use_container_width=True)
             
             # Time Series for Selected Campaigns
             st.subheader("Time Series Performance")
             ts_camp = camp_details.groupby(['Reporting Period Start Date', 'Campaign Name'])[camp_metric].sum().reset_index()
             if not ts_camp.empty:
-                fig_ts_camp = px.line(ts_camp, x='Reporting Period Start Date', y=camp_metric, color='Campaign Name', title=f"{camp_metric} Over Time for Selected Campaigns")
-                st.plotly_chart(fig_ts_camp)
+                fig_ts_camp = px.line(ts_camp, x='Reporting Period Start Date', y=camp_metric, color='Campaign Name',
+                                      title=f"{camp_metric} Over Time for Selected Campaigns",
+                                      color_discrete_sequence=COLOR_SEQUENCE)
+                fig_ts_camp.update_traces(line_width=2.5)
+                st.plotly_chart(fig_ts_camp, use_container_width=True)
             
             # Conversion Attribution
             st.subheader("Conversion Attribution")
@@ -4136,8 +4144,9 @@ if uploaded_file is not None:
             }
             attr_df_camp = pd.DataFrame(list(attr_camp.items()), columns=['Source', 'Conversions'])
             attr_df_camp['Conversions'] = attr_df_camp['Conversions'].apply(format_metric)
-            fig_attr_camp = px.pie(attr_df_camp, names='Source', values='Conversions', title="Attribution for Selected Campaigns")
-            st.plotly_chart(fig_attr_camp)
+            fig_attr_camp = px.pie(attr_df_camp, names='Source', values='Conversions', title="Attribution for Selected Campaigns",
+                                    color_discrete_sequence=COLOR_SEQUENCE)
+            st.plotly_chart(fig_attr_camp, use_container_width=True)
             
             # Failed Reasons for Selected Campaigns
             st.subheader("Failed Reasons")
@@ -4145,8 +4154,9 @@ if uploaded_file is not None:
             if failed_cols:
                 failed_camp = camp_details[failed_cols].sum().reset_index().rename(columns={'index': 'Reason', 0: 'Count'})
                 failed_camp['Count'] = failed_camp['Count'].apply(format_metric)
-                fig_fail_camp = px.bar(failed_camp, x='Reason', y='Count', title="Failed Reasons for Selected Campaigns")
-                st.plotly_chart(fig_fail_camp)
+                fig_fail_camp = px.bar(failed_camp, x='Reason', y='Count', title="Failed Reasons for Selected Campaigns",
+                                       color_discrete_sequence=[COLORS['danger']])
+                st.plotly_chart(fig_fail_camp, use_container_width=True)
 
         # Campaign Health Score Analysis
         st.subheader("🏥 Campaign Health Dashboard")
@@ -4247,12 +4257,13 @@ if uploaded_file is not None:
             
             # Health Score Distribution
             st.subheader("📊 Health Score Distribution")
-            fig_health_dist = px.histogram(health_df, x='Health Score', nbins=20, 
-                                         title="Distribution of Campaign Health Scores")
-            fig_health_dist.add_vline(x=health_df['Health Score'].mean(), 
-                                    line_dash="dash", 
+            fig_health_dist = px.histogram(health_df, x='Health Score', nbins=20,
+                                         title="Distribution of Campaign Health Scores",
+                                         color_discrete_sequence=[COLORS['primary']])
+            fig_health_dist.add_vline(x=health_df['Health Score'].mean(),
+                                    line_dash="dash", line_color=COLORS['danger'],
                                     annotation_text=f"Average: {health_df['Health Score'].mean():.1f}")
-            st.plotly_chart(fig_health_dist)
+            st.plotly_chart(fig_health_dist, use_container_width=True)
             
             # Complete Health Dashboard Table
             st.subheader("📋 Complete Campaign Health Report")
@@ -4382,7 +4393,7 @@ if uploaded_file is not None:
                     theta=categories,
                     mode='lines',
                     name='Excellent (80+)',
-                    line=dict(color='green', width=2, dash='dash'),
+                    line=dict(color=COLORS['success'], width=2, dash='dash'),
                     showlegend=True
                 ))
                 
@@ -4391,7 +4402,7 @@ if uploaded_file is not None:
                     theta=categories,
                     mode='lines',
                     name='Good (60+)',
-                    line=dict(color='orange', width=2, dash='dot'),
+                    line=dict(color=COLORS['warning'], width=2, dash='dot'),
                     showlegend=True
                 ))
                 
@@ -4423,7 +4434,10 @@ if uploaded_file is not None:
                     margin=dict(l=80, r=80, t=80, b=80)
                 )
                 st.plotly_chart(fig_radar, use_container_width=True)
-                
+                radar_img = export_chart_image(fig_radar, 'campaign_radar')
+                if radar_img:
+                    st.download_button("Download Radar Chart", radar_img, "campaign_radar.png", "image/png", key='dl_camp_radar')
+
                 # Show recommendations
                 campaign_data_for_rec = filtered_df[filtered_df['Campaign Name'] == selected_campaign_health]
                 health_info_for_rec = calculate_campaign_health_score(campaign_data_for_rec, filtered_df)
@@ -4883,12 +4897,13 @@ if uploaded_file is not None:
             
             # Health Score Distribution
             st.subheader("📊 Health Score Distribution")
-            fig_health_dist = px.histogram(health_df, x='Health Score', nbins=20, 
-                                         title="Distribution of Journey Health Scores")
-            fig_health_dist.add_vline(x=health_df['Health Score'].mean(), 
-                                    line_dash="dash", 
+            fig_health_dist = px.histogram(health_df, x='Health Score', nbins=20,
+                                         title="Distribution of Journey Health Scores",
+                                         color_discrete_sequence=[COLORS['primary']])
+            fig_health_dist.add_vline(x=health_df['Health Score'].mean(),
+                                    line_dash="dash", line_color=COLORS['danger'],
                                     annotation_text=f"Average: {health_df['Health Score'].mean():.1f}")
-            st.plotly_chart(fig_health_dist)
+            st.plotly_chart(fig_health_dist, use_container_width=True)
             
             # Complete Health Dashboard Table
             st.subheader("📋 Complete Journey Health Report")
@@ -5018,7 +5033,7 @@ if uploaded_file is not None:
                     theta=categories,
                     mode='lines',
                     name='Excellent (80+)',
-                    line=dict(color='green', width=2, dash='dash'),
+                    line=dict(color=COLORS['success'], width=2, dash='dash'),
                     showlegend=True
                 ))
                 
@@ -5027,7 +5042,7 @@ if uploaded_file is not None:
                     theta=categories,
                     mode='lines',
                     name='Good (60+)',
-                    line=dict(color='orange', width=2, dash='dot'),
+                    line=dict(color=COLORS['warning'], width=2, dash='dot'),
                     showlegend=True
                 ))
                 
@@ -5059,7 +5074,10 @@ if uploaded_file is not None:
                     margin=dict(l=80, r=80, t=80, b=80)
                 )
                 st.plotly_chart(fig_radar, use_container_width=True)
-                
+                radar_img = export_chart_image(fig_radar, 'journey_radar')
+                if radar_img:
+                    st.download_button("Download Radar Chart", radar_img, "journey_radar.png", "image/png", key='dl_jour_radar')
+
                 # Show recommendations
                 journey_data_for_rec = filtered_df[filtered_df['Journey Name'] == selected_journey_health]
                 health_info_for_rec = calculate_journey_health_score(journey_data_for_rec, filtered_df)
@@ -5628,8 +5646,8 @@ if uploaded_file is not None:
                         if 'Revenue (SAR)' in comparison_result['metrics']:
                             rev_data = comparison_result['metrics']['Revenue (SAR)']
                             fig_rev = go.Figure(data=[
-                                go.Bar(name='Period 1', x=['Daily Average Revenue'], y=[rev_data['period1_daily_avg']], marker_color='lightblue'),
-                                go.Bar(name='Period 2', x=['Daily Average Revenue'], y=[rev_data['period2_daily_avg']], marker_color='darkblue')
+                                go.Bar(name='Period 1', x=['Daily Average Revenue'], y=[rev_data['period1_daily_avg']], marker_color=COLORS['info']),
+                                go.Bar(name='Period 2', x=['Daily Average Revenue'], y=[rev_data['period2_daily_avg']], marker_color=COLORS['primary'])
                             ])
                             fig_rev.update_layout(title="Revenue Comparison", yaxis_title="Revenue (SAR)")
                             st.plotly_chart(fig_rev, use_container_width=True)
@@ -5639,8 +5657,8 @@ if uploaded_file is not None:
                         if 'Unique Conversions' in comparison_result['metrics']:
                             conv_data = comparison_result['metrics']['Unique Conversions']
                             fig_conv = go.Figure(data=[
-                                go.Bar(name='Period 1', x=['Daily Average Conversions'], y=[conv_data['period1_daily_avg']], marker_color='lightgreen'),
-                                go.Bar(name='Period 2', x=['Daily Average Conversions'], y=[conv_data['period2_daily_avg']], marker_color='darkgreen')
+                                go.Bar(name='Period 1', x=['Daily Average Conversions'], y=[conv_data['period1_daily_avg']], marker_color=COLORS['info']),
+                                go.Bar(name='Period 2', x=['Daily Average Conversions'], y=[conv_data['period2_daily_avg']], marker_color=COLORS['success'])
                             ])
                             fig_conv.update_layout(title="Conversions Comparison", yaxis_title="Conversions")
                             st.plotly_chart(fig_conv, use_container_width=True)
@@ -5805,8 +5823,9 @@ if uploaded_file is not None:
         st.dataframe(top_jour_display)
         
         # Create chart with original numeric values
-        fig2 = px.bar(top_jour, x='Journey Name', y=jour_metric, title=f"Top Journeys by {jour_metric}")
-        st.plotly_chart(fig2)
+        fig2 = px.bar(top_jour, x='Journey Name', y=jour_metric, title=f"Top Journeys by {jour_metric}",
+                      color_discrete_sequence=COLOR_SEQUENCE)
+        st.plotly_chart(fig2, use_container_width=True)
         
         # Journey Drill-Down
         st.subheader("Journey Drill-Down")
@@ -5857,8 +5876,11 @@ if uploaded_file is not None:
             chart_data['Unique Conversions'] = pd.to_numeric(chart_data['Unique Conversions'].str.replace(',', '').str.replace('K', '000').str.replace('M', '000000'), errors='coerce')
             chart_data[selected_revenue] = pd.to_numeric(chart_data[selected_revenue].str.replace(',', '').str.replace('K', '000').str.replace('M', '000000').str.replace(' SAR', ''), errors='coerce')
             
-            fig_chan_jour = px.bar(chart_data, x='Channel', y='Unique Conversions', title="Conversions by Channel for Selected Journeys")
-            st.plotly_chart(fig_chan_jour)
+            fig_chan_jour = px.bar(chart_data, x='Channel', y='Unique Conversions',
+                                   title="Conversions by Channel for Selected Journeys",
+                                   color='Channel', color_discrete_map=CHANNEL_COLORS)
+            fig_chan_jour.update_layout(showlegend=False)
+            st.plotly_chart(fig_chan_jour, use_container_width=True)
             
             # Time Series for Selected Journeys
             st.subheader("Time Series Performance")
@@ -5871,11 +5893,16 @@ if uploaded_file is not None:
                 # Format y-axis for rates
                 if 'Rate' in jour_metric:
                     ts_jour[jour_metric] = ts_jour[jour_metric] * 100  # Convert to percentage for display
-                    fig_ts_jour = px.line(ts_jour, x='Reporting Period Start Date', y=jour_metric, color='Journey Name', title=f"{jour_metric} Over Time for Selected Journeys")
+                    fig_ts_jour = px.line(ts_jour, x='Reporting Period Start Date', y=jour_metric, color='Journey Name',
+                                           title=f"{jour_metric} Over Time for Selected Journeys",
+                                           color_discrete_sequence=COLOR_SEQUENCE)
                     fig_ts_jour.update_yaxes(tickformat=".1f", title=f"{jour_metric} (%)")
                 else:
-                    fig_ts_jour = px.line(ts_jour, x='Reporting Period Start Date', y=jour_metric, color='Journey Name', title=f"{jour_metric} Over Time for Selected Journeys")
-                st.plotly_chart(fig_ts_jour)
+                    fig_ts_jour = px.line(ts_jour, x='Reporting Period Start Date', y=jour_metric, color='Journey Name',
+                                           title=f"{jour_metric} Over Time for Selected Journeys",
+                                           color_discrete_sequence=COLOR_SEQUENCE)
+                fig_ts_jour.update_traces(line_width=2.5)
+                st.plotly_chart(fig_ts_jour, use_container_width=True)
                 
                 # Journey Performance Insights
                 st.subheader("📊 Journey Performance Insights")
@@ -6057,8 +6084,9 @@ if uploaded_file is not None:
             }
             attr_df_jour = pd.DataFrame(list(attr_jour.items()), columns=['Source', 'Conversions'])
             attr_df_jour['Conversions'] = attr_df_jour['Conversions'].apply(format_metric)
-            fig_attr_jour = px.pie(attr_df_jour, names='Source', values='Conversions', title="Attribution for Selected Journeys")
-            st.plotly_chart(fig_attr_jour)
+            fig_attr_jour = px.pie(attr_df_jour, names='Source', values='Conversions', title="Attribution for Selected Journeys",
+                                    color_discrete_sequence=COLOR_SEQUENCE)
+            st.plotly_chart(fig_attr_jour, use_container_width=True)
             
             # Failed Reasons for Selected Journeys
             st.subheader("Failed Reasons")
@@ -6066,8 +6094,9 @@ if uploaded_file is not None:
             if failed_cols:
                 failed_jour = jour_details[failed_cols].sum().reset_index().rename(columns={'index': 'Reason', 0: 'Count'})
                 failed_jour['Count'] = failed_jour['Count'].apply(format_metric)
-                fig_fail_jour = px.bar(failed_jour, x='Reason', y='Count', title="Failed Reasons for Selected Journeys")
-                st.plotly_chart(fig_fail_jour)
+                fig_fail_jour = px.bar(failed_jour, x='Reason', y='Count', title="Failed Reasons for Selected Journeys",
+                                       color_discrete_sequence=[COLORS['danger']])
+                st.plotly_chart(fig_fail_jour, use_container_width=True)
 
         # 🚨 Stopped Journey Analysis with Revenue Loss Estimation
         st.markdown("---")
@@ -6225,8 +6254,8 @@ if uploaded_file is not None:
                                             y=[journey_name, journey_name],
                                             mode='lines+markers',
                                             name=f"Stopped Period ({period['days_stopped']} days)",
-                                            line=dict(color='red', width=4),
-                                            marker=dict(size=8, color='red'),
+                                            line=dict(color=COLORS['danger'], width=4),
+                                            marker=dict(size=8, color=COLORS['danger']),
                                             showlegend=False
                                         ))
 
@@ -6326,8 +6355,9 @@ if uploaded_file is not None:
         st.dataframe(top_seg_display)
         
         # Create chart with original numeric values
-        fig3 = px.bar(top_seg, x='Segment Name', y=seg_metric, title=f"Top Segments by {seg_metric}")
-        st.plotly_chart(fig3)
+        fig3 = px.bar(top_seg, x='Segment Name', y=seg_metric, title=f"Top Segments by {seg_metric}",
+                       color_discrete_sequence=COLOR_SEQUENCE)
+        st.plotly_chart(fig3, use_container_width=True)
 
     elif page == "Channels":
         st.header("Channel Analysis")
@@ -6344,20 +6374,50 @@ if uploaded_file is not None:
             chan_df_display[col] = chan_df_display[col].apply(lambda x: format_metric(x, "SAR"))
         st.dataframe(chan_df_display)
         
-        # Create charts with original numeric values
+        # Compute derived rates for deeper channel analysis
+        chan_rates = chan_df.copy()
+        chan_rates['Delivery Rate'] = np.where(
+            chan_rates['Sent'] > 0,
+            (chan_rates['Delivered'] / chan_rates['Sent']) * 100, 0
+        )
+        chan_rates['CTR'] = np.where(
+            chan_rates['Unique Impressions'] > 0,
+            (chan_rates['Unique Clicks'] / chan_rates['Unique Impressions']) * 100, 0
+        )
+
+        # Charts: Delivery Rate + CTR (complementary to Overview's Revenue + Conversions)
         ch_col1, ch_col2 = st.columns(2)
         with ch_col1:
-            fig4 = px.bar(chan_df, x='Channel', y='Unique Conversions', title="Conversions by Channel",
-                          color='Channel', color_discrete_map=CHANNEL_COLORS)
-            fig4.update_layout(showlegend=False)
-            st.plotly_chart(fig4, use_container_width=True)
+            fig_dr = px.bar(
+                chan_rates, x='Channel', y='Delivery Rate',
+                title="Delivery Rate by Channel (%)",
+                color='Channel', color_discrete_map=CHANNEL_COLORS,
+            )
+            fig_dr.update_layout(showlegend=False, yaxis_title="Delivery Rate (%)")
+            fig_dr.add_hline(y=95, line_dash="dash", line_color=COLORS['muted'],
+                             annotation_text="95% target", annotation_position="top right")
+            st.plotly_chart(fig_dr, use_container_width=True)
         with ch_col2:
-            if 'Revenue (SAR)' in chan_df.columns:
-                fig_rev = px.bar(chan_df, x='Channel', y='Revenue (SAR)', title="Revenue by Channel",
-                                 color='Channel', color_discrete_map=CHANNEL_COLORS)
-                fig_rev.update_layout(showlegend=False)
-                st.plotly_chart(fig_rev, use_container_width=True)
-        
+            fig_ctr = px.bar(
+                chan_rates, x='Channel', y='CTR',
+                title="Click-Through Rate by Channel (%)",
+                color='Channel', color_discrete_map=CHANNEL_COLORS,
+            )
+            fig_ctr.update_layout(showlegend=False, yaxis_title="CTR (%)")
+            st.plotly_chart(fig_ctr, use_container_width=True)
+
+        # Volume comparison (Sent vs Delivered side-by-side)
+        st.subheader("Send Volume & Delivery")
+        volume_melt = chan_df[['Channel', 'Sent', 'Delivered']].melt(
+            id_vars='Channel', var_name='Metric', value_name='Count'
+        )
+        fig_vol = px.bar(
+            volume_melt, x='Channel', y='Count', color='Metric',
+            barmode='group', title="Sent vs Delivered by Channel",
+            color_discrete_map={'Sent': COLORS['primary'], 'Delivered': COLORS['success']},
+        )
+        st.plotly_chart(fig_vol, use_container_width=True)
+
         # ESP Analysis
         esp_df = esp_analysis(filtered_df)
         if not esp_df.empty:
@@ -6373,13 +6433,18 @@ if uploaded_file is not None:
             for col in revenue_cols:
                 esp_df_display[col] = esp_df_display[col].apply(lambda x: format_metric(x, "SAR"))
             st.dataframe(esp_df_display)
-            
+
             # Create charts with original numeric values
-            fig_esp = px.bar(esp_df, x='ESP/SSP/WSP/RSP name', y='Delivered', title="Delivered by ESP")
-            st.plotly_chart(fig_esp)
-            if 'Revenue (SAR)' in esp_df.columns:
-                fig_esp_rev = px.bar(esp_df, x='ESP/SSP/WSP/RSP name', y='Revenue (SAR)', title="Revenue by ESP")
-                st.plotly_chart(fig_esp_rev)
+            esp_col1, esp_col2 = st.columns(2)
+            with esp_col1:
+                fig_esp = px.bar(esp_df, x='ESP/SSP/WSP/RSP name', y='Delivered',
+                                 title="Delivered by ESP", color_discrete_sequence=COLOR_SEQUENCE)
+                st.plotly_chart(fig_esp, use_container_width=True)
+            with esp_col2:
+                if 'Revenue (SAR)' in esp_df.columns:
+                    fig_esp_rev = px.bar(esp_df, x='ESP/SSP/WSP/RSP name', y='Revenue (SAR)',
+                                         title="Revenue by ESP", color_discrete_sequence=COLOR_SEQUENCE)
+                    st.plotly_chart(fig_esp_rev, use_container_width=True)
 
     elif page == "Time Series":
         st.header("Time Series Analysis")
@@ -6395,8 +6460,10 @@ if uploaded_file is not None:
         ts_metric = st.selectbox("Metric", all_metrics, key='ts_metric')
         ts_df = time_series_analysis(filtered_df, ts_metric)
         if not ts_df.empty:
-            fig_ts = px.line(ts_df, x='Reporting Period Start Date', y=ts_metric, title=f"{ts_metric} Over Time")
-            st.plotly_chart(fig_ts)
+            fig_ts = px.line(ts_df, x='Reporting Period Start Date', y=ts_metric, title=f"{ts_metric} Over Time",
+                             color_discrete_sequence=[COLORS['primary']])
+            fig_ts.update_traces(line_width=2.5)
+            st.plotly_chart(fig_ts, use_container_width=True)
         else:
             st.write("No time series data available.")
 
@@ -6405,8 +6472,9 @@ if uploaded_file is not None:
         numeric_df = filtered_df.select_dtypes(include=[np.number])
         if not numeric_df.empty:
             corr = numeric_df.corr()
-            fig_corr = px.imshow(corr, text_auto=True, title="Correlation Matrix")
-            st.plotly_chart(fig_corr)
+            fig_corr = px.imshow(corr, text_auto=True, title="Correlation Matrix",
+                                 color_continuous_scale='RdBu_r')
+            st.plotly_chart(fig_corr, use_container_width=True)
         else:
             st.write("No numeric data for correlation.")
 
@@ -6415,8 +6483,9 @@ if uploaded_file is not None:
         ab_df = ab_testing_analysis(filtered_df)
         if not ab_df.empty:
             st.dataframe(ab_df)
-            fig_ab = px.bar(ab_df, x='Campaign Name', y='Lift', title="Conversion Lift by Campaign")
-            st.plotly_chart(fig_ab)
+            fig_ab = px.bar(ab_df, x='Campaign Name', y='Lift', title="Conversion Lift by Campaign",
+                            color='Lift', color_continuous_scale=[[0, COLORS['danger']], [0.5, COLORS['warning']], [1, COLORS['success']]])
+            st.plotly_chart(fig_ab, use_container_width=True)
         else:
             st.write("No A/B testing data available (no control groups).")
 
@@ -6429,8 +6498,9 @@ if uploaded_file is not None:
         st.dataframe(attr_df_display)
         
         # Create chart with original numeric values
-        fig_attr = px.pie(attr_df, names='Source', values='Conversions', title="Conversions by Attribution Source")
-        st.plotly_chart(fig_attr)
+        fig_attr = px.pie(attr_df, names='Source', values='Conversions', title="Conversions by Attribution Source",
+                          color_discrete_sequence=COLOR_SEQUENCE)
+        st.plotly_chart(fig_attr, use_container_width=True)
 
     elif page == "Failed Reasons":
         st.header("Failed Reasons Analysis")
@@ -6443,8 +6513,9 @@ if uploaded_file is not None:
             st.dataframe(failed_df_display)
             
             # Create chart with original numeric values
-            fig_fail = px.bar(failed_df, x='Reason', y='Count', title="Failed Reasons Breakdown")
-            st.plotly_chart(fig_fail)
+            fig_fail = px.bar(failed_df, x='Reason', y='Count', title="Failed Reasons Breakdown",
+                              color_discrete_sequence=[COLORS['danger']])
+            st.plotly_chart(fig_fail, use_container_width=True)
             
         # Drill-down: Failed reasons by channel
             st.subheader("Failed Reasons by Channel")
@@ -6460,35 +6531,12 @@ if uploaded_file is not None:
                 
                 # Melt for plotting (use original numeric values)
                 failed_melt = failed_by_channel.melt(id_vars='Channel', var_name='Reason', value_name='Count')
-                fig_fail_chan = px.bar(failed_melt, x='Channel', y='Count', color='Reason', title="Failed Reasons by Channel")
-                st.plotly_chart(fig_fail_chan)
+                fig_fail_chan = px.bar(failed_melt, x='Channel', y='Count', color='Reason',
+                                      title="Failed Reasons by Channel",
+                                      color_discrete_sequence=COLOR_SEQUENCE)
+                st.plotly_chart(fig_fail_chan, use_container_width=True)
         else:
             st.write("No failed reasons data available.")
-
-    elif page == "ESP Performance":
-        st.header("ESP Performance")
-        esp_df = esp_analysis(filtered_df)
-        if not esp_df.empty:
-            # Create display version for table
-            esp_df_display = esp_df.copy()
-            # Format numeric columns
-            numeric_cols = ['Sent', 'Delivered', 'Unique Conversions']
-            for col in numeric_cols:
-                if col in esp_df_display.columns:
-                    esp_df_display[col] = esp_df_display[col].apply(format_metric)
-            revenue_cols = [col for col in esp_df_display.columns if 'Revenue' in col]
-            for col in revenue_cols:
-                esp_df_display[col] = esp_df_display[col].apply(lambda x: format_metric(x, "SAR"))
-            st.dataframe(esp_df_display)
-            
-            # Create charts with original numeric values
-            fig_esp = px.bar(esp_df, x='ESP/SSP/WSP/RSP name', y='Delivered', title="Delivered by ESP")
-            st.plotly_chart(fig_esp)
-            if 'Revenue (SAR)' in esp_df.columns:
-                fig_esp_rev = px.bar(esp_df, x='ESP/SSP/WSP/RSP name', y='Revenue (SAR)', title="Revenue by ESP")
-                st.plotly_chart(fig_esp_rev)
-        else:
-            st.write("No ESP data available.")
 
     elif page == "Export":
         st.header("Export")
@@ -6764,7 +6812,7 @@ if uploaded_file is not None:
                 name='Comparison Period',
                 x=[comparison_result['comparison_label']],
                 y=[change_data['comparison']],
-                marker_color='lightblue',
+                marker_color=COLORS['info'],
                 text=[format_metric(change_data['comparison'], 'SAR' if 'Revenue' in viz_metric else '')],
                 textposition='auto'
             ))
@@ -6773,7 +6821,7 @@ if uploaded_file is not None:
                 name='Current Period',
                 x=[comparison_result['current_label']],
                 y=[change_data['current']],
-                marker_color='green' if change_data['pct_change'] > 0 else 'red',
+                marker_color=COLORS['success'] if change_data['pct_change'] > 0 else COLORS['danger'],
                 text=[format_metric(change_data['current'], 'SAR' if 'Revenue' in viz_metric else '')],
                 textposition='auto'
             ))
@@ -6787,7 +6835,10 @@ if uploaded_file is not None:
             )
             
             st.plotly_chart(fig_comparison, use_container_width=True)
-            
+            comp_img = export_chart_image(fig_comparison, 'period_comparison')
+            if comp_img:
+                st.download_button("Download Comparison Chart", comp_img, "period_comparison.png", "image/png", key='dl_comparison')
+
             # === CHANNEL-LEVEL COMPARISON ===
             if 'Channel' in comparison_result['current_data'].columns:
                 st.markdown("---")
@@ -6831,7 +6882,7 @@ if uploaded_file is not None:
                     name='Revenue Change %',
                     x=channel_comparison['Channel'],
                     y=channel_comparison['Revenue Change %'],
-                    marker_color=['green' if x > 0 else 'red' for x in channel_comparison['Revenue Change %']]
+                    marker_color=[COLORS['success'] if x > 0 else COLORS['danger'] for x in channel_comparison['Revenue Change %']]
                 ))
                 
                 fig_channel.update_layout(
