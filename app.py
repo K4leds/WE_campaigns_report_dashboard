@@ -2856,11 +2856,22 @@ if uploaded_file is not None:
     )
     
     conversion_attribution = st.sidebar.selectbox(
-        "Conversion Attribution", 
+        "Conversion Attribution",
         ["Total", "Impression-Through", "Click-Through"],
         help="Select which type of conversion attribution to use throughout the dashboard"
     )
-    
+
+    # Display-friendly labels for the selected attribution model
+    _REV_ATTR_LABELS = {"Total": "Revenue (SAR)", "Click-Through": "Click-Through Revenue (SAR)", "Impression-Through": "Impression-Through Revenue (SAR)"}
+    _CONV_ATTR_LABELS = {"Total": "Unique Conversions", "Click-Through": "Click-Through Conversions", "Impression-Through": "Impression-Through Conversions"}
+    selected_rev_label = _REV_ATTR_LABELS.get(revenue_attribution, "Selected Revenue (SAR)")
+    selected_conv_label = _CONV_ATTR_LABELS.get(conversion_attribution, "Selected Conversions")
+    attribution_rename = {'Selected Revenue (SAR)': selected_rev_label, 'Selected Conversions': selected_conv_label}
+
+    def _attribution_display(col_name):
+        """Map internal 'Selected Revenue/Conversions' column names to the user-selected attribution label."""
+        return attribution_rename.get(col_name, col_name)
+
     # Shared attribution + filter helpers (single source of truth)
     def _apply_attribution(df, revenue_attribution, conversion_attribution):
         """Map selected attribution model to 'Selected Revenue/Conversions' columns."""
@@ -3893,16 +3904,8 @@ if uploaded_file is not None:
                                'CTR', conv_col_for_calc, 'Conversion Rate', revenue_col]
                 channel_display = channel_display[display_cols]
                 
-                # Rename the conversion column header to show attribution type
-                attribution_labels = {
-                    'Selected Conversions': 'Conversions (Selected)',
-                    'Unique Conversions': 'Unique Conversions',
-                    'Unique Click-Through Conversions': 'Click-Through Conversions',
-                    'Unique Impression-Through Conversions': 'Impression-Through Conversions'
-                }
-                channel_display = channel_display.rename(columns={
-                    conv_col_for_calc: attribution_labels.get(conv_col_for_calc, conv_col_for_calc)
-                })
+                # Rename columns to show actual attribution model
+                channel_display = channel_display.rename(columns=attribution_rename)
                 
                 st.dataframe(channel_display, use_container_width=True, hide_index=True)
                 
@@ -4136,7 +4139,7 @@ if uploaded_file is not None:
         # Only show Selected Revenue if it exists in data
         if 'Selected Revenue (SAR)' not in filtered_df.columns:
             camp_metric_options = [m for m in camp_metric_options if m != 'Selected Revenue (SAR)']
-        camp_metric = st.selectbox("Metric", camp_metric_options, key='camp_metric')
+        camp_metric = st.selectbox("Metric", camp_metric_options, key='camp_metric', format_func=_attribution_display)
         top_camp = top_campaigns(filtered_df, camp_metric)
         
         # Create display version for table
@@ -4153,10 +4156,10 @@ if uploaded_file is not None:
         # For rates, keep as is
         
         # Display table with proper sorting
-        st.dataframe(top_camp_display)
-        
+        st.dataframe(top_camp_display.rename(columns=attribution_rename))
+
         # Create chart with original numeric values
-        fig = px.bar(top_camp, x='Campaign Name', y=camp_metric, title=f"Top Campaigns by {camp_metric}",
+        fig = px.bar(top_camp, x='Campaign Name', y=camp_metric, title=f"Top Campaigns by {_attribution_display(camp_metric)}",
                      color_discrete_sequence=COLOR_SEQUENCE)
         st.plotly_chart(fig, use_container_width=True)
         
@@ -5965,7 +5968,7 @@ if uploaded_file is not None:
         jour_metric_options = ['Delivered Rate', 'Unique Clicks', 'Unique Conversions', 'Selected Revenue (SAR)', 'Revenue (SAR)', 'Impression-Through Revenue (SAR)', 'Click-Through Revenue (SAR)']
         if 'Selected Revenue (SAR)' not in filtered_df.columns:
             jour_metric_options = [m for m in jour_metric_options if m != 'Selected Revenue (SAR)']
-        jour_metric = st.selectbox("Metric", jour_metric_options, key='jour_metric')
+        jour_metric = st.selectbox("Metric", jour_metric_options, key='jour_metric', format_func=_attribution_display)
         top_jour = get_top_journeys(filtered_df, jour_metric)
         
         # Create display version for table
@@ -5984,10 +5987,10 @@ if uploaded_file is not None:
             top_jour_display[jour_metric] = top_jour_display[jour_metric].apply(lambda x: f"{x*100:.1f}%")
         
         # Display table with proper sorting
-        st.dataframe(top_jour_display)
-        
+        st.dataframe(top_jour_display.rename(columns=attribution_rename))
+
         # Create chart with original numeric values
-        fig2 = px.bar(top_jour, x='Journey Name', y=jour_metric, title=f"Top Journeys by {jour_metric}",
+        fig2 = px.bar(top_jour, x='Journey Name', y=jour_metric, title=f"Top Journeys by {_attribution_display(jour_metric)}",
                       color_discrete_sequence=COLOR_SEQUENCE)
         st.plotly_chart(fig2, use_container_width=True)
         
@@ -6509,20 +6512,21 @@ if uploaded_file is not None:
             safe_conversion_cols.append('Total Conversions')
 
         all_metrics = safe_conversion_cols + safe_revenue_cols
-        seg_metric = st.selectbox("Metric", all_metrics, key='seg_metric')
+        seg_metric = st.selectbox("Metric", all_metrics, key='seg_metric', format_func=_attribution_display)
         top_seg = top_segments(filtered_df, seg_metric)
-        
+
         # Create display version for table
-        top_seg_display = top_seg.copy()
+        top_seg_display = top_seg.copy().rename(columns=attribution_rename)
+        seg_metric_display = _attribution_display(seg_metric)
         # Format the metric column for display
         if 'Revenue' in seg_metric:
-            top_seg_display[seg_metric] = top_seg_display[seg_metric].apply(lambda x: format_metric(x, "SAR"))
+            top_seg_display[seg_metric_display] = top_seg_display[seg_metric_display].apply(lambda x: format_metric(x, "SAR"))
         elif seg_metric in ['Unique Conversions', 'Total Conversions', 'Unique Clicks']:
-            top_seg_display[seg_metric] = top_seg_display[seg_metric].apply(format_metric)
+            top_seg_display[seg_metric_display] = top_seg_display[seg_metric_display].apply(format_metric)
         st.dataframe(top_seg_display)
-        
+
         # Create chart with original numeric values
-        fig3 = px.bar(top_seg, x='Segment Name', y=seg_metric, title=f"Top Segments by {seg_metric}",
+        fig3 = px.bar(top_seg, x='Segment Name', y=seg_metric, title=f"Top Segments by {seg_metric_display}",
                        color_discrete_sequence=COLOR_SEQUENCE)
         st.plotly_chart(fig3, use_container_width=True)
 
@@ -6540,7 +6544,8 @@ if uploaded_file is not None:
             chan_revenue_options,
             index=0,
             key='chan_rev_col',
-            help="Select which revenue attribution to display in charts. 'Selected Revenue' follows the sidebar attribution setting."
+            format_func=_attribution_display,
+            help="Select which revenue attribution to display in charts."
         )
 
         # Create display version for table - drop Selected Revenue/Conversions since all attribution types are shown
@@ -6571,7 +6576,7 @@ if uploaded_file is not None:
             if chan_rev_col in chan_df.columns:
                 fig_rev_chan = px.bar(
                     chan_df, x='Channel', y=chan_rev_col,
-                    title=f"{chan_rev_col} by Channel",
+                    title=f"{_attribution_display(chan_rev_col)} by Channel",
                     color='Channel', color_discrete_map=CHANNEL_COLORS,
                 )
                 fig_rev_chan.update_layout(showlegend=False)
@@ -6580,7 +6585,7 @@ if uploaded_file is not None:
             conv_col = 'Selected Conversions' if 'Selected Conversions' in chan_df.columns else 'Unique Conversions'
             fig_conv_chan = px.bar(
                 chan_df, x='Channel', y=conv_col,
-                title=f"{conv_col} by Channel",
+                title=f"{_attribution_display(conv_col)} by Channel",
                 color='Channel', color_discrete_map=CHANNEL_COLORS,
             )
             fig_conv_chan.update_layout(showlegend=False)
@@ -6647,6 +6652,91 @@ if uploaded_file is not None:
             )
             st.plotly_chart(fig_rev_compare, use_container_width=True)
 
+        # Campaign Type Performance by Channel (One-Time vs Journey)
+        if 'Type of Campaign' in filtered_df.columns and 'Channel' in filtered_df.columns:
+            type_vals = filtered_df['Type of Campaign'].dropna().unique()
+            if len(type_vals) > 0:
+                st.subheader("One-Time vs Journey Performance by Channel")
+                rev_col_type = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in filtered_df.columns else 'Revenue (SAR)'
+                conv_col_type = 'Selected Conversions' if 'Selected Conversions' in filtered_df.columns else 'Unique Conversions'
+
+                # Aggregate all available revenue and conversion columns
+                type_chan_agg = {'Sent': 'sum', 'Delivered': 'sum'}
+                # Always include selected attribution columns
+                if conv_col_type in filtered_df.columns:
+                    type_chan_agg[conv_col_type] = 'sum'
+                if rev_col_type in filtered_df.columns:
+                    type_chan_agg[rev_col_type] = 'sum'
+                # Also aggregate all other revenue/conversion columns for detail view
+                extra_rev_cols = [c for c in ['Revenue (SAR)', 'Click-Through Revenue (SAR)', 'Impression-Through Revenue (SAR)'] if c in filtered_df.columns and c != rev_col_type]
+                extra_conv_cols = [c for c in ['Unique Conversions', 'Unique Click-Through Conversions', 'Unique Impression-Through Conversions'] if c in filtered_df.columns and c != conv_col_type]
+                for c in extra_rev_cols + extra_conv_cols:
+                    type_chan_agg[c] = 'sum'
+                type_chan_df = filtered_df.groupby(['Channel', 'Type of Campaign']).agg(type_chan_agg).reset_index()
+
+                # Toggle for showing all revenue/conversion types
+                show_all_attrs = st.checkbox("Show all revenue & conversion types", value=False, key='chan_type_show_all')
+
+                # Build display columns
+                default_cols = ['Channel', 'Type of Campaign', 'Sent', 'Delivered', conv_col_type, rev_col_type]
+                default_cols = [c for c in default_cols if c in type_chan_df.columns]
+                if show_all_attrs:
+                    display_cols = default_cols + [c for c in extra_rev_cols + extra_conv_cols if c not in default_cols]
+                else:
+                    display_cols = default_cols
+
+                type_chan_display = type_chan_df[display_cols].copy()
+                # Format numeric columns
+                for col in ['Sent', 'Delivered'] + extra_conv_cols + ([conv_col_type] if conv_col_type in type_chan_display.columns else []):
+                    if col in type_chan_display.columns:
+                        type_chan_display[col] = type_chan_display[col].apply(format_metric)
+                for col in [rev_col_type] + extra_rev_cols:
+                    if col in type_chan_display.columns:
+                        type_chan_display[col] = type_chan_display[col].apply(lambda x: format_metric(x, "SAR"))
+                # Rename Selected columns to show actual attribution model
+                type_chan_display = type_chan_display.rename(columns=attribution_rename)
+                st.dataframe(type_chan_display, use_container_width=True, hide_index=True)
+
+                # Stacked bar: Revenue by Channel, stacked by Campaign Type
+                type_chan_col1, type_chan_col2 = st.columns(2)
+                with type_chan_col1:
+                    if rev_col_type in type_chan_df.columns:
+                        fig_type_chan_rev = px.bar(
+                            type_chan_df, x='Channel', y=rev_col_type, color='Type of Campaign',
+                            barmode='stack', title="Revenue by Channel & Campaign Type",
+                            color_discrete_sequence=COLOR_SEQUENCE,
+                        )
+                        fig_type_chan_rev.update_layout(legend=dict(orientation='h', y=-0.2))
+                        st.plotly_chart(fig_type_chan_rev, use_container_width=True)
+                with type_chan_col2:
+                    fig_type_chan_conv = px.bar(
+                        type_chan_df, x='Channel', y=conv_col_type, color='Type of Campaign',
+                        barmode='stack', title="Conversions by Channel & Campaign Type",
+                        color_discrete_sequence=COLOR_SEQUENCE,
+                    )
+                    fig_type_chan_conv.update_layout(legend=dict(orientation='h', y=-0.2))
+                    st.plotly_chart(fig_type_chan_conv, use_container_width=True)
+
+                # Share breakdown: what % of each channel's revenue comes from journeys vs one-time
+                if rev_col_type in type_chan_df.columns:
+                    channel_totals = type_chan_df.groupby('Channel')[rev_col_type].sum().reset_index()
+                    channel_totals.columns = ['Channel', 'Total']
+                    type_share = type_chan_df.merge(channel_totals, on='Channel')
+                    type_share['Revenue Share'] = np.where(
+                        type_share['Total'] > 0,
+                        type_share[rev_col_type] / type_share['Total'] * 100, 0
+                    )
+                    fig_share = px.bar(
+                        type_share, x='Channel', y='Revenue Share', color='Type of Campaign',
+                        barmode='stack', title="Revenue Share by Campaign Type per Channel (%)",
+                        color_discrete_sequence=COLOR_SEQUENCE,
+                    )
+                    fig_share.update_layout(
+                        yaxis_title="Revenue Share (%)", yaxis_range=[0, 100],
+                        legend=dict(orientation='h', y=-0.2)
+                    )
+                    st.plotly_chart(fig_share, use_container_width=True)
+
         # ESP Analysis
         esp_df = esp_analysis(filtered_df)
         if not esp_df.empty:
@@ -6685,10 +6775,10 @@ if uploaded_file is not None:
             safe_conversion_cols.append('Total Conversions')
 
         all_metrics = safe_conversion_cols + safe_revenue_cols
-        ts_metric = st.selectbox("Metric", all_metrics, key='ts_metric')
+        ts_metric = st.selectbox("Metric", all_metrics, key='ts_metric', format_func=_attribution_display)
         ts_df = time_series_analysis(filtered_df, ts_metric)
         if not ts_df.empty:
-            fig_ts = px.line(ts_df, x='Reporting Period Start Date', y=ts_metric, title=f"{ts_metric} Over Time",
+            fig_ts = px.line(ts_df, x='Reporting Period Start Date', y=ts_metric, title=f"{_attribution_display(ts_metric)} Over Time",
                              color_discrete_sequence=[COLORS['primary']])
             fig_ts.update_traces(line_width=2.5)
             st.plotly_chart(fig_ts, use_container_width=True)
