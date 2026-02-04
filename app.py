@@ -122,14 +122,26 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-def format_metric(value, unit=""):
+def format_metric(value, unit="", abbreviate=True):
+    """
+    Format metric values for display.
+    
+    Args:
+        value: The numeric value to format
+        unit: Optional unit label (e.g., "SAR")
+        abbreviate: If True, use K/M abbreviations. If False, show full number with commas
+    """
     if isinstance(value, (int, float)) and not pd.isna(value):
-        abs_val = abs(value)
-        if abs_val >= 1e6:
-            return f"{value/1e6:.1f}M {unit}".strip()
-        elif abs_val >= 1e3:
-            return f"{value/1e3:.1f}K {unit}".strip()
+        if abbreviate:
+            abs_val = abs(value)
+            if abs_val >= 1e6:
+                return f"{value/1e6:.1f}M {unit}".strip()
+            elif abs_val >= 1e3:
+                return f"{value/1e3:.1f}K {unit}".strip()
+            else:
+                return f"{value:,.0f} {unit}".strip()
         else:
+            # Show full number with thousand separators
             return f"{value:,.0f} {unit}".strip()
     else:
         return f"{value} {unit}".strip()
@@ -631,26 +643,13 @@ def calculate_journey_health_score(df_journey, all_journeys_df=None):
         
         scores['engagement'] = calculate_percentile_score(smoothed_ctr, baseline_ctr)
         
-        # 3. Conversion Performance Score (30% weight) - WITH EMPIRICAL BAYES SMOOTHING
-        # Use the Conversion Rate column when available (calculated in clean_data as decimal: conversions/clicks)
-        if 'Conversion Rate' in df_journey.columns and df_journey['Conversion Rate'].notna().any():
-            # Conversion Rate is already a decimal from clean_data() (e.g., 0.05 = 5%)
-            conv_rate = df_journey['Conversion Rate'].mean()
-            # Create baseline from all journeys' conversion rates
-            if 'Conversion Rate' in baseline_df.columns:
-                baseline_conv_values = []
-                for name, group in baseline_df.groupby('Journey Name'):
-                    journey_conv_rate = group['Conversion Rate'].mean()
-                    if not pd.isna(journey_conv_rate):
-                        baseline_conv_values.append(journey_conv_rate)
-                baseline_conv = pd.Series(baseline_conv_values)
-            else:
-                baseline_conv = pd.Series([conv_rate])
-        elif 'Unique Conversions' in df_journey.columns and 'Unique Clicks' in df_journey.columns:
-            # Fallback: manual calculation (but this may not be reliable for some data)
+        # 3. Conversion Performance Score (30% weight) - ALWAYS CALCULATE FROM RAW FIELDS
+        # Always calculate conversion rate from raw Unique Conversions / Unique Clicks
+        # Never use pre-calculated Conversion Rate column as it may be incorrect
+        if 'Unique Conversions' in df_journey.columns and 'Unique Clicks' in df_journey.columns:
             total_conversions = df_journey['Unique Conversions'].sum()
             total_clicks = df_journey['Unique Clicks'].sum()
-            # Apply Empirical Bayes smoothing for manual calculations
+            # Apply Empirical Bayes smoothing
             conv_rate = beta_posterior_mean(total_conversions, total_clicks, conv_alpha, conv_beta)
             
             # Create baseline of smoothed conversion rates
@@ -2505,13 +2504,46 @@ def calculate_comparison_periods(df, current_date_range, comparison_mode, custom
         return None
 
 
-def calculate_period_metrics(period_data, period_days):
+def calculate_uplift_significance(test_conversions, test_total, control_conversions, control_total):
+    """
+    Calculate statistical significance of uplift using two-proportion z-test.
+    Returns (p_value, is_significant, reliability_status)
+    """
+    if control_conversions < 30:
+        reliability = "🔴 Insufficient"
+    elif control_conversions < 100:
+        reliability = "🟡 Moderate"
+    else:
+        reliability = "🟢 Reliable"
+    
+    # Calculate p-value if we have enough data
+    if test_total > 0 and control_total > 0 and (test_conversions + control_conversions) >= 30:
+        try:
+            from scipy import stats as scipy_stats
+            p_test = test_conversions / test_total
+            p_control = control_conversions / control_total
+            p_pooled = (test_conversions + control_conversions) / (test_total + control_total)
+            se = np.sqrt(p_pooled * (1 - p_pooled) * (1/test_total + 1/control_total))
+            
+            if se > 0:
+                z_stat = (p_test - p_control) / se
+                p_value = 2 * (1 - scipy_stats.norm.cdf(abs(z_stat)))
+                is_significant = p_value < 0.05
+                return p_value, is_significant, reliability
+        except:
+            pass
+    
+    return None, False, reliability
+
+
+def calculate_period_metrics(period_data, period_days, conversion_attribution='Total'):
     """
     Calculate key metrics for a given period with daily averages.
     
     Args:
         period_data: DataFrame for the period
         period_days: Number of days in the period
+        conversion_attribution: Attribution model for conversions ('Total', 'Impression-Through', 'Click-Through')
         
     Returns:
         dict with all key metrics
@@ -2583,6 +2615,36 @@ def calculate_period_metrics(period_data, period_days):
     metrics['daily_clicks'] = metrics['total_clicks'] / period_days if period_days > 0 else 0
     metrics['daily_sent'] = metrics['total_sent'] / period_days if period_days > 0 else 0
     metrics['daily_cost'] = metrics['total_cost'] / period_days if period_days > 0 else 0
+    
+    # Control Group Uplift (for A/B testing analysis) - uses Selected Conversions to respect attribution
+    if 'Total in Control Group' in period_data.columns and 'Unique Control Group Conversions' in period_data.columns:
+        control_campaigns = period_data[period_data['Total in Control Group'] > 0]
+        if not control_campaigns.empty:
+            total_control_group = control_campaigns['Total in Control Group'].sum()
+            total_control_conversions = control_campaigns['Unique Control Group Conversions'].sum()
+            
+            # Use Selected Conversions to respect attribution setting (campaign/targeted group)
+            campaign_conversions = control_campaigns['Selected Conversions'].sum() if 'Selected Conversions' in control_campaigns.columns else control_campaigns['Unique Conversions'].sum()
+            
+            # Denominator based on attribution parameter
+            if conversion_attribution == "Impression-Through":
+                campaign_denominator = control_campaigns['Unique Impressions'].sum()
+            elif conversion_attribution == "Click-Through":
+                campaign_denominator = control_campaigns['Unique Clicks'].sum()
+            else:  # Total
+                campaign_denominator = control_campaigns['Sent'].sum()
+            
+            if campaign_denominator > 0 and total_control_group > 0 and total_control_conversions > 0:
+                campaign_conv_rate = campaign_conversions / campaign_denominator
+                control_conv_rate = total_control_conversions / total_control_group
+                uplift = ((campaign_conv_rate - control_conv_rate) / control_conv_rate) * 100
+                metrics['control_group_uplift'] = uplift
+            else:
+                metrics['control_group_uplift'] = None
+        else:
+            metrics['control_group_uplift'] = None
+    else:
+        metrics['control_group_uplift'] = None
     
     return metrics
 
@@ -2676,21 +2738,8 @@ def analyze_individual_journey(journey_name, filtered_df):
                 'ctr': ctr
             }
         
-        # Conversion metrics - Use the Conversion Rate column when available
-        if 'Conversion Rate' in journey_data.columns and journey_data['Conversion Rate'].notna().any():
-            # Conversion Rate is already a decimal from clean_data() (e.g., 0.05 = 5%)
-            conv_rate = journey_data['Conversion Rate'].mean()
-            # Also get the raw numbers for display
-            total_conversions = journey_data['Unique Conversions'].sum() if 'Unique Conversions' in journey_data.columns else 0
-            total_clicks = journey_data['Unique Clicks'].sum() if 'Unique Clicks' in journey_data.columns else 0
-            raw_metrics['conversion'] = {
-                'total_conversions': total_conversions,
-                'total_clicks': total_clicks,
-                'conversion_rate': conv_rate,
-                'source': 'Direct Conversion Rate column'
-            }
-        elif 'Unique Conversions' in journey_data.columns and 'Unique Clicks' in journey_data.columns:
-            # Fallback: manual calculation
+        # Conversion metrics - ALWAYS CALCULATE FROM RAW FIELDS
+        if 'Unique Conversions' in journey_data.columns and 'Unique Clicks' in journey_data.columns:
             total_conversions = journey_data['Unique Conversions'].sum()
             total_clicks = journey_data['Unique Clicks'].sum()
             conv_rate = (total_conversions / total_clicks) if total_clicks > 0 else 0
@@ -2698,7 +2747,7 @@ def analyze_individual_journey(journey_name, filtered_df):
                 'total_conversions': total_conversions,
                 'total_clicks': total_clicks,
                 'conversion_rate': conv_rate,
-                'source': 'Manual calculation (may be unreliable)'
+                'source': 'Calculated: Unique Conversions / Unique Clicks'
             }
         
         # Revenue metrics
@@ -3349,8 +3398,8 @@ if uploaded_file is not None:
 
         # Calculate metrics with comparison
         if comparison_result:
-            current_metrics = calculate_period_metrics(comparison_result['current_data'], comparison_result['current_days'])
-            comp_metrics = calculate_period_metrics(comparison_result['comparison_data'], comparison_result['comparison_days'])
+            current_metrics = calculate_period_metrics(comparison_result['current_data'], comparison_result['current_days'], conversion_attribution)
+            comp_metrics = calculate_period_metrics(comparison_result['comparison_data'], comparison_result['comparison_days'], conversion_attribution)
             metric_changes = calculate_metric_changes(current_metrics, comp_metrics)
             
             # Display metrics with comparisons
@@ -3359,14 +3408,14 @@ if uploaded_file is not None:
                 change_data = metric_changes['selected_revenue']
                 st.metric(
                     "Total Revenue", 
-                    format_metric(change_data['current'], "SAR"),
+                    f"{change_data['current']:,.0f} SAR",
                     delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
                     delta_color="normal" if change_data['pct_change'] >= 0 else "inverse"
                 )
                 change_data = metric_changes['selected_conversions']
                 st.metric(
                     "Total Conversions", 
-                    format_metric(change_data['current']),
+                    f"{change_data['current']:,.0f}",
                     delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
                     delta_color="normal" if change_data['pct_change'] >= 0 else "inverse"
                 )
@@ -3374,14 +3423,14 @@ if uploaded_file is not None:
                 change_data = metric_changes['total_clicks']
                 st.metric(
                     "Total Clicks", 
-                    format_metric(change_data['current']),
+                    f"{change_data['current']:,.0f}",
                     delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
                     delta_color="normal" if change_data['pct_change'] >= 0 else "inverse"
                 )
                 change_data = metric_changes['total_impressions']
                 st.metric(
                     "Total Impressions", 
-                    format_metric(change_data['current']),
+                    f"{change_data['current']:,.0f}",
                     delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
                     delta_color="normal" if change_data['pct_change'] >= 0 else "inverse"
                 )
@@ -3400,13 +3449,25 @@ if uploaded_file is not None:
                     delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
                     delta_color="normal" if change_data['pct_change'] >= 0 else "inverse"
                 )
-                change_data = metric_changes['delivery_rate']
-                st.metric(
-                    "Avg Delivery Rate", 
-                    f"{change_data['current']:.2%}",
-                    delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
-                    delta_color="normal" if change_data['pct_change'] >= 0 else "inverse"
-                )
+                
+                # Control Group Uplift
+                if 'control_group_uplift' in metric_changes:
+                    change_data = metric_changes['control_group_uplift']
+                    st.metric(
+                        "Control Group Uplift",
+                        f"{change_data['current']:+.1f}%" if change_data['current'] is not None else "N/A",
+                        delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})" if change_data['comparison'] is not None else None,
+                        delta_color="normal" if change_data.get('pct_change', 0) >= 0 else "inverse",
+                        help="Uplift vs Control Group: (Test Conv Rate - Control Conv Rate) / Control Conv Rate"
+                    )
+                else:
+                    change_data = metric_changes['delivery_rate']
+                    st.metric(
+                        "Avg Delivery Rate", 
+                        f"{change_data['current']:.2%}",
+                        delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
+                        delta_color="normal" if change_data['pct_change'] >= 0 else "inverse"
+                    )
             
             # NEW: Business Intelligence Metrics Row
             st.markdown("---")
@@ -3546,11 +3607,12 @@ if uploaded_file is not None:
             col1, col2, col3 = st.columns(3)
             with col1:
                 total_revenue = filtered_df['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in filtered_df.columns else filtered_df['Revenue (SAR)'].sum()
-                st.metric("Total Revenue", format_metric(total_revenue, "SAR"))
-                st.metric("Total Conversions", format_metric(filtered_df['Selected Conversions'].sum() if 'Selected Conversions' in filtered_df.columns else filtered_df['Unique Conversions'].sum()))
+                st.metric("Total Revenue", f"{total_revenue:,.0f} SAR")
+                total_conv = filtered_df['Selected Conversions'].sum() if 'Selected Conversions' in filtered_df.columns else filtered_df['Unique Conversions'].sum()
+                st.metric("Total Unique Conversions", f"{total_conv:,.0f}")
             with col2:
-                st.metric("Total Clicks", format_metric(filtered_df['Unique Clicks'].sum()))
-                st.metric("Total Impressions", format_metric(filtered_df['Unique Impressions'].sum()))
+                st.metric("Total Unique Clicks", f"{filtered_df['Unique Clicks'].sum():,.0f}")
+                st.metric("Total Unique Impressions", f"{filtered_df['Unique Impressions'].sum():,.0f}")
             with col3:
                 st.metric("Avg CTR", f"{filtered_df['CTR'].mean():.2%}")
                 # Fix: Handle missing Unique Conversion Rate
@@ -3559,7 +3621,79 @@ if uploaded_file is not None:
                 else:
                     avg_conv_rate = filtered_df['Conversion Rate'].mean() if 'Conversion Rate' in filtered_df.columns else 0
                     st.metric("Avg Conversion Rate", f"{avg_conv_rate:.2%}")
-                st.metric("Avg Delivery Rate", f"{filtered_df['Delivery Rate'].mean():.2%}")
+                
+                # Calculate Control Group Uplift (respects attribution selection)
+                if 'Total in Control Group' in filtered_df.columns and 'Unique Control Group Conversions' in filtered_df.columns:
+                    # Filter campaigns with control groups
+                    control_campaigns = filtered_df[filtered_df['Total in Control Group'] > 0]
+                    if not control_campaigns.empty:
+                        # Aggregate totals
+                        total_control_group = control_campaigns['Total in Control Group'].sum()
+                        total_control_conversions = control_campaigns['Unique Control Group Conversions'].sum()
+                        
+                        # Use selected conversions based on attribution
+                        if 'Selected Conversions' in control_campaigns.columns:
+                            test_conversions = control_campaigns['Selected Conversions'].sum()
+                        else:
+                            test_conversions = control_campaigns['Unique Conversions'].sum()
+                        
+                        # Determine denominator based on attribution type
+                        if conversion_attribution == "Impression-Through":
+                            test_denominator = control_campaigns['Unique Impressions'].sum()
+                            denominator_label = "Impressions"
+                        elif conversion_attribution == "Click-Through":
+                            test_denominator = control_campaigns['Unique Clicks'].sum()
+                            denominator_label = "Clicks"
+                        else:  # Total
+                            test_denominator = control_campaigns['Sent'].sum()
+                            denominator_label = "Sent"
+                        
+                        # Calculate rates and significance
+                        if test_denominator > 0 and total_control_group > 0 and total_control_conversions > 0:
+                            test_conv_rate = test_conversions / test_denominator
+                            control_conv_rate = total_control_conversions / total_control_group
+                            uplift_pct = ((test_conv_rate - control_conv_rate) / control_conv_rate) * 100
+                            
+                            # Calculate statistical significance
+                            p_value, is_significant, reliability = calculate_uplift_significance(
+                                test_conversions, test_denominator,
+                                total_control_conversions, total_control_group
+                            )
+                            
+                            # Build help text with significance info
+                            help_text = f"Uplift vs Control Group ({conversion_attribution})\n"
+                            help_text += f"Campaign Conv Rate: {test_conv_rate:.2%} ({test_conversions:,.0f}/{test_denominator:,.0f} {denominator_label})\n"
+                            help_text += f"Control Group Conv Rate: {control_conv_rate:.2%} ({total_control_conversions:,.0f}/{total_control_group:,.0f})\n"
+                            help_text += f"\nReliability: {reliability}\n"
+                            
+                            if p_value is not None:
+                                # Display p-value professionally
+                                if p_value < 0.0001:
+                                    p_display = "p < 0.0001"
+                                else:
+                                    p_display = f"p = {p_value:.4f}"
+                                help_text += f"Statistical Significance: {p_display}\n"
+                                help_text += f"{'✓ Significant' if is_significant else '✗ Not significant'} at 95% confidence\n"
+                            
+                            help_text += f"\nFormula: (Campaign Rate - Control Rate) / Control Rate"
+                            
+                            # Add asterisk for statistical significance (professional standard)
+                            sig_indicator = "*" if is_significant and p_value is not None else ""
+                            reliability_emoji = reliability.split()[0]  # Extract emoji from reliability string
+                            
+                            st.metric(
+                                f"Control Group Uplift {reliability_emoji}", 
+                                f"{uplift_pct:+.1f}%{sig_indicator}",
+                                help=help_text
+                            )
+                            # Add small note below metric
+                            st.caption("*Based on campaigns with control groups only. Other metrics show all campaigns.")
+                        else:
+                            st.metric("Avg Delivery Rate", f"{filtered_df['Delivery Rate'].mean():.2%}")
+                    else:
+                        st.metric("Avg Delivery Rate", f"{filtered_df['Delivery Rate'].mean():.2%}")
+                else:
+                    st.metric("Avg Delivery Rate", f"{filtered_df['Delivery Rate'].mean():.2%}")
 
         # Conversion Funnel - aggregate pipeline view
         st.markdown("---")
@@ -4096,8 +4230,8 @@ if uploaded_file is not None:
             st.info(f"📊 Period Comparison Active: {comparison_result['current_label']} vs {comparison_result['comparison_label']}")
             
             # Calculate campaign metrics for both periods
-            current_metrics = calculate_period_metrics(comparison_result['current_data'], comparison_result['current_days'])
-            comp_metrics = calculate_period_metrics(comparison_result['comparison_data'], comparison_result['comparison_days'])
+            current_metrics = calculate_period_metrics(comparison_result['current_data'], comparison_result['current_days'], conversion_attribution)
+            comp_metrics = calculate_period_metrics(comparison_result['comparison_data'], comparison_result['comparison_days'], conversion_attribution)
             metric_changes = calculate_metric_changes(current_metrics, comp_metrics)
             
             # Show quick comparison
@@ -5050,8 +5184,8 @@ if uploaded_file is not None:
             st.info(f"📊 Period Comparison Active: {comparison_result['current_label']} vs {comparison_result['comparison_label']}")
             
             # Calculate journey metrics for both periods
-            current_metrics = calculate_period_metrics(comparison_result['current_data'], comparison_result['current_days'])
-            comp_metrics = calculate_period_metrics(comparison_result['comparison_data'], comparison_result['comparison_days'])
+            current_metrics = calculate_period_metrics(comparison_result['current_data'], comparison_result['current_days'], conversion_attribution)
+            comp_metrics = calculate_period_metrics(comparison_result['comparison_data'], comparison_result['comparison_days'], conversion_attribution)
             metric_changes = calculate_metric_changes(current_metrics, comp_metrics)
             
             # Show quick comparison
@@ -7054,8 +7188,8 @@ if uploaded_file is not None:
             st.success(f"✅ Comparison Mode Active: **{comparison_result['current_label']}** vs **{comparison_result['comparison_label']}**")
             
             # Calculate comprehensive metrics
-            current_metrics = calculate_period_metrics(comparison_result['current_data'], comparison_result['current_days'])
-            comp_metrics = calculate_period_metrics(comparison_result['comparison_data'], comparison_result['comparison_days'])
+            current_metrics = calculate_period_metrics(comparison_result['current_data'], comparison_result['current_days'], conversion_attribution)
+            comp_metrics = calculate_period_metrics(comparison_result['comparison_data'], comparison_result['comparison_days'], conversion_attribution)
             metric_changes = calculate_metric_changes(current_metrics, comp_metrics)
             
             # === EXECUTIVE SUMMARY ===
