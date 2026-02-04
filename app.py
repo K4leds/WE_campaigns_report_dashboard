@@ -5708,7 +5708,7 @@ if uploaded_file is not None:
         with st.spinner("Analyzing journey maturity and performance curves..."):
             lifecycle_data = analyze_journey_lifecycle(filtered_df)
             
-            if lifecycle_data and not isinstance(lifecycle_data, dict) or 'error' not in lifecycle_data:
+            if lifecycle_data and not isinstance(lifecycle_data, dict) and len(lifecycle_data) > 0:
                 lifecycle_df = pd.DataFrame(lifecycle_data)
                 
                 # Maturity distribution
@@ -5761,6 +5761,8 @@ if uploaded_file is not None:
                             st.metric("Active Days", f"{row['active_days']}")
                         
                         st.info(f"💡 **Recommendation:** {row['recommendation']}")
+            else:
+                st.info("No journey lifecycle data available. Journeys need at least 2 data points over time for lifecycle analysis.")
         
         # Journey Comparison Tool
         st.subheader("🔄 Advanced Journey Comparison")
