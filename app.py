@@ -4139,6 +4139,11 @@ if uploaded_file is not None:
         # Only show Selected Revenue if it exists in data
         if 'Selected Revenue (SAR)' not in filtered_df.columns:
             camp_metric_options = [m for m in camp_metric_options if m != 'Selected Revenue (SAR)']
+        # Add conversion attribution options if they exist
+        if 'Unique Click-Through Conversions' in filtered_df.columns:
+            camp_metric_options.insert(1, 'Unique Click-Through Conversions')
+        if 'Unique Impression-Through Conversions' in filtered_df.columns:
+            camp_metric_options.insert(1, 'Unique Impression-Through Conversions')
         camp_metric = st.selectbox("Metric", camp_metric_options, key='camp_metric', format_func=_attribution_display)
         top_camp = top_campaigns(filtered_df, camp_metric)
         
@@ -4151,7 +4156,7 @@ if uploaded_file is not None:
         # Format the metric column for display
         if 'Revenue' in camp_metric:
             top_camp_display[camp_metric] = top_camp_display[camp_metric].apply(lambda x: format_metric(x, "SAR"))
-        elif camp_metric in ['Unique Conversions', 'Unique Clicks']:
+        elif camp_metric in ['Unique Conversions', 'Unique Clicks', 'Unique Click-Through Conversions', 'Unique Impression-Through Conversions']:
             top_camp_display[camp_metric] = top_camp_display[camp_metric].apply(format_metric)
         # For rates, keep as is
         
@@ -4222,6 +4227,145 @@ if uploaded_file is not None:
                                        color_discrete_sequence=COLOR_SEQUENCE)
                 fig_type_conv.update_layout(showlegend=False)
                 st.plotly_chart(fig_type_conv, use_container_width=True)
+
+        # One-Time Campaigns Overview
+        if 'Type of Campaign' in filtered_df.columns:
+            onetime_df = filtered_df[filtered_df['Type of Campaign'].str.lower().str.contains('one-time', na=False)].copy()
+            
+            # Filter out likely test campaigns (low volume)
+            min_sent_threshold = st.slider("Minimum Sent Threshold (exclude tests)", 0, 1000, 100, 
+                                         help="Campaigns with fewer sends than this threshold will be excluded as potential tests")
+            onetime_df = onetime_df[onetime_df['Sent'] >= min_sent_threshold]
+            
+            if not onetime_df.empty:
+                st.subheader("🚀 One-Time Campaigns Overview")
+                
+                # Top summary metric
+                total_onetime_campaigns = onetime_df['Campaign Name'].nunique()
+                total_onetime_sent = onetime_df['Sent'].sum()
+                total_onetime_delivered = onetime_df['Delivered'].sum()
+                
+                # Summary row
+                sum_col1, sum_col2, sum_col3, sum_col4 = st.columns(4)
+                with sum_col1:
+                    st.metric("One-Time Campaigns", format_metric(total_onetime_campaigns), 
+                             help=f"Total unique one-time campaigns launched (sent ≥ {min_sent_threshold})")
+                with sum_col2:
+                    st.metric("Total Sent", format_metric(total_onetime_sent))
+                with sum_col3:
+                    st.metric("Total Delivered", format_metric(total_onetime_delivered))
+                with sum_col4:
+                    delivery_rate = total_onetime_delivered / total_onetime_sent if total_onetime_sent > 0 else 0
+                    st.metric("Avg Delivery Rate", f"{delivery_rate:.1%}")
+                
+                # Campaign details table
+                st.markdown("#### Campaign Details")
+                onetime_summary = onetime_df.groupby('Campaign Name').agg({
+                    'Sent': 'sum',
+                    'Delivered': 'sum',
+                    'Failed': 'sum',
+                    'Unique Clicks': 'sum',
+                    'Unique Conversions': 'sum',
+                    'Revenue (SAR)': 'sum',
+                    'Channel': 'first',  # Take first channel if multiple
+                    'Day': 'min'  # Launch date
+                }).reset_index()
+                
+                # Add calculated columns
+                onetime_summary['Delivery Rate'] = onetime_summary['Delivered'] / onetime_summary['Sent']
+                onetime_summary['CTR'] = np.where(onetime_summary['Delivered'] > 0, 
+                                                onetime_summary['Unique Clicks'] / onetime_summary['Delivered'], 0)
+                onetime_summary['Conversion Rate'] = np.where(onetime_summary['Unique Clicks'] > 0,
+                                                            onetime_summary['Unique Conversions'] / onetime_summary['Unique Clicks'], 0)
+                
+                # Sort by sent volume descending
+                onetime_summary = onetime_summary.sort_values('Sent', ascending=False)
+                
+                # Format for display
+                display_cols = ['Campaign Name', 'Channel', 'Day', 'Sent', 'Delivered', 'Delivery Rate', 
+                              'Unique Clicks', 'CTR', 'Unique Conversions', 'Conversion Rate', 'Revenue (SAR)']
+                onetime_display = onetime_summary[display_cols].copy()
+                
+                # Format columns
+                onetime_display['Sent'] = onetime_display['Sent'].apply(format_metric)
+                onetime_display['Delivered'] = onetime_display['Delivered'].apply(format_metric)
+                onetime_display['Unique Clicks'] = onetime_display['Unique Clicks'].apply(format_metric)
+                onetime_display['Unique Conversions'] = onetime_display['Unique Conversions'].apply(format_metric)
+                onetime_display['Revenue (SAR)'] = onetime_display['Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
+                onetime_display['Delivery Rate'] = onetime_display['Delivery Rate'].apply(lambda x: f"{x:.1%}")
+                onetime_display['CTR'] = onetime_display['CTR'].apply(lambda x: f"{x:.2%}")
+                onetime_display['Conversion Rate'] = onetime_display['Conversion Rate'].apply(lambda x: f"{x:.2%}")
+                onetime_display['Day'] = onetime_display['Day'].dt.strftime('%Y-%m-%d')
+                
+                st.dataframe(onetime_display, use_container_width=True, hide_index=True)
+                
+                # Optional: Channel breakdown for one-time campaigns
+                if st.checkbox("Show Channel Breakdown for One-Time Campaigns", key='onetime_channel_breakdown'):
+                    st.markdown("#### Channel Performance")
+                    channel_breakdown = onetime_df.groupby('Channel').agg({
+                        'Sent': 'sum',
+                        'Delivered': 'sum',
+                        'Unique Conversions': 'sum',
+                        'Revenue (SAR)': 'sum'
+                    }).reset_index()
+                    
+                    channel_breakdown['Delivery Rate'] = channel_breakdown['Delivered'] / channel_breakdown['Sent']
+                    channel_breakdown['Conversions'] = channel_breakdown['Unique Conversions']
+                    
+                    # Format
+                    channel_display = channel_breakdown.copy()
+                    channel_display['Sent'] = channel_display['Sent'].apply(format_metric)
+                    channel_display['Delivered'] = channel_display['Delivered'].apply(format_metric)
+                    channel_display['Conversions'] = channel_display['Conversions'].apply(format_metric)
+                    channel_display['Revenue (SAR)'] = channel_display['Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
+                    channel_display['Delivery Rate'] = channel_display['Delivery Rate'].apply(lambda x: f"{x:.1%}")
+                    
+                    st.dataframe(channel_display[['Channel', 'Sent', 'Delivered', 'Delivery Rate', 'Conversions', 'Revenue (SAR)']], 
+                               use_container_width=True, hide_index=True)
+            else:
+                st.info("No one-time campaigns found matching the criteria.")
+            
+            # Monthly breakdown of unique one-time campaigns
+            if not onetime_df.empty:
+                st.markdown("#### 📅 Monthly One-Time Campaign Activity")
+                
+                # Extract month from date column
+                if 'Day' in onetime_df.columns:
+                    onetime_df['Month'] = onetime_df['Day'].dt.to_period('M').dt.strftime('%Y-%m')
+                elif 'Reporting Period Start Date' in onetime_df.columns:
+                    onetime_df['Month'] = onetime_df['Reporting Period Start Date'].dt.to_period('M').dt.strftime('%Y-%m')
+                else:
+                    st.info("No date column available for monthly breakdown.")
+                
+                if 'Month' in onetime_df.columns:
+                    # Group by month and count unique campaigns
+                    monthly_campaigns = onetime_df.groupby('Month').agg({
+                        'Campaign Name': 'nunique',  # Count unique campaigns
+                        'Sent': 'sum',
+                        'Delivered': 'sum',
+                        'Unique Conversions': 'sum',
+                        'Revenue (SAR)': 'sum'
+                    }).reset_index()
+                    
+                    monthly_campaigns = monthly_campaigns.rename(columns={'Campaign Name': 'Unique Campaigns'})
+                    monthly_campaigns = monthly_campaigns.sort_values('Month', ascending=False)
+                    
+                    # Format for display
+                    monthly_display = monthly_campaigns.copy()
+                    monthly_display['Sent'] = monthly_display['Sent'].apply(format_metric)
+                    monthly_display['Delivered'] = monthly_display['Delivered'].apply(format_metric)
+                    monthly_display['Unique Conversions'] = monthly_display['Unique Conversions'].apply(format_metric)
+                    monthly_display['Revenue (SAR)'] = monthly_display['Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
+                    
+                    st.dataframe(monthly_display, use_container_width=True, hide_index=True)
+                    
+                    # Optional chart
+                    if st.checkbox("Show Monthly Trend Chart", key='monthly_onetime_chart'):
+                        fig_monthly = px.bar(monthly_campaigns, x='Month', y='Unique Campaigns',
+                                           title="Unique One-Time Campaigns per Month",
+                                           color_discrete_sequence=[COLORS['primary']])
+                        fig_monthly.update_layout(xaxis_title="Month", yaxis_title="Number of Campaigns")
+                        st.plotly_chart(fig_monthly, use_container_width=True)
 
         # Campaign Drill-Down
         st.subheader("Campaign Drill-Down")
@@ -5968,6 +6112,11 @@ if uploaded_file is not None:
         jour_metric_options = ['Delivered Rate', 'Unique Clicks', 'Unique Conversions', 'Selected Revenue (SAR)', 'Revenue (SAR)', 'Impression-Through Revenue (SAR)', 'Click-Through Revenue (SAR)']
         if 'Selected Revenue (SAR)' not in filtered_df.columns:
             jour_metric_options = [m for m in jour_metric_options if m != 'Selected Revenue (SAR)']
+        # Add conversion attribution options if they exist
+        if 'Unique Click-Through Conversions' in filtered_df.columns:
+            jour_metric_options.insert(3, 'Unique Click-Through Conversions')
+        if 'Unique Impression-Through Conversions' in filtered_df.columns:
+            jour_metric_options.insert(3, 'Unique Impression-Through Conversions')
         jour_metric = st.selectbox("Metric", jour_metric_options, key='jour_metric', format_func=_attribution_display)
         top_jour = get_top_journeys(filtered_df, jour_metric)
         
@@ -5980,7 +6129,7 @@ if uploaded_file is not None:
         # Format the metric column for display
         if 'Revenue' in jour_metric:
             top_jour_display[jour_metric] = top_jour_display[jour_metric].apply(lambda x: format_metric(x, "SAR"))
-        elif jour_metric in ['Unique Clicks', 'Unique Conversions']:
+        elif jour_metric in ['Unique Clicks', 'Unique Conversions', 'Unique Click-Through Conversions', 'Unique Impression-Through Conversions']:
             top_jour_display[jour_metric] = top_jour_display[jour_metric].apply(format_metric)
         elif 'Rate' in jour_metric:
             # For rates, convert to percentage
@@ -6507,6 +6656,12 @@ if uploaded_file is not None:
             safe_revenue_cols.insert(0, 'Selected Revenue (SAR)')
         safe_conversion_cols = ['Unique Conversions', 'Unique Clicks']
 
+        # Add conversion attribution options if they exist
+        if 'Unique Click-Through Conversions' in filtered_df.columns:
+            safe_conversion_cols.append('Unique Click-Through Conversions')
+        if 'Unique Impression-Through Conversions' in filtered_df.columns:
+            safe_conversion_cols.append('Unique Impression-Through Conversions')
+
         # Add Total columns if they exist (Monthly report)
         if 'Total Conversions' in filtered_df.columns:
             safe_conversion_cols.append('Total Conversions')
@@ -6521,7 +6676,7 @@ if uploaded_file is not None:
         # Format the metric column for display
         if 'Revenue' in seg_metric:
             top_seg_display[seg_metric_display] = top_seg_display[seg_metric_display].apply(lambda x: format_metric(x, "SAR"))
-        elif seg_metric in ['Unique Conversions', 'Total Conversions', 'Unique Clicks']:
+        elif seg_metric in ['Unique Conversions', 'Total Conversions', 'Unique Clicks', 'Unique Click-Through Conversions', 'Unique Impression-Through Conversions']:
             top_seg_display[seg_metric_display] = top_seg_display[seg_metric_display].apply(format_metric)
         st.dataframe(top_seg_display)
 
