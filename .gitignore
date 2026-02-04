@@ -6,3 +6,4 @@ __pycache__/
 *.pdf
 *.md
 *.csv
+validate_november.py
