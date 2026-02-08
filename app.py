@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -131,7 +132,7 @@ def format_metric(value, unit="", abbreviate=True):
         unit: Optional unit label (e.g., "SAR")
         abbreviate: If True, use K/M abbreviations. If False, show full number with commas
     """
-    if isinstance(value, (int, float)) and not pd.isna(value):
+    if isinstance(value, (int, float, np.integer, np.floating)) and not pd.isna(value):
         if abbreviate:
             abs_val = abs(value)
             if abs_val >= 1e6:
@@ -6878,21 +6879,129 @@ if uploaded_file is not None:
         for drop_col in ['Selected Revenue (SAR)', 'Selected Conversions']:
             if drop_col in chan_df_display.columns:
                 chan_df_display = chan_df_display.drop(columns=[drop_col])
-        # Add total row
-        total_row_chan = {'Channel': 'Total'}
-        for col in chan_df_display.columns:
-            if col != 'Channel':
-                total_row_chan[col] = chan_df_display[col].sum()
-        chan_df_display = pd.concat([chan_df_display, pd.DataFrame([total_row_chan])], ignore_index=True)
-        # Format columns
-        numeric_cols = ['Sent', 'Delivered', 'Unique Impressions', 'Unique Clicks', 'Unique Conversions', 'Total Conversions']
-        for col in numeric_cols:
-            if col in chan_df_display.columns:
-                chan_df_display[col] = chan_df_display[col].apply(format_metric)
-        revenue_cols = [col for col in chan_df_display.columns if 'Revenue' in col]
-        for col in revenue_cols:
-            chan_df_display[col] = chan_df_display[col].apply(lambda x: format_metric(x, "SAR"))
-        st.dataframe(style_total_row(chan_df_display), use_container_width=True, hide_index=True)
+        
+        # If comparison mode is active, calculate comparison metrics and add percentage changes
+        if comparison_result:
+            # Calculate channel metrics for comparison period
+            chan_df_comparison = channel_analysis(comparison_result['comparison_data'])
+            
+            # Create a new display dataframe with values and percentage changes
+            chan_df_with_changes = chan_df_display.copy()
+            
+            # For each numeric column, add percentage change
+            numeric_cols = ['Sent', 'Delivered', 'Unique Impressions', 'Unique Clicks', 'Unique Conversions', 'Total Conversions']
+            revenue_cols = [col for col in chan_df_display.columns if 'Revenue' in col]
+            all_metric_cols = [col for col in (numeric_cols + revenue_cols) if col in chan_df_display.columns]
+            
+            for col in all_metric_cols:
+                # Create a new column for display with value + percentage
+                new_col_data = []
+                for channel in chan_df_display['Channel']:
+                    current_val = chan_df.loc[chan_df['Channel'] == channel, col].values
+                    current_val = current_val[0] if len(current_val) > 0 else 0
+                    
+                    comp_val = chan_df_comparison.loc[chan_df_comparison['Channel'] == channel, col].values
+                    comp_val = comp_val[0] if len(comp_val) > 0 else 0
+                    
+                    # Calculate percentage change
+                    if comp_val > 0:
+                        pct_change = ((current_val - comp_val) / comp_val) * 100
+                        if pct_change > 0:
+                            pct_str = f" <span style='color: #28a745; font-weight: 600; white-space: nowrap; display: inline-block;'>↑&nbsp;{pct_change:.1f}%</span>"
+                        elif pct_change < 0:
+                            pct_str = f" <span style='color: #dc3545; font-weight: 600; white-space: nowrap; display: inline-block;'>↓&nbsp;{abs(pct_change):.1f}%</span>"
+                        else:
+                            pct_str = " <span style='color: #6c757d; white-space: nowrap; display: inline-block;'>→&nbsp;0%</span>"
+                    elif current_val > 0 and comp_val == 0:
+                        pct_str = " <span style='color: #17a2b8; font-weight: 600; white-space: nowrap; display: inline-block;'>🆕</span>"
+                    else:
+                        pct_str = ""
+                    
+                    # Format the value with abbreviation
+                    if 'Revenue' in col:
+                        formatted_val = format_metric(current_val, "SAR", abbreviate=True)
+                    else:
+                        formatted_val = format_metric(current_val, "", abbreviate=True)
+                    
+                    new_col_data.append(formatted_val + pct_str)
+                
+                chan_df_with_changes[col] = new_col_data
+            
+            # Add total row with comparisons
+            total_row_chan = {'Channel': 'Total'}
+            for col in all_metric_cols:
+                current_total = chan_df[col].sum()
+                comp_total = chan_df_comparison[col].sum() if col in chan_df_comparison.columns else 0
+                
+                # Calculate percentage change for total
+                if comp_total > 0:
+                    pct_change = ((current_total - comp_total) / comp_total) * 100
+                    if pct_change > 0:
+                        pct_str = f" <span style='color: #28a745; font-weight: 600; white-space: nowrap; display: inline-block;'>↑&nbsp;{pct_change:.1f}%</span>"
+                    elif pct_change < 0:
+                        pct_str = f" <span style='color: #dc3545; font-weight: 600; white-space: nowrap; display: inline-block;'>↓&nbsp;{abs(pct_change):.1f}%</span>"
+                    else:
+                        pct_str = " <span style='color: #6c757d; white-space: nowrap; display: inline-block;'>→&nbsp;0%</span>"
+                elif current_total > 0:
+                    pct_str = " <span style='color: #17a2b8; font-weight: 600; white-space: nowrap; display: inline-block;'>🆕</span>"
+                else:
+                    pct_str = ""
+                
+                # Format the total value with abbreviation
+                if 'Revenue' in col:
+                    formatted_total = format_metric(current_total, "SAR", abbreviate=True)
+                else:
+                    formatted_total = format_metric(current_total, "", abbreviate=True)
+                
+                total_row_chan[col] = formatted_total + pct_str
+            
+            chan_df_with_changes = pd.concat([chan_df_with_changes, pd.DataFrame([total_row_chan])], ignore_index=True)
+            chan_df_display = chan_df_with_changes
+        else:
+            # No comparison - use regular formatting
+            # Add total row
+            total_row_chan = {'Channel': 'Total'}
+            for col in chan_df_display.columns:
+                if col != 'Channel':
+                    total_row_chan[col] = chan_df_display[col].sum()
+            chan_df_display = pd.concat([chan_df_display, pd.DataFrame([total_row_chan])], ignore_index=True)
+            # Format columns
+            numeric_cols = ['Sent', 'Delivered', 'Unique Impressions', 'Unique Clicks', 'Unique Conversions', 'Total Conversions']
+            for col in numeric_cols:
+                if col in chan_df_display.columns:
+                    chan_df_display[col] = chan_df_display[col].apply(format_metric)
+            revenue_cols = [col for col in chan_df_display.columns if 'Revenue' in col]
+            for col in revenue_cols:
+                chan_df_display[col] = chan_df_display[col].apply(lambda x: format_metric(x, "SAR"))
+        
+        # Display table with HTML rendering if comparison is active
+        if comparison_result:
+            table_html = chan_df_display.to_html(escape=False, index=False)
+            components.html(
+                """
+                <style>
+                .channel-compare-table table {
+                    width: 100%;
+                    border-collapse: collapse;
+                }
+                .channel-compare-table th,
+                .channel-compare-table td {
+                    white-space: nowrap;
+                    padding: 6px 8px;
+                }
+                .channel-compare-table th {
+                    background: #f6f7f9;
+                    position: sticky;
+                    top: 0;
+                    z-index: 1;
+                }
+                </style>
+                """ + f"<div class='channel-compare-table'>{table_html}</div>",
+                height=360,
+                scrolling=True
+            )
+        else:
+            st.dataframe(style_total_row(chan_df_display), use_container_width=True, hide_index=True)
 
         # Revenue + Conversions by Channel (using selected attribution)
         st.subheader("Revenue & Conversions by Channel")
