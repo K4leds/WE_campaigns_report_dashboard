@@ -5566,10 +5566,13 @@ if uploaded_file is not None:
                             with col2:
                                 st.metric("Clicks", format_metric(engagement_data['total_clicks']))
                             with col3:
-                                st.metric("CTR", f"{engagement_data['ctr']:.2%}")
+                                st.metric("CTR (Click Rate)", f"{engagement_data['ctr']:.2%}",
+                                         help="Impressions → Clicks: How many people who saw it clicked it")
                         
                         if 'conversion' in individual_analysis['raw_metrics']:
                             conversion_data = individual_analysis['raw_metrics']['conversion']
+                            journey_data = individual_analysis.get('journey_data', filtered_df[filtered_df['Journey Name'] == selected_journey_health])
+                            
                             st.markdown("**💰 Conversion Performance:**")
                             col1, col2, col3, col4 = st.columns(4)
                             with col1:
@@ -5577,10 +5580,41 @@ if uploaded_file is not None:
                             with col2:
                                 st.metric("Conversions", format_metric(conversion_data['total_conversions']))
                             with col3:
-                                st.metric("Conversion Rate", f"{conversion_data['conversion_rate']:.2%}")
+                                st.metric("Conversion Rate (CVR)", f"{conversion_data['conversion_rate']:.2%}", 
+                                         help="Clicks → Conversions: How many people who clicked actually converted")
                             with col4:
                                 if 'source' in conversion_data:
                                     st.caption(f"Source: {conversion_data['source']}")
+                            
+                            # Additional attribution rates
+                            st.markdown("**📊 Additional Attribution Metrics:**")
+                            attr_col1, attr_col2, attr_col3 = st.columns(3)
+                            
+                            with attr_col1:
+                                # Impression-Through Rate
+                                if 'Unique Impression-Through Conversions' in journey_data.columns and 'Unique Impressions' in journey_data.columns:
+                                    imp_conv = journey_data['Unique Impression-Through Conversions'].sum()
+                                    imp_total = journey_data['Unique Impressions'].sum()
+                                    imp_rate = (imp_conv / imp_total * 100) if imp_total > 0 else 0
+                                    st.metric("Impression-Through Rate", f"{imp_rate:.2%}",
+                                             help="Impressions → Conversions: People who converted after seeing (no click)")
+                            
+                            with attr_col2:
+                                # Click-Through Rate (already shown above, but for completeness)
+                                if 'Unique Click-Through Conversions' in journey_data.columns and 'Unique Clicks' in journey_data.columns:
+                                    click_conv = journey_data['Unique Click-Through Conversions'].sum()
+                                    click_total = journey_data['Unique Clicks'].sum()
+                                    click_rate = (click_conv / click_total * 100) if click_total > 0 else 0
+                                    st.metric("Click-Through Rate", f"{click_rate:.2%}",
+                                             help="Clicks → Conversions: People who converted after clicking (same as CVR above)")
+                            
+                            with attr_col3:
+                                # Overall Rate (Sent)
+                                if 'Sent' in journey_data.columns:
+                                    sent_total = journey_data['Sent'].sum()
+                                    overall_rate = (conversion_data['total_conversions'] / sent_total * 100) if sent_total > 0 else 0
+                                    st.metric("Overall Rate (Sent)", f"{overall_rate:.2%}",
+                                             help="Sent → Conversions: End-to-end conversion rate from send to conversion")
                         
                         if 'revenue' in individual_analysis['raw_metrics']:
                             revenue_data = individual_analysis['raw_metrics']['revenue']
