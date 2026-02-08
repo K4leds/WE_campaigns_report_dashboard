@@ -2675,6 +2675,12 @@ def calculate_metric_changes(current_metrics, comparison_metrics):
         current_val = current_metrics[key]
         comparison_val = comparison_metrics.get(key, 0)
         
+        # Handle None values
+        if current_val is None:
+            current_val = 0
+        if comparison_val is None:
+            comparison_val = 0
+        
         # Absolute change
         absolute_change = current_val - comparison_val
         
@@ -6935,9 +6941,9 @@ if uploaded_file is not None:
                     if comp_val > 0:
                         pct_change = ((current_val - comp_val) / comp_val) * 100
                         if pct_change > 0:
-                            pct_str = f" <span style='color: #28a745; font-weight: 600; white-space: nowrap; display: inline-block;'>↑&nbsp;{pct_change:.1f}%</span>"
+                            pct_str = f" <span style='color: #28a745; font-weight: 600; white-space: nowrap; display: inline-block;'>▲&nbsp;{pct_change:.1f}%</span>"
                         elif pct_change < 0:
-                            pct_str = f" <span style='color: #dc3545; font-weight: 600; white-space: nowrap; display: inline-block;'>↓&nbsp;{abs(pct_change):.1f}%</span>"
+                            pct_str = f" <span style='color: #dc3545; font-weight: 600; white-space: nowrap; display: inline-block;'>▼&nbsp;{abs(pct_change):.1f}%</span>"
                         else:
                             pct_str = " <span style='color: #6c757d; white-space: nowrap; display: inline-block;'>→&nbsp;0%</span>"
                     elif current_val > 0 and comp_val == 0:
@@ -6965,9 +6971,9 @@ if uploaded_file is not None:
                 if comp_total > 0:
                     pct_change = ((current_total - comp_total) / comp_total) * 100
                     if pct_change > 0:
-                        pct_str = f" <span style='color: #28a745; font-weight: 600; white-space: nowrap; display: inline-block;'>↑&nbsp;{pct_change:.1f}%</span>"
+                        pct_str = f" <span style='color: #28a745; font-weight: 600; white-space: nowrap; display: inline-block;'>▲&nbsp;{pct_change:.1f}%</span>"
                     elif pct_change < 0:
-                        pct_str = f" <span style='color: #dc3545; font-weight: 600; white-space: nowrap; display: inline-block;'>↓&nbsp;{abs(pct_change):.1f}%</span>"
+                        pct_str = f" <span style='color: #dc3545; font-weight: 600; white-space: nowrap; display: inline-block;'>▼&nbsp;{abs(pct_change):.1f}%</span>"
                     else:
                         pct_str = " <span style='color: #6c757d; white-space: nowrap; display: inline-block;'>→&nbsp;0%</span>"
                 elif current_total > 0:
@@ -7008,42 +7014,81 @@ if uploaded_file is not None:
             components.html(
                 """
                 <style>
+                @media (prefers-color-scheme: dark) {
+                    .channel-compare-table {
+                        color: rgba(250, 250, 250, 0.95);
+                    }
+                    .channel-compare-table table {
+                        background: #0e1117;
+                        border: 1px solid rgba(250, 250, 250, 0.2);
+                    }
+                    .channel-compare-table th {
+                        background: rgba(38, 39, 48, 0.8);
+                        border-bottom: 1px solid rgba(250, 250, 250, 0.2);
+                    }
+                    .channel-compare-table td {
+                        border-bottom: 1px solid rgba(250, 250, 250, 0.1);
+                    }
+                    .channel-compare-table tr:nth-child(even) td {
+                        background: rgba(250, 250, 250, 0.03);
+                    }
+                    .channel-compare-table tr:hover td {
+                        background: rgba(250, 250, 250, 0.08);
+                    }
+                    .channel-compare-table tbody tr:last-child td {
+                        background: rgba(100, 150, 255, 0.15);
+                        border-top: 2px solid rgba(100, 150, 255, 0.5);
+                    }
+                }
+                @media (prefers-color-scheme: light) {
+                    .channel-compare-table {
+                        color: #262730;
+                    }
+                    .channel-compare-table table {
+                        background: #ffffff;
+                        border: 1px solid #e6e6e6;
+                    }
+                    .channel-compare-table th {
+                        background: #f6f7f9;
+                        border-bottom: 1px solid #e6e6e6;
+                    }
+                    .channel-compare-table td {
+                        border-bottom: 1px solid #f0f0f0;
+                    }
+                    .channel-compare-table tr:nth-child(even) td {
+                        background: #fafafa;
+                    }
+                    .channel-compare-table tr:hover td {
+                        background: #f0f7ff;
+                    }
+                    .channel-compare-table tbody tr:last-child td {
+                        background: #e8f4ff;
+                        border-top: 2px solid #4a90e2;
+                    }
+                }
                 .channel-compare-table {
                     font-family: "Source Sans Pro", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
                     font-size: 14px;
-                    color: #262730;
                 }
                 .channel-compare-table table {
                     width: 100%;
                     border-collapse: collapse;
-                    border: 1px solid #e6e6e6;
-                    background: #ffffff;
                 }
                 .channel-compare-table th,
                 .channel-compare-table td {
                     white-space: nowrap;
                     padding: 8px 10px;
-                    border-bottom: 1px solid #f0f0f0;
                     text-align: left;
                     vertical-align: middle;
                 }
                 .channel-compare-table th {
-                    background: #f6f7f9;
                     font-weight: 600;
                     position: sticky;
                     top: 0;
                     z-index: 1;
                 }
-                .channel-compare-table tr:nth-child(even) td {
-                    background: #fafafa;
-                }
-                .channel-compare-table tr:hover td {
-                    background: #f0f7ff;
-                }
                 .channel-compare-table tbody tr:last-child td {
                     font-weight: 700;
-                    border-top: 2px solid #d9d9d9;
-                    background: #f6f7f9;
                 }
                 </style>
                 """ + f"<div class='channel-compare-table'>{table_html}</div>",
