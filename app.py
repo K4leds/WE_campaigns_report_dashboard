@@ -147,6 +147,14 @@ def format_metric(value, unit="", abbreviate=True):
     else:
         return f"{value} {unit}".strip()
 
+def _month_range_options(start_date, end_date):
+    if pd.isna(start_date) or pd.isna(end_date):
+        return []
+    start = pd.Period(pd.to_datetime(start_date), freq='M')
+    end = pd.Period(pd.to_datetime(end_date), freq='M')
+    months = pd.period_range(start, end, freq='M')
+    return [m.to_timestamp() for m in months]
+
 st.title("WebEngage CSV Dashboard")
 
 # Sidebar navigation
@@ -2974,8 +2982,19 @@ if uploaded_file is not None:
     if not df.empty:
         min_date = df['Reporting Period Start Date'].min()
         max_date = df['Reporting Period End Date'].max()
-        date_range = st.sidebar.date_input("Date Range", value=(min_date, max_date))
+        use_month_picker = st.sidebar.toggle("Use Month Picker", value=False)
+        if use_month_picker:
+            month_options = _month_range_options(min_date, max_date)
+            month_labels = [m.strftime('%b %Y') for m in month_options]
+            start_month_label = st.sidebar.selectbox("Start Month", month_labels, index=0)
+            end_month_label = st.sidebar.selectbox("End Month", month_labels, index=len(month_labels) - 1)
+            start_month = month_options[month_labels.index(start_month_label)]
+            end_month = month_options[month_labels.index(end_month_label)]
+            date_range = (start_month, (end_month + pd.offsets.MonthEnd(0)).date())
+        else:
+            date_range = st.sidebar.date_input("Date Range", value=(min_date, max_date))
     else:
+        use_month_picker = False
         date_range = st.sidebar.date_input("Date Range", [])
     
     # Comparison Period Settings
@@ -2991,11 +3010,20 @@ if uploaded_file is not None:
     if comparison_mode == "Custom Date Range":
         st.sidebar.markdown("**Comparison Period:**")
         if not df.empty:
-            comparison_date_range = st.sidebar.date_input(
-                "Custom Comparison Range", 
-                value=(min_date, min_date + pd.Timedelta(days=7)),
-                key="comparison_date_range"
-            )
+            if use_month_picker:
+                month_options = _month_range_options(min_date, max_date)
+                month_labels = [m.strftime('%b %Y') for m in month_options]
+                comp_start_label = st.sidebar.selectbox("Comparison Start Month", month_labels, index=0, key="comp_start_month")
+                comp_end_label = st.sidebar.selectbox("Comparison End Month", month_labels, index=min(1, len(month_labels) - 1), key="comp_end_month")
+                comp_start = month_options[month_labels.index(comp_start_label)]
+                comp_end = month_options[month_labels.index(comp_end_label)]
+                comparison_date_range = (comp_start, (comp_end + pd.offsets.MonthEnd(0)).date())
+            else:
+                comparison_date_range = st.sidebar.date_input(
+                    "Custom Comparison Range", 
+                    value=(min_date, min_date + pd.Timedelta(days=7)),
+                    key="comparison_date_range"
+                )
         else:
             comparison_date_range = st.sidebar.date_input("Custom Comparison Range", [], key="comparison_date_range")
     
