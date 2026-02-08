@@ -7008,20 +7008,42 @@ if uploaded_file is not None:
             components.html(
                 """
                 <style>
+                .channel-compare-table {
+                    font-family: "Source Sans Pro", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+                    font-size: 14px;
+                    color: #262730;
+                }
                 .channel-compare-table table {
                     width: 100%;
                     border-collapse: collapse;
+                    border: 1px solid #e6e6e6;
+                    background: #ffffff;
                 }
                 .channel-compare-table th,
                 .channel-compare-table td {
                     white-space: nowrap;
-                    padding: 6px 8px;
+                    padding: 8px 10px;
+                    border-bottom: 1px solid #f0f0f0;
+                    text-align: left;
+                    vertical-align: middle;
                 }
                 .channel-compare-table th {
                     background: #f6f7f9;
+                    font-weight: 600;
                     position: sticky;
                     top: 0;
                     z-index: 1;
+                }
+                .channel-compare-table tr:nth-child(even) td {
+                    background: #fafafa;
+                }
+                .channel-compare-table tr:hover td {
+                    background: #f0f7ff;
+                }
+                .channel-compare-table tbody tr:last-child td {
+                    font-weight: 700;
+                    border-top: 2px solid #d9d9d9;
+                    background: #f6f7f9;
                 }
                 </style>
                 """ + f"<div class='channel-compare-table'>{table_html}</div>",
