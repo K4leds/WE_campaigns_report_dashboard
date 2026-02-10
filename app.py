@@ -7259,6 +7259,13 @@ if uploaded_file is not None:
                         type_share, x='Channel', y='Revenue Share', color='Type of Campaign',
                         barmode='stack', title="Revenue Share by Campaign Type per Channel (%)",
                         color_discrete_sequence=COLOR_SEQUENCE,
+                        custom_data=['Type of Campaign']
+                    )
+                    fig_share.update_traces(
+                        hovertemplate='<b>%{x}</b><br>' +
+                                      'Campaign Type: %{customdata[0]}<br>' +
+                                      'Revenue Share: %{y:.1f}%<br>' +
+                                      '<extra></extra>'
                     )
                     fig_share.update_layout(
                         yaxis_title="Revenue Share (%)", yaxis_range=[0, 100],
