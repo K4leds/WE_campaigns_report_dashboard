@@ -377,7 +377,32 @@ def channel_analysis(df):
         agg_dict['Selected Revenue (SAR)'] = 'sum'
     if 'Selected Conversions' in df.columns:
         agg_dict['Selected Conversions'] = 'sum'
-    return df.groupby('Channel').agg(agg_dict).reset_index()
+
+    result = df.groupby('Channel').agg(agg_dict).reset_index()
+
+    # Calculate AOV for each revenue type
+    if 'Revenue (SAR)' in result.columns:
+        result['AOV (SAR)'] = np.where(
+            result['Unique Conversions'] > 0,
+            result['Revenue (SAR)'] / result['Unique Conversions'], 0
+        )
+    if 'Click-Through Revenue (SAR)' in result.columns:
+        result['AOV Click-Through (SAR)'] = np.where(
+            result['Unique Conversions'] > 0,
+            result['Click-Through Revenue (SAR)'] / result['Unique Conversions'], 0
+        )
+    if 'Impression-Through Revenue (SAR)' in result.columns:
+        result['AOV Impression-Through (SAR)'] = np.where(
+            result['Unique Conversions'] > 0,
+            result['Impression-Through Revenue (SAR)'] / result['Unique Conversions'], 0
+        )
+    if 'Selected Revenue (SAR)' in result.columns and 'Selected Conversions' in result.columns:
+        result['AOV Selected (SAR)'] = np.where(
+            result['Selected Conversions'] > 0,
+            result['Selected Revenue (SAR)'] / result['Selected Conversions'], 0
+        )
+
+    return result
 
 def time_series_analysis(df, metric='Unique Conversions'):
     df_ts = df.groupby('Reporting Period Start Date')[metric].sum().reset_index()
@@ -4354,14 +4379,51 @@ if uploaded_file is not None:
                 type_breakdown['Unique Clicks'] > 0,
                 type_breakdown['Unique Conversions'] / type_breakdown['Unique Clicks'], 0
             )
+
+            # Calculate AOV for each revenue type
+            if 'Revenue (SAR)' in type_breakdown.columns:
+                type_breakdown['AOV (SAR)'] = np.where(
+                    type_breakdown['Unique Conversions'] > 0,
+                    type_breakdown['Revenue (SAR)'] / type_breakdown['Unique Conversions'], 0
+                )
+            if 'Click-Through Revenue (SAR)' in type_breakdown.columns:
+                type_breakdown['AOV Click-Through (SAR)'] = np.where(
+                    type_breakdown['Unique Conversions'] > 0,
+                    type_breakdown['Click-Through Revenue (SAR)'] / type_breakdown['Unique Conversions'], 0
+                )
+            if 'Impression-Through Revenue (SAR)' in type_breakdown.columns:
+                type_breakdown['AOV Impression-Through (SAR)'] = np.where(
+                    type_breakdown['Unique Conversions'] > 0,
+                    type_breakdown['Impression-Through Revenue (SAR)'] / type_breakdown['Unique Conversions'], 0
+                )
+            if 'Selected Revenue (SAR)' in type_breakdown.columns:
+                type_breakdown['AOV Selected (SAR)'] = np.where(
+                    type_breakdown['Unique Conversions'] > 0,
+                    type_breakdown['Selected Revenue (SAR)'] / type_breakdown['Unique Conversions'], 0
+                )
+
             # Add total row
             total_row = {'Type of Campaign': 'Total'}
+            total_conversions = type_breakdown['Unique Conversions'].sum()
             for col in type_breakdown.columns:
                 if col == 'Type of Campaign':
                     continue
                 elif col == 'Conversion Rate':
                     clicks_total = type_breakdown['Unique Clicks'].sum()
                     total_row[col] = type_breakdown['Unique Conversions'].sum() / clicks_total if clicks_total > 0 else 0
+                elif 'AOV' in col:
+                    # Calculate total AOV from total revenue / total conversions
+                    if 'Click-Through' in col and 'Click-Through Revenue (SAR)' in type_breakdown.columns:
+                        total_rev = type_breakdown['Click-Through Revenue (SAR)'].sum()
+                    elif 'Impression-Through' in col and 'Impression-Through Revenue (SAR)' in type_breakdown.columns:
+                        total_rev = type_breakdown['Impression-Through Revenue (SAR)'].sum()
+                    elif 'Selected' in col and 'Selected Revenue (SAR)' in type_breakdown.columns:
+                        total_rev = type_breakdown['Selected Revenue (SAR)'].sum()
+                    elif 'Revenue (SAR)' in type_breakdown.columns:
+                        total_rev = type_breakdown['Revenue (SAR)'].sum()
+                    else:
+                        total_rev = 0
+                    total_row[col] = total_rev / total_conversions if total_conversions > 0 else 0
                 else:
                     total_row[col] = type_breakdown[col].sum()
             type_breakdown = pd.concat([type_breakdown, pd.DataFrame([total_row])], ignore_index=True)
@@ -4375,6 +4437,8 @@ if uploaded_file is not None:
                 if col in type_display.columns:
                     type_display[col] = type_display[col].apply(format_metric)
             for col in [c for c in type_display.columns if 'Revenue' in c]:
+                type_display[col] = type_display[col].apply(lambda x: format_metric(x, "SAR"))
+            for col in [c for c in type_display.columns if 'AOV' in c]:
                 type_display[col] = type_display[col].apply(lambda x: format_metric(x, "SAR"))
             type_display['Conversion Rate'] = type_display['Conversion Rate'].apply(lambda x: f"{x:.2%}")
             st.dataframe(style_total_row(type_display), use_container_width=True, hide_index=True)
@@ -6925,7 +6989,8 @@ if uploaded_file is not None:
             # For each numeric column, add percentage change
             numeric_cols = ['Sent', 'Delivered', 'Unique Impressions', 'Unique Clicks', 'Unique Conversions', 'Total Conversions']
             revenue_cols = [col for col in chan_df_display.columns if 'Revenue' in col]
-            all_metric_cols = [col for col in (numeric_cols + revenue_cols) if col in chan_df_display.columns]
+            aov_cols = [col for col in chan_df_display.columns if 'AOV' in col]
+            all_metric_cols = [col for col in (numeric_cols + revenue_cols + aov_cols) if col in chan_df_display.columns]
             
             for col in all_metric_cols:
                 # Create a new column for display with value + percentage
@@ -6952,7 +7017,7 @@ if uploaded_file is not None:
                         pct_str = ""
                     
                     # Format the value with abbreviation
-                    if 'Revenue' in col:
+                    if 'Revenue' in col or 'AOV' in col:
                         formatted_val = format_metric(current_val, "SAR", abbreviate=True)
                     else:
                         formatted_val = format_metric(current_val, "", abbreviate=True)
@@ -6982,7 +7047,7 @@ if uploaded_file is not None:
                     pct_str = ""
                 
                 # Format the total value with abbreviation
-                if 'Revenue' in col:
+                if 'Revenue' in col or 'AOV' in col:
                     formatted_total = format_metric(current_total, "SAR", abbreviate=True)
                 else:
                     formatted_total = format_metric(current_total, "", abbreviate=True)
@@ -7006,6 +7071,10 @@ if uploaded_file is not None:
                     chan_df_display[col] = chan_df_display[col].apply(format_metric)
             revenue_cols = [col for col in chan_df_display.columns if 'Revenue' in col]
             for col in revenue_cols:
+                chan_df_display[col] = chan_df_display[col].apply(lambda x: format_metric(x, "SAR"))
+            # Format AOV columns
+            aov_cols = [col for col in chan_df_display.columns if 'AOV' in col]
+            for col in aov_cols:
                 chan_df_display[col] = chan_df_display[col].apply(lambda x: format_metric(x, "SAR"))
         
         # Display table with HTML rendering if comparison is active
