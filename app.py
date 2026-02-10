@@ -7099,14 +7099,17 @@ if uploaded_file is not None:
             st.dataframe(style_total_row(chan_df_display), use_container_width=True, hide_index=True)
 
         # Revenue Distribution (Donut Chart)
-        st.subheader("Revenue Distribution Across Channels")
+        st.subheader(f"Revenue Distribution Across Channels - {_attribution_display(chan_rev_col)}")
         if chan_rev_col in chan_df.columns:
+            # Calculate total revenue for center annotation
+            total_revenue = chan_df[chan_rev_col].sum()
+
             # Create donut chart for revenue share
             fig_donut = px.pie(
                 chan_df,
                 values=chan_rev_col,
                 names='Channel',
-                title=f"{_attribution_display(chan_rev_col)} Share by Channel",
+                title=f"Channel Revenue Share<br><sub>Using: {_attribution_display(chan_rev_col)}</sub>",
                 color='Channel',
                 color_discrete_map=CHANNEL_COLORS,
                 hole=0.4  # Makes it a donut chart
@@ -7121,7 +7124,13 @@ if uploaded_file is not None:
             )
             fig_donut.update_layout(
                 showlegend=True,
-                legend=dict(orientation='h', yanchor='bottom', y=-0.2, xanchor='center', x=0.5)
+                legend=dict(orientation='h', yanchor='bottom', y=-0.2, xanchor='center', x=0.5),
+                annotations=[dict(
+                    text=f'<b>Total</b><br>{format_metric(total_revenue, "SAR", abbreviate=True)}',
+                    x=0.5, y=0.5,
+                    font_size=16,
+                    showarrow=False
+                )]
             )
             st.plotly_chart(fig_donut, use_container_width=True)
 
