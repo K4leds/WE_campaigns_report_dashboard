@@ -7098,8 +7098,35 @@ if uploaded_file is not None:
         else:
             st.dataframe(style_total_row(chan_df_display), use_container_width=True, hide_index=True)
 
+        # Revenue Distribution (Donut Chart)
+        st.subheader("Revenue Distribution Across Channels")
+        if chan_rev_col in chan_df.columns:
+            # Create donut chart for revenue share
+            fig_donut = px.pie(
+                chan_df,
+                values=chan_rev_col,
+                names='Channel',
+                title=f"{_attribution_display(chan_rev_col)} Share by Channel",
+                color='Channel',
+                color_discrete_map=CHANNEL_COLORS,
+                hole=0.4  # Makes it a donut chart
+            )
+            fig_donut.update_traces(
+                textposition='inside',
+                textinfo='percent+label',
+                hovertemplate='<b>%{label}</b><br>' +
+                              'Revenue: %{value:,.0f} SAR<br>' +
+                              'Share: %{percent}<br>' +
+                              '<extra></extra>'
+            )
+            fig_donut.update_layout(
+                showlegend=True,
+                legend=dict(orientation='h', yanchor='bottom', y=-0.2, xanchor='center', x=0.5)
+            )
+            st.plotly_chart(fig_donut, use_container_width=True)
+
         # Revenue + Conversions by Channel (using selected attribution)
-        st.subheader("Revenue & Conversions by Channel")
+        st.subheader("Revenue & Conversions Comparison")
         rev_conv_col1, rev_conv_col2 = st.columns(2)
         with rev_conv_col1:
             if chan_rev_col in chan_df.columns:
