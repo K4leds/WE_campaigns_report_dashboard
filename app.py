@@ -4493,16 +4493,22 @@ if uploaded_file is not None:
                 
                 # Campaign details table
                 st.markdown("#### Campaign Details")
-                onetime_summary = onetime_df.groupby('Campaign Name').agg({
+                # Respect selected attribution if present
+                agg_dict = {
                     'Sent': 'sum',
                     'Delivered': 'sum',
                     'Failed': 'sum',
                     'Unique Clicks': 'sum',
                     'Unique Conversions': 'sum',
-                    'Revenue (SAR)': 'sum',
                     'Channel': 'first',  # Take first channel if multiple
                     'Day': 'min'  # Launch date
-                }).reset_index()
+                }
+                if 'Selected Revenue (SAR)' in onetime_df.columns:
+                    agg_dict['Selected Revenue (SAR)'] = 'sum'
+                elif 'Revenue (SAR)' in onetime_df.columns:
+                    agg_dict['Revenue (SAR)'] = 'sum'
+
+                onetime_summary = onetime_df.groupby('Campaign Name').agg(agg_dict).reset_index()
                 
                 # Add calculated columns
                 onetime_summary['Delivery Rate'] = onetime_summary['Delivered'] / onetime_summary['Sent']
@@ -4515,8 +4521,10 @@ if uploaded_file is not None:
                 onetime_summary = onetime_summary.sort_values('Sent', ascending=False)
                 
                 # Format for display
+                # Use selected revenue column if available
+                revenue_col = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in onetime_summary.columns else 'Revenue (SAR)'
                 display_cols = ['Campaign Name', 'Channel', 'Day', 'Sent', 'Delivered', 'Delivery Rate', 
-                              'Unique Clicks', 'CTR', 'Unique Conversions', 'Conversion Rate', 'Revenue (SAR)']
+                              'Unique Clicks', 'CTR', 'Unique Conversions', 'Conversion Rate', revenue_col]
                 onetime_display = onetime_summary[display_cols].copy()
                 
                 # Format columns
@@ -4524,7 +4532,7 @@ if uploaded_file is not None:
                 onetime_display['Delivered'] = onetime_display['Delivered'].apply(format_metric)
                 onetime_display['Unique Clicks'] = onetime_display['Unique Clicks'].apply(format_metric)
                 onetime_display['Unique Conversions'] = onetime_display['Unique Conversions'].apply(format_metric)
-                onetime_display['Revenue (SAR)'] = onetime_display['Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
+                onetime_display[revenue_col] = onetime_display[revenue_col].apply(lambda x: format_metric(x, "SAR"))
                 onetime_display['Delivery Rate'] = onetime_display['Delivery Rate'].apply(lambda x: f"{x:.1%}")
                 onetime_display['CTR'] = onetime_display['CTR'].apply(lambda x: f"{x:.2%}")
                 onetime_display['Conversion Rate'] = onetime_display['Conversion Rate'].apply(lambda x: f"{x:.2%}")
@@ -4535,12 +4543,20 @@ if uploaded_file is not None:
                 # Optional: Channel breakdown for one-time campaigns
                 if st.checkbox("Show Channel Breakdown for One-Time Campaigns", key='onetime_channel_breakdown'):
                     st.markdown("#### Channel Performance")
-                    channel_breakdown = onetime_df.groupby('Channel').agg({
+                    # Respect selected revenue attribution
+                    agg_cols = {
                         'Sent': 'sum',
                         'Delivered': 'sum',
-                        'Unique Conversions': 'sum',
-                        'Revenue (SAR)': 'sum'
-                    }).reset_index()
+                        'Unique Conversions': 'sum'
+                    }
+                    if 'Selected Revenue (SAR)' in onetime_df.columns:
+                        agg_cols['Selected Revenue (SAR)'] = 'sum'
+                        rev_col_channel = 'Selected Revenue (SAR)'
+                    else:
+                        agg_cols['Revenue (SAR)'] = 'sum'
+                        rev_col_channel = 'Revenue (SAR)'
+
+                    channel_breakdown = onetime_df.groupby('Channel').agg(agg_cols).reset_index()
                     
                     channel_breakdown['Delivery Rate'] = channel_breakdown['Delivered'] / channel_breakdown['Sent']
                     channel_breakdown['Conversions'] = channel_breakdown['Unique Conversions']
@@ -4550,10 +4566,10 @@ if uploaded_file is not None:
                     channel_display['Sent'] = channel_display['Sent'].apply(format_metric)
                     channel_display['Delivered'] = channel_display['Delivered'].apply(format_metric)
                     channel_display['Conversions'] = channel_display['Conversions'].apply(format_metric)
-                    channel_display['Revenue (SAR)'] = channel_display['Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
+                    channel_display[rev_col_channel] = channel_display[rev_col_channel].apply(lambda x: format_metric(x, "SAR"))
                     channel_display['Delivery Rate'] = channel_display['Delivery Rate'].apply(lambda x: f"{x:.1%}")
                     
-                    st.dataframe(channel_display[['Channel', 'Sent', 'Delivered', 'Delivery Rate', 'Conversions', 'Revenue (SAR)']], 
+                    st.dataframe(channel_display[['Channel', 'Sent', 'Delivered', 'Delivery Rate', 'Conversions', rev_col_channel]], 
                                use_container_width=True, hide_index=True)
             else:
                 st.info("No one-time campaigns found matching the criteria.")
@@ -4572,13 +4588,21 @@ if uploaded_file is not None:
                 
                 if 'Month' in onetime_df.columns:
                     # Group by month and count unique campaigns
-                    monthly_campaigns = onetime_df.groupby('Month').agg({
+                    # Use selected revenue if present
+                    monthly_agg = {
                         'Campaign Name': 'nunique',  # Count unique campaigns
                         'Sent': 'sum',
                         'Delivered': 'sum',
-                        'Unique Conversions': 'sum',
-                        'Revenue (SAR)': 'sum'
-                    }).reset_index()
+                        'Unique Conversions': 'sum'
+                    }
+                    if 'Selected Revenue (SAR)' in onetime_df.columns:
+                        monthly_agg['Selected Revenue (SAR)'] = 'sum'
+                        rev_col_month = 'Selected Revenue (SAR)'
+                    else:
+                        monthly_agg['Revenue (SAR)'] = 'sum'
+                        rev_col_month = 'Revenue (SAR)'
+
+                    monthly_campaigns = onetime_df.groupby('Month').agg(monthly_agg).reset_index()
                     
                     monthly_campaigns = monthly_campaigns.rename(columns={'Campaign Name': 'Unique Campaigns'})
                     monthly_campaigns = monthly_campaigns.sort_values('Month', ascending=False)
@@ -4588,7 +4612,7 @@ if uploaded_file is not None:
                     monthly_display['Sent'] = monthly_display['Sent'].apply(format_metric)
                     monthly_display['Delivered'] = monthly_display['Delivered'].apply(format_metric)
                     monthly_display['Unique Conversions'] = monthly_display['Unique Conversions'].apply(format_metric)
-                    monthly_display['Revenue (SAR)'] = monthly_display['Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
+                    monthly_display[rev_col_month] = monthly_display[rev_col_month].apply(lambda x: format_metric(x, "SAR"))
                     
                     st.dataframe(monthly_display, use_container_width=True, hide_index=True)
                     
