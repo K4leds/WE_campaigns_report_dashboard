@@ -4031,26 +4031,30 @@ if uploaded_file is not None:
                 
                 with col1:
                     # Revenue by channel - use consistent channel colors
+                    rev_display_name = get_selected_revenue_display_name(revenue_attribution)
                     fig_channel_revenue = px.bar(
                         channel_data,
                         x='Channel',
                         y=revenue_col,
-                        title="Revenue by Channel",
+                        title=f"{rev_display_name} by Channel",
                         color='Channel',
                         color_discrete_map=CHANNEL_COLORS,
+                        labels={revenue_col: rev_display_name}
                     )
                     fig_channel_revenue.update_layout(showlegend=False)
                     st.plotly_chart(fig_channel_revenue, use_container_width=True)
 
                 with col2:
                     # Conversions by channel - use consistent channel colors
+                    conv_display_name = get_selected_conversion_display_name(conversion_attribution)
                     fig_channel_conv = px.bar(
                         channel_data,
                         x='Channel',
                         y='Unique Conversions',
-                        title="Conversions by Channel",
+                        title=f"{conv_display_name} by Channel",
                         color='Channel',
                         color_discrete_map=CHANNEL_COLORS,
+                        labels={'Unique Conversions': conv_display_name}
                     )
                     fig_channel_conv.update_layout(showlegend=False)
                     st.plotly_chart(fig_channel_conv, use_container_width=True)
@@ -4127,17 +4131,18 @@ if uploaded_file is not None:
             treemap_df = treemap_df[treemap_df[rev_col] > 0]
 
             if not treemap_df.empty:
+                rev_display_name = get_selected_revenue_display_name(revenue_attribution)
                 fig_treemap = px.treemap(
                     treemap_df,
                     path=['Channel', 'Campaign Name'],
                     values=rev_col,
                     color='Channel',
                     color_discrete_map=CHANNEL_COLORS,
-                    title='Revenue by Channel & Campaign',
+                    title=f'{rev_display_name} by Channel & Campaign',
                 )
                 fig_treemap.update_traces(
                     textinfo='label+value+percent parent',
-                    hovertemplate='<b>%{label}</b><br>Revenue: %{value:,.0f} SAR<br>%{percentParent:.1%} of parent<extra></extra>',
+                    hovertemplate='<b>%{label}</b><br>' + rev_display_name + ': %{value:,.0f} SAR<br>%{percentParent:.1%} of parent<extra></extra>',
                 )
                 fig_treemap.update_layout(margin=dict(l=10, r=10, t=50, b=10))
                 st.plotly_chart(fig_treemap, use_container_width=True)
@@ -4160,12 +4165,13 @@ if uploaded_file is not None:
             time_channel.columns = ['Week', 'Channel', 'Revenue']
 
             if not time_channel.empty:
+                rev_display_name = get_selected_revenue_display_name(revenue_attribution)
                 fig_area = px.area(
                     time_channel,
                     x='Week', y='Revenue', color='Channel',
                     color_discrete_map=CHANNEL_COLORS,
-                    title='Weekly Revenue by Channel',
-                    labels={'Revenue': 'Revenue (SAR)', 'Week': ''},
+                    title=f'Weekly {rev_display_name}',
+                    labels={'Revenue': f'{rev_display_name} (SAR)', 'Week': ''},
                 )
                 fig_area.update_layout(hovermode='x unified')
                 st.plotly_chart(fig_area, use_container_width=True)
@@ -4450,7 +4456,7 @@ if uploaded_file is not None:
                 # Format for display
                 # Use selected revenue column if available
                 revenue_col = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in onetime_summary.columns else 'Revenue (SAR)'
-                display_cols = ['Campaign Name', 'Channel', 'Day', 'Sent', 'Delivered', 'Delivery Rate', 
+                display_cols = ['Campaign Name', 'Channel', 'Sent', 'Delivered', 'Delivery Rate', 
                               'Unique Clicks', 'CTR', 'Unique Conversions', 'Conversion Rate', revenue_col]
                 onetime_display = onetime_summary[display_cols].copy()
                 
@@ -4463,8 +4469,9 @@ if uploaded_file is not None:
                 onetime_display['Delivery Rate'] = onetime_display['Delivery Rate'].apply(lambda x: f"{x:.1%}")
                 onetime_display['CTR'] = onetime_display['CTR'].apply(lambda x: f"{x:.2%}")
                 onetime_display['Conversion Rate'] = onetime_display['Conversion Rate'].apply(lambda x: f"{x:.2%}")
-                onetime_display['Day'] = onetime_display['Day'].dt.strftime('%Y-%m-%d')
                 
+                # Rename columns to show actual attribution model
+                onetime_display = onetime_display.rename(columns=attribution_rename)
                 st.dataframe(onetime_display, use_container_width=True, hide_index=True)
                 
                 # Optional: Channel breakdown for one-time campaigns
@@ -4496,6 +4503,8 @@ if uploaded_file is not None:
                     channel_display[rev_col_channel] = channel_display[rev_col_channel].apply(lambda x: format_metric(x, "SAR"))
                     channel_display['Delivery Rate'] = channel_display['Delivery Rate'].apply(lambda x: f"{x:.1%}")
                     
+                    # Rename columns to show actual attribution model
+                    channel_display = channel_display.rename(columns=attribution_rename)
                     st.dataframe(channel_display[['Channel', 'Sent', 'Delivered', 'Delivery Rate', 'Conversions', rev_col_channel]], 
                                use_container_width=True, hide_index=True)
             else:
@@ -4541,6 +4550,8 @@ if uploaded_file is not None:
                     monthly_display['Unique Conversions'] = monthly_display['Unique Conversions'].apply(format_metric)
                     monthly_display[rev_col_month] = monthly_display[rev_col_month].apply(lambda x: format_metric(x, "SAR"))
                     
+                    # Rename columns to show actual attribution model
+                    monthly_display = monthly_display.rename(columns=attribution_rename)
                     st.dataframe(monthly_display, use_container_width=True, hide_index=True)
                     
                     # Optional chart
@@ -4620,8 +4631,11 @@ if uploaded_file is not None:
             chan_perf_display['Impression-Through Revenue (SAR)'] = chan_perf_display['Impression-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
             chan_perf_display['Click-Through Revenue (SAR)'] = chan_perf_display['Click-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
             st.dataframe(style_total_row(chan_perf_display), use_container_width=True, hide_index=True)
-            fig_chan = px.bar(chan_perf, x='Channel', y='Unique Conversions', title="Conversions by Channel for Selected Campaigns",
-                              color='Channel', color_discrete_map=CHANNEL_COLORS)
+            conv_display_name = get_selected_conversion_display_name(conversion_attribution)
+            fig_chan = px.bar(chan_perf, x='Channel', y='Unique Conversions', 
+                              title=f"{conv_display_name} by Channel for Selected Campaigns",
+                              color='Channel', color_discrete_map=CHANNEL_COLORS,
+                              labels={'Unique Conversions': conv_display_name})
             fig_chan.update_layout(showlegend=False)
             st.plotly_chart(fig_chan, use_container_width=True)
             
@@ -6415,9 +6429,11 @@ if uploaded_file is not None:
             st.dataframe(style_total_row(chan_perf_jour_display), use_container_width=True, hide_index=True)
             
             # Chart data - chan_perf_jour is already numeric, no parsing needed
+            conv_display_name = get_selected_conversion_display_name(conversion_attribution)
             fig_chan_jour = px.bar(chan_perf_jour, x='Channel', y='Unique Conversions',
-                                   title="Conversions by Channel for Selected Journeys",
-                                   color='Channel', color_discrete_map=CHANNEL_COLORS)
+                                   title=f"{conv_display_name} by Channel for Selected Journeys",
+                                   color='Channel', color_discrete_map=CHANNEL_COLORS,
+                                   labels={'Unique Conversions': conv_display_name})
             fig_chan_jour.update_layout(showlegend=False)
             st.plotly_chart(fig_chan_jour, use_container_width=True)
             
@@ -7348,7 +7364,8 @@ if uploaded_file is not None:
             with esp_col2:
                 if 'Revenue (SAR)' in esp_df.columns:
                     fig_esp_rev = px.bar(esp_df, x='ESP/SSP/WSP/RSP name', y='Revenue (SAR)',
-                                         title="Revenue by ESP", color_discrete_sequence=COLOR_SEQUENCE)
+                                         title="Send-Through Revenue by ESP", color_discrete_sequence=COLOR_SEQUENCE,
+                                         labels={'Revenue (SAR)': 'Send-Through Revenue (SAR)'})
                     st.plotly_chart(fig_esp_rev, use_container_width=True)
 
     elif page == "Time Series":
