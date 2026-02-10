@@ -17,53 +17,9 @@ except ImportError:
 import warnings
 warnings.filterwarnings('ignore')
 
-# === CENTRALIZED CONFIGURATION ===
-# Channel cost per 1000 sends (SAR) - adjust these to match your actual rates
-CHANNEL_COSTS = {
-    'Email': 1.2,       # SAR per 1000 emails
-    'SMS': 43.2,        # SAR per 1000 SMS
-    'WhatsApp': 200.0,  # SAR per 1000 WhatsApp messages
-    'Push': 0.0,
-    'Mobile Push': 0.0,
-    'App Push': 0.0,
-    'Web Push': 0.0,
-    'In-App': 0.0,
-    'On-Site': 0.0,
-    'Onsite': 0.0,
-    'On-site': 0.0,
-}
-
-# Minimum columns required in uploaded CSV for the dashboard to work
-REQUIRED_COLUMNS = ['Day', 'Campaign Name', 'Channel', 'Sent', 'Delivered']
-
-# === CHART THEME & COLORS ===
-# Professional color palette for client-ready charts
-COLORS = {
-    'primary': '#2563EB',      # Blue
-    'secondary': '#7C3AED',    # Purple
-    'success': '#059669',      # Green
-    'warning': '#D97706',      # Amber
-    'danger': '#DC2626',       # Red
-    'info': '#0891B2',         # Cyan
-    'muted': '#6B7280',        # Gray
-}
-# Ordered sequence for multi-series charts
-COLOR_SEQUENCE = ['#2563EB', '#059669', '#D97706', '#DC2626', '#7C3AED', '#0891B2',
-                  '#4F46E5', '#0D9488', '#EA580C', '#E11D48', '#9333EA', '#0284C7']
-# Channel-specific colors for consistent channel identity across all charts
-CHANNEL_COLORS = {
-    'Email': '#2563EB',
-    'SMS': '#7C3AED',
-    'WhatsApp': '#059669',
-    'Push': '#D97706',
-    'Mobile Push': '#EA580C',
-    'App Push': '#EA580C',
-    'Web Push': '#0891B2',
-    'In-App': '#4F46E5',
-    'On-Site': '#0D9488',
-    'Onsite': '#0D9488',
-    'On-site': '#0D9488',
-}
+# Import centralized configuration and attribution logic
+from config import CHANNEL_COSTS, REQUIRED_COLUMNS, COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
+from attribution import apply_attribution, apply_dimension_filters, get_attribution_display_label, get_selected_revenue_display_name, get_selected_conversion_display_name
 
 # Register a global Plotly template for consistent styling
 import plotly.io as pio
@@ -361,43 +317,31 @@ def channel_analysis(df):
         'Delivered': 'sum',
         'Unique Impressions': 'sum',
         'Unique Clicks': 'sum',
-        'Unique Conversions': 'sum'
+        'Selected Conversions': 'sum' if 'Selected Conversions' in df.columns else 'Unique Conversions',
     }
+    # Remove the old conversions field if we have the selected one
+    if 'Selected Conversions' not in df.columns:
+        agg_dict['Unique Conversions'] = 'sum'
+    
     # Only add columns that exist in the dataframe
     if 'Total Conversions' in df.columns:
         agg_dict['Total Conversions'] = 'sum'
-    if 'Revenue (SAR)' in df.columns:
+    if 'Selected Revenue (SAR)' in df.columns:
+        agg_dict['Selected Revenue (SAR)'] = 'sum'
+    elif 'Revenue (SAR)' in df.columns:
         agg_dict['Revenue (SAR)'] = 'sum'
+    
+    # Keep original columns for reference but they won't be displayed by default
     if 'Click-Through Revenue (SAR)' in df.columns:
         agg_dict['Click-Through Revenue (SAR)'] = 'sum'
     if 'Impression-Through Revenue (SAR)' in df.columns:
         agg_dict['Impression-Through Revenue (SAR)'] = 'sum'
-    # Include attribution-selected columns if present
-    if 'Selected Revenue (SAR)' in df.columns:
-        agg_dict['Selected Revenue (SAR)'] = 'sum'
-    if 'Selected Conversions' in df.columns:
-        agg_dict['Selected Conversions'] = 'sum'
 
     result = df.groupby('Channel').agg(agg_dict).reset_index()
 
-    # Calculate AOV for each revenue type
-    if 'Revenue (SAR)' in result.columns:
-        result['AOV (SAR)'] = np.where(
-            result['Unique Conversions'] > 0,
-            result['Revenue (SAR)'] / result['Unique Conversions'], 0
-        )
-    if 'Click-Through Revenue (SAR)' in result.columns:
-        result['AOV Click-Through (SAR)'] = np.where(
-            result['Unique Conversions'] > 0,
-            result['Click-Through Revenue (SAR)'] / result['Unique Conversions'], 0
-        )
-    if 'Impression-Through Revenue (SAR)' in result.columns:
-        result['AOV Impression-Through (SAR)'] = np.where(
-            result['Unique Conversions'] > 0,
-            result['Impression-Through Revenue (SAR)'] / result['Unique Conversions'], 0
-        )
+    # Calculate AOV using selected metrics
     if 'Selected Revenue (SAR)' in result.columns and 'Selected Conversions' in result.columns:
-        result['AOV Selected (SAR)'] = np.where(
+        result['AOV (SAR)'] = np.where(
             result['Selected Conversions'] > 0,
             result['Selected Revenue (SAR)'] / result['Selected Conversions'], 0
         )
@@ -419,17 +363,25 @@ def esp_analysis(df):
     agg_dict = {
         'Sent': 'sum',
         'Delivered': 'sum',
-        'Unique Conversions': 'sum'
+        'Selected Conversions': 'sum' if 'Selected Conversions' in df.columns else 'Unique Conversions',
     }
+    if 'Selected Conversions' not in df.columns:
+        agg_dict['Unique Conversions'] = 'sum'
+    
     # Only add columns that exist in the dataframe
     if 'Total Conversions' in df.columns:
         agg_dict['Total Conversions'] = 'sum'
-    if 'Revenue (SAR)' in df.columns:
+    if 'Selected Revenue (SAR)' in df.columns:
+        agg_dict['Selected Revenue (SAR)'] = 'sum'
+    elif 'Revenue (SAR)' in df.columns:
         agg_dict['Revenue (SAR)'] = 'sum'
+    
+    # Keep original columns for reference
     if 'Click-Through Revenue (SAR)' in df.columns:
         agg_dict['Click-Through Revenue (SAR)'] = 'sum'
     if 'Impression-Through Revenue (SAR)' in df.columns:
         agg_dict['Impression-Through Revenue (SAR)'] = 'sum'
+        
     return df.groupby('ESP/SSP/WSP/RSP name').agg(agg_dict).reset_index()
 
 def ab_testing_analysis(df):
@@ -512,7 +464,7 @@ def calculate_journey_health_score(df_journey, all_journeys_df=None):
 
         # Compute simple activity metrics for this journey
         total_sent_j = df_journey['Sent'].sum() if 'Sent' in df_journey.columns else 0
-        total_conversions_j = df_journey['Unique Conversions'].sum() if 'Unique Conversions' in df_journey.columns else 0
+        total_conversions_j = df_journey['Selected Conversions'].sum() if 'Selected Conversions' in df_journey.columns else (df_journey['Unique Conversions'].sum() if 'Unique Conversions' in df_journey.columns else 0)
         unique_days = df_journey['Reporting Period Start Date'].nunique() if 'Reporting Period Start Date' in df_journey.columns else len(df_journey)
 
         if total_sent_j < min_sent or total_conversions_j < min_conversions or unique_days < min_days:
@@ -623,7 +575,7 @@ def calculate_journey_health_score(df_journey, all_journeys_df=None):
         conv_clicks = []
         for name, group in journey_groups:
             if 'Unique Conversions' in group.columns and 'Unique Clicks' in group.columns:
-                conversions = group['Unique Conversions'].sum()
+                conversions = group['Selected Conversions'].sum() if 'Selected Conversions' in group.columns else group['Unique Conversions'].sum()
                 clicks = group['Unique Clicks'].sum()
                 if clicks > 0:
                     conv_conversions.append(conversions)
@@ -633,8 +585,8 @@ def calculate_journey_health_score(df_journey, all_journeys_df=None):
         rpc_values = []
         for name, group in journey_groups:
             if 'Revenue (SAR)' in group.columns and 'Unique Conversions' in group.columns:
-                revenue = group['Revenue (SAR)'].sum()
-                conversions = group['Unique Conversions'].sum()
+                revenue = group['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in group.columns else group['Revenue (SAR)'].sum()
+                conversions = group['Selected Conversions'].sum() if 'Selected Conversions' in group.columns else group['Unique Conversions'].sum()
                 if conversions > 0:
                     rpc = revenue / conversions
                     if rpc > 0:  # Only positive RPC values
@@ -678,10 +630,9 @@ def calculate_journey_health_score(df_journey, all_journeys_df=None):
         scores['engagement'] = calculate_percentile_score(smoothed_ctr, baseline_ctr)
         
         # 3. Conversion Performance Score (30% weight) - ALWAYS CALCULATE FROM RAW FIELDS
-        # Always calculate conversion rate from raw Unique Conversions / Unique Clicks
-        # Never use pre-calculated Conversion Rate column as it may be incorrect
+        # Use Selected Conversions if available (attribution-aware), otherwise fall back to Unique Conversions
         if 'Unique Conversions' in df_journey.columns and 'Unique Clicks' in df_journey.columns:
-            total_conversions = df_journey['Unique Conversions'].sum()
+            total_conversions = df_journey['Selected Conversions'].sum() if 'Selected Conversions' in df_journey.columns else df_journey['Unique Conversions'].sum()
             total_clicks = df_journey['Unique Clicks'].sum()
             # Apply Empirical Bayes smoothing
             conv_rate = beta_posterior_mean(total_conversions, total_clicks, conv_alpha, conv_beta)
@@ -698,9 +649,10 @@ def calculate_journey_health_score(df_journey, all_journeys_df=None):
         scores['conversion'] = calculate_percentile_score(conv_rate, baseline_conv)
         
         # 4. Revenue Efficiency Score (20% weight) - LOG-TRANSFORMED RPC
+        # Use Selected Revenue and Selected Conversions if available (attribution-aware)
         if 'Revenue (SAR)' in df_journey.columns and 'Unique Conversions' in df_journey.columns:
-            total_revenue = df_journey['Revenue (SAR)'].sum()
-            total_conversions = df_journey['Unique Conversions'].sum()
+            total_revenue = df_journey['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in df_journey.columns else df_journey['Revenue (SAR)'].sum()
+            total_conversions = df_journey['Selected Conversions'].sum() if 'Selected Conversions' in df_journey.columns else df_journey['Unique Conversions'].sum()
             revenue_per_conversion = (total_revenue / total_conversions) if total_conversions > 0 else 0
             
             # Log-transform for better distribution (reduces outlier dominance)
@@ -813,7 +765,7 @@ def calculate_campaign_health_score(df_campaign, all_campaigns_df=None):
 
         # Compute simple activity metrics for this campaign
         total_sent_c = df_campaign['Sent'].sum() if 'Sent' in df_campaign.columns else 0
-        total_conversions_c = df_campaign['Unique Conversions'].sum() if 'Unique Conversions' in df_campaign.columns else 0
+        total_conversions_c = df_campaign['Selected Conversions'].sum() if 'Selected Conversions' in df_campaign.columns else (df_campaign['Unique Conversions'].sum() if 'Unique Conversions' in df_campaign.columns else 0)
         unique_days = df_campaign['Reporting Period Start Date'].nunique() if 'Reporting Period Start Date' in df_campaign.columns else len(df_campaign)
 
         if total_sent_c < min_sent or total_conversions_c < min_conversions or unique_days < min_days:
@@ -924,7 +876,7 @@ def calculate_campaign_health_score(df_campaign, all_campaigns_df=None):
         conv_clicks = []
         for name, group in campaign_groups:
             if 'Unique Conversions' in group.columns and 'Unique Clicks' in group.columns:
-                conversions = group['Unique Conversions'].sum()
+                conversions = group['Selected Conversions'].sum() if 'Selected Conversions' in group.columns else group['Unique Conversions'].sum()
                 clicks = group['Unique Clicks'].sum()
                 if clicks > 0:
                     conv_conversions.append(conversions)
@@ -934,8 +886,8 @@ def calculate_campaign_health_score(df_campaign, all_campaigns_df=None):
         rpc_values = []
         for name, group in campaign_groups:
             if 'Revenue (SAR)' in group.columns and 'Unique Conversions' in group.columns:
-                revenue = group['Revenue (SAR)'].sum()
-                conversions = group['Unique Conversions'].sum()
+                revenue = group['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in group.columns else group['Revenue (SAR)'].sum()
+                conversions = group['Selected Conversions'].sum() if 'Selected Conversions' in group.columns else group['Unique Conversions'].sum()
                 if conversions > 0:
                     rpc = revenue / conversions
                     if rpc > 0:  # Only positive RPC values
@@ -995,7 +947,7 @@ def calculate_campaign_health_score(df_campaign, all_campaigns_df=None):
                 baseline_conv = pd.Series([conv_rate])
         elif 'Unique Conversions' in df_campaign.columns and 'Unique Clicks' in df_campaign.columns:
             # Fallback: manual calculation (but this may not be reliable for some data)
-            total_conversions = df_campaign['Unique Conversions'].sum()
+            total_conversions = df_campaign['Selected Conversions'].sum() if 'Selected Conversions' in df_campaign.columns else df_campaign['Unique Conversions'].sum()
             total_clicks = df_campaign['Unique Clicks'].sum()
             # Apply Empirical Bayes smoothing for manual calculations
             conv_rate = beta_posterior_mean(total_conversions, total_clicks, conv_alpha, conv_beta)
@@ -1013,8 +965,8 @@ def calculate_campaign_health_score(df_campaign, all_campaigns_df=None):
 
         # 4. Revenue Efficiency Score (20% weight) - LOG-TRANSFORMED RPC
         if 'Revenue (SAR)' in df_campaign.columns and 'Unique Conversions' in df_campaign.columns:
-            total_revenue = df_campaign['Revenue (SAR)'].sum()
-            total_conversions = df_campaign['Unique Conversions'].sum()
+            total_revenue = df_campaign['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in df_campaign.columns else df_campaign['Revenue (SAR)'].sum()
+            total_conversions = df_campaign['Selected Conversions'].sum() if 'Selected Conversions' in df_campaign.columns else df_campaign['Unique Conversions'].sum()
             revenue_per_conversion = (total_revenue / total_conversions) if total_conversions > 0 else 0
 
             # Log-transform for better distribution (reduces outlier dominance)
@@ -2605,11 +2557,11 @@ def calculate_period_metrics(period_data, period_days, conversion_attribution='T
     
     # Calculate rates
     metrics['ctr'] = (metrics['total_clicks'] / metrics['total_impressions']) if metrics['total_impressions'] > 0 else 0
-    metrics['conversion_rate'] = (metrics['total_conversions'] / metrics['total_clicks']) if metrics['total_clicks'] > 0 else 0
+    metrics['conversion_rate'] = (metrics['selected_conversions'] / metrics['total_clicks']) if metrics['total_clicks'] > 0 else 0
     metrics['delivery_rate'] = (metrics['total_delivered'] / metrics['total_sent']) if metrics['total_sent'] > 0 else 0
     
     # Revenue per conversion (AOV)
-    metrics['revenue_per_conversion'] = (metrics['total_revenue'] / metrics['total_conversions']) if metrics['total_conversions'] > 0 else 0
+    metrics['revenue_per_conversion'] = (metrics['selected_revenue'] / metrics['selected_conversions']) if metrics['selected_conversions'] > 0 else 0
     metrics['aov'] = metrics['revenue_per_conversion']  # Same as AOV
     
     # Revenue Per Click (RPC)
@@ -2632,7 +2584,7 @@ def calculate_period_metrics(period_data, period_days, conversion_attribution='T
     metrics['revenue_per_send'] = (metrics['selected_revenue'] / metrics['total_sent']) if metrics['total_sent'] > 0 else 0
     
     # Cost Per Conversion
-    metrics['cost_per_conversion'] = (metrics['total_cost'] / metrics['total_conversions']) if metrics['total_conversions'] > 0 else 0
+    metrics['cost_per_conversion'] = (metrics['total_cost'] / metrics['selected_conversions']) if metrics['selected_conversions'] > 0 else 0
     
     # Cost Per Click
     metrics['cost_per_click'] = (metrics['total_cost'] / metrics['total_clicks']) if metrics['total_clicks'] > 0 else 0
@@ -2644,8 +2596,8 @@ def calculate_period_metrics(period_data, period_days, conversion_attribution='T
     metrics['profit_margin'] = (metrics['profit'] / metrics['selected_revenue']) if metrics['selected_revenue'] > 0 else 0
     
     # Daily averages
-    metrics['daily_revenue'] = metrics['total_revenue'] / period_days if period_days > 0 else 0
-    metrics['daily_conversions'] = metrics['total_conversions'] / period_days if period_days > 0 else 0
+    metrics['daily_revenue'] = metrics['selected_revenue'] / period_days if period_days > 0 else 0
+    metrics['daily_conversions'] = metrics['selected_conversions'] / period_days if period_days > 0 else 0
     metrics['daily_clicks'] = metrics['total_clicks'] / period_days if period_days > 0 else 0
     metrics['daily_sent'] = metrics['total_sent'] / period_days if period_days > 0 else 0
     metrics['daily_cost'] = metrics['total_cost'] / period_days if period_days > 0 else 0
@@ -2847,7 +2799,7 @@ def analyze_individual_journey(journey_name, filtered_df):
             else:
                 for name, group in journey_groups:
                     if 'Unique Conversions' in group.columns and 'Unique Clicks' in group.columns:
-                        conversions = group['Unique Conversions'].sum()
+                        conversions = group['Selected Conversions'].sum() if 'Selected Conversions' in group.columns else group['Unique Conversions'].sum()
                         clicks = group['Unique Clicks'].sum()
                         if clicks > 0:
                             conv_rates.append(conversions / clicks)
@@ -2861,8 +2813,8 @@ def analyze_individual_journey(journey_name, filtered_df):
             rpcs = []
             for name, group in journey_groups:
                 if 'Revenue (SAR)' in group.columns and 'Unique Conversions' in group.columns:
-                    revenue = group['Revenue (SAR)'].sum()
-                    conversions = group['Unique Conversions'].sum()
+                    revenue = group['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in group.columns else group['Revenue (SAR)'].sum()
+                    conversions = group['Selected Conversions'].sum() if 'Selected Conversions' in group.columns else group['Unique Conversions'].sum()
                     if conversions > 0:
                         rpcs.append(revenue / conversions)
             
@@ -2959,45 +2911,16 @@ if uploaded_file is not None:
 
     def _attribution_display(col_name):
         """Map internal 'Selected Revenue/Conversions' column names to the user-selected attribution label."""
-        return attribution_rename.get(col_name, col_name)
+        return get_attribution_display_label(col_name, revenue_attribution, conversion_attribution)
 
     # Shared attribution + filter helpers (single source of truth)
     def _apply_attribution(df, revenue_attribution, conversion_attribution):
         """Map selected attribution model to 'Selected Revenue/Conversions' columns."""
-        if 'Revenue (SAR)' in df.columns:
-            if revenue_attribution == "Click-Through" and 'Click-Through Revenue (SAR)' in df.columns:
-                df['Selected Revenue (SAR)'] = df['Click-Through Revenue (SAR)']
-            elif revenue_attribution == "Impression-Through" and 'Impression-Through Revenue (SAR)' in df.columns:
-                df['Selected Revenue (SAR)'] = df['Impression-Through Revenue (SAR)']
-            else:
-                df['Selected Revenue (SAR)'] = df['Revenue (SAR)']
-        else:
-            df['Selected Revenue (SAR)'] = 0
-
-        if 'Unique Conversions' in df.columns:
-            if conversion_attribution == "Click-Through" and 'Unique Click-Through Conversions' in df.columns:
-                df['Selected Conversions'] = df['Unique Click-Through Conversions']
-            elif conversion_attribution == "Impression-Through" and 'Unique Impression-Through Conversions' in df.columns:
-                df['Selected Conversions'] = df['Unique Impression-Through Conversions']
-            else:
-                df['Selected Conversions'] = df['Unique Conversions']
-        else:
-            df['Selected Conversions'] = 0
-        return df
+        return apply_attribution(df, revenue_attribution, conversion_attribution)
 
     def _apply_dimension_filters(df, channels, campaign_types, campaigns, segments, journeys):
         """Apply sidebar dimension filters."""
-        if channels:
-            df = df[df['Channel'].isin(channels)]
-        if campaign_types and 'Type of Campaign' in df.columns:
-            df = df[df['Type of Campaign'].isin(campaign_types)]
-        if campaigns:
-            df = df[df['Campaign Name'].isin(campaigns)]
-        if segments:
-            df = df[df['Segment Name'].isin(segments)]
-        if journeys:
-            df = df[df['Journey Name'].isin(journeys)]
-        return df
+        return apply_dimension_filters(df, channels, campaign_types, campaigns, segments, journeys)
 
     @st.cache_data
     def apply_filters_and_attribution(df, revenue_attribution, conversion_attribution, date_range, channels, campaign_types, campaigns, segments, journeys):
@@ -3111,8 +3034,8 @@ if uploaded_file is not None:
             met_col1, met_col2, met_col3 = st.columns(3)
             
             with met_col1:
-                st.metric("💰 Total Revenue", format_metric(metrics.get('total_revenue', 0), "SAR"))
-                st.metric("🔄 Total Conversions", format_metric(metrics.get('total_conversions', 0)))
+                st.metric(f"💰 {selected_rev_label}", format_metric(metrics.get('total_revenue', 0), "SAR"))
+                st.metric(f"🔄 {selected_conv_label}", format_metric(metrics.get('total_conversions', 0)))
             
             with met_col2:
                 st.metric("📧 Total Sent", format_metric(metrics.get('total_sent', 0)))
@@ -3467,14 +3390,14 @@ if uploaded_file is not None:
             with col1:
                 change_data = metric_changes['selected_revenue']
                 st.metric(
-                    "Total Revenue", 
+                    selected_rev_label, 
                     f"{change_data['current']:,.0f} SAR",
                     delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
                     delta_color="normal" if change_data['pct_change'] >= 0 else "inverse"
                 )
                 change_data = metric_changes['selected_conversions']
                 st.metric(
-                    "Total Conversions", 
+                    selected_conv_label, 
                     f"{change_data['current']:,.0f}",
                     delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
                     delta_color="normal" if change_data['pct_change'] >= 0 else "inverse"
@@ -3667,9 +3590,9 @@ if uploaded_file is not None:
             col1, col2, col3 = st.columns(3)
             with col1:
                 total_revenue = filtered_df['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in filtered_df.columns else filtered_df['Revenue (SAR)'].sum()
-                st.metric("Total Revenue", f"{total_revenue:,.0f} SAR")
+                st.metric(selected_rev_label, f"{total_revenue:,.0f} SAR")
                 total_conv = filtered_df['Selected Conversions'].sum() if 'Selected Conversions' in filtered_df.columns else filtered_df['Unique Conversions'].sum()
-                st.metric("Total Unique Conversions", f"{total_conv:,.0f}")
+                st.metric(selected_conv_label, f"{total_conv:,.0f}")
             with col2:
                 st.metric("Total Unique Clicks", f"{filtered_df['Unique Clicks'].sum():,.0f}")
                 st.metric("Total Unique Impressions", f"{filtered_df['Unique Impressions'].sum():,.0f}")
@@ -4449,15 +4372,19 @@ if uploaded_file is not None:
             rev_col_for_type = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in type_chart_data.columns else 'Revenue (SAR)'
             with type_col1:
                 if rev_col_for_type in type_chart_data.columns:
+                    rev_display_name = get_selected_revenue_display_name(revenue_attribution)
                     fig_type_rev = px.bar(type_chart_data, x='Type of Campaign', y=rev_col_for_type,
-                                          title="Revenue by Campaign Type", color='Type of Campaign',
-                                          color_discrete_sequence=COLOR_SEQUENCE)
+                                          title=f"{rev_display_name} by Campaign Type", color='Type of Campaign',
+                                          color_discrete_sequence=COLOR_SEQUENCE,
+                                          labels={rev_col_for_type: rev_display_name})
                     fig_type_rev.update_layout(showlegend=False)
                     st.plotly_chart(fig_type_rev, use_container_width=True)
             with type_col2:
+                conv_display_name = get_selected_conversion_display_name(conversion_attribution)
                 fig_type_conv = px.bar(type_chart_data, x='Type of Campaign', y='Unique Conversions',
-                                       title="Conversions by Campaign Type", color='Type of Campaign',
-                                       color_discrete_sequence=COLOR_SEQUENCE)
+                                       title=f"{conv_display_name} by Campaign Type", color='Type of Campaign',
+                                       color_discrete_sequence=COLOR_SEQUENCE,
+                                       labels={'Unique Conversions': conv_display_name})
                 fig_type_conv.update_layout(showlegend=False)
                 st.plotly_chart(fig_type_conv, use_container_width=True)
 
@@ -4639,9 +4566,11 @@ if uploaded_file is not None:
             with col3:
                 st.metric("Total Clicks", format_metric(camp_details['Unique Clicks'].sum()))
             with col4:
-                st.metric("Total Conversions", format_metric(camp_details['Unique Conversions'].sum()))
+                conv_total = camp_details['Selected Conversions'].sum() if 'Selected Conversions' in camp_details.columns else camp_details['Unique Conversions'].sum()
+                st.metric(selected_conv_label, format_metric(conv_total))
             with col5:
-                st.metric("Send-Through Revenue", format_metric(camp_details['Revenue (SAR)'].sum(), "SAR"))
+                rev_total = camp_details['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in camp_details.columns else camp_details['Revenue (SAR)'].sum()
+                st.metric(selected_rev_label, format_metric(rev_total, "SAR"))
             with col6:
                 st.metric("Click-Through Revenue", format_metric(camp_details['Click-Through Revenue (SAR)'].sum(), "SAR"))
             
@@ -4649,8 +4578,8 @@ if uploaded_file is not None:
             st.markdown("#### 💰 Business Intelligence")
             biz_col1, biz_col2, biz_col3, biz_col4 = st.columns(4)
             
-            total_revenue = camp_details['Revenue (SAR)'].sum()
-            total_conversions = camp_details['Unique Conversions'].sum()
+            total_revenue = camp_details['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in camp_details.columns else camp_details['Revenue (SAR)'].sum()
+            total_conversions = camp_details['Selected Conversions'].sum() if 'Selected Conversions' in camp_details.columns else camp_details['Unique Conversions'].sum()
             total_clicks = camp_details['Unique Clicks'].sum()
             
             with biz_col1:
@@ -5078,15 +5007,15 @@ if uploaded_file is not None:
                 st.metric("🖱️ CTR", f"{ctr:.2f}%")
             
             with col3:
-                total_conversions = breakdown_data['Unique Conversions'].sum()
-                st.metric("💰 Total Conversions", format_metric(total_conversions))
+                total_conversions = breakdown_data['Selected Conversions'].sum() if 'Selected Conversions' in breakdown_data.columns else breakdown_data['Unique Conversions'].sum()
+                st.metric(selected_conv_label, format_metric(total_conversions))
                 
                 conversion_rate = (total_conversions / total_clicks * 100) if total_clicks > 0 else 0
                 st.metric("📈 Conversion Rate", f"{conversion_rate:.2f}%")
             
             with col4:
-                total_revenue = breakdown_data['Revenue (SAR)'].sum()
-                st.metric("💵 Total Revenue", format_metric(total_revenue, "SAR"))
+                total_revenue = breakdown_data['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in breakdown_data.columns else breakdown_data['Revenue (SAR)'].sum()
+                st.metric(selected_rev_label, format_metric(total_revenue, "SAR"))
                 
                 rpc = (total_revenue / total_conversions) if total_conversions > 0 else 0
                 st.metric("💰 Revenue/Conversion", format_metric(rpc, "SAR"))
@@ -5097,8 +5026,8 @@ if uploaded_file is not None:
             # Calculate portfolio averages
             portfolio_delivery_rate = (filtered_df['Delivered'].sum() / filtered_df['Sent'].sum() * 100) if filtered_df['Sent'].sum() > 0 else 0
             portfolio_ctr = (filtered_df['Unique Clicks'].sum() / filtered_df['Unique Impressions'].sum() * 100) if filtered_df['Unique Impressions'].sum() > 0 else 0
-            portfolio_conversion_rate = (filtered_df['Unique Conversions'].sum() / filtered_df['Unique Clicks'].sum() * 100) if filtered_df['Unique Clicks'].sum() > 0 else 0
-            portfolio_rpc = (filtered_df['Revenue (SAR)'].sum() / filtered_df['Unique Conversions'].sum()) if filtered_df['Unique Conversions'].sum() > 0 else 0
+            portfolio_conversion_rate = (filtered_df['Selected Conversions'].sum() / filtered_df['Unique Clicks'].sum() * 100) if filtered_df['Unique Clicks'].sum() > 0 else 0
+            portfolio_rpc = (filtered_df['Selected Revenue (SAR)'].sum() / filtered_df['Selected Conversions'].sum()) if filtered_df['Selected Conversions'].sum() > 0 else 0
             
             # Compare campaign vs portfolio
             comparison_data = {
@@ -5744,7 +5673,7 @@ if uploaded_file is not None:
                             st.markdown("**💵 Revenue Performance:**")
                             col1, col2, col3, col4 = st.columns(4)
                             with col1:
-                                st.metric("Total Revenue", format_metric(revenue_data['total_revenue'], "SAR"))
+                                st.metric(selected_rev_label, format_metric(revenue_data['total_revenue'], "SAR"))
                             with col2:
                                 st.metric("Conversions", format_metric(revenue_data['total_conversions']))
                             with col3:
@@ -6449,7 +6378,7 @@ if uploaded_file is not None:
             with col2:
                 st.metric("Total Delivered", format_metric(jour_details['Delivered'].sum()))
             with col3:
-                st.metric("Total Conversions", format_metric(jour_details['Unique Conversions'].sum()))
+                st.metric(selected_conv_label, format_metric(jour_details['Unique Conversions'].sum()))
             with col4:
                 st.metric("Send-Through Revenue", format_metric(jour_details['Revenue (SAR)'].sum(), "SAR"))
             with col5:
@@ -6982,20 +6911,6 @@ if uploaded_file is not None:
         st.header("Channel Analysis")
         chan_df = channel_analysis(filtered_df)
 
-        # Revenue column selector for charts (respects sidebar attribution but allows override)
-        chan_revenue_options = [col for col in chan_df.columns if 'Revenue' in col and col != 'Selected Revenue (SAR)']
-        # Put Selected Revenue first if it exists
-        if 'Selected Revenue (SAR)' in chan_df.columns:
-            chan_revenue_options = ['Selected Revenue (SAR)'] + chan_revenue_options
-        chan_rev_col = st.selectbox(
-            "Revenue Column for Charts",
-            chan_revenue_options,
-            index=0,
-            key='chan_rev_col',
-            format_func=_attribution_display,
-            help="Select which revenue attribution to display in charts."
-        )
-
         # Create display version for table - drop Selected Revenue/Conversions since all attribution types are shown
         chan_df_display = chan_df.copy()
         for drop_col in ['Selected Revenue (SAR)', 'Selected Conversions']:
@@ -7192,17 +7107,18 @@ if uploaded_file is not None:
             st.dataframe(style_total_row(chan_df_display), use_container_width=True, hide_index=True)
 
         # Revenue Distribution (Donut Chart)
-        st.subheader(f"Revenue Distribution Across Channels - {_attribution_display(chan_rev_col)}")
-        if chan_rev_col in chan_df.columns:
+        rev_display_name = get_selected_revenue_display_name(revenue_attribution)
+        st.subheader(f"Revenue Distribution Across Channels - {rev_display_name}")
+        if 'Selected Revenue (SAR)' in chan_df.columns:
             # Calculate total revenue for center annotation
-            total_revenue = chan_df[chan_rev_col].sum()
+            total_revenue = chan_df['Selected Revenue (SAR)'].sum()
 
             # Create donut chart for revenue share
             fig_donut = px.pie(
                 chan_df,
-                values=chan_rev_col,
+                values='Selected Revenue (SAR)',
                 names='Channel',
-                title=f"Channel Revenue Share<br><sub>Using: {_attribution_display(chan_rev_col)}</sub>",
+                title=f"Channel Revenue Share<br><sub>Using: {rev_display_name}</sub>",
                 color='Channel',
                 color_discrete_map=CHANNEL_COLORS,
                 hole=0.4  # Makes it a donut chart
@@ -7231,20 +7147,24 @@ if uploaded_file is not None:
         st.subheader("Revenue & Conversions Comparison")
         rev_conv_col1, rev_conv_col2 = st.columns(2)
         with rev_conv_col1:
-            if chan_rev_col in chan_df.columns:
+            if 'Selected Revenue (SAR)' in chan_df.columns:
+                rev_display_name = get_selected_revenue_display_name(revenue_attribution)
                 fig_rev_chan = px.bar(
-                    chan_df, x='Channel', y=chan_rev_col,
-                    title=f"{_attribution_display(chan_rev_col)} by Channel",
+                    chan_df, x='Channel', y='Selected Revenue (SAR)',
+                    title=f"{rev_display_name} by Channel",
                     color='Channel', color_discrete_map=CHANNEL_COLORS,
+                    labels={'Selected Revenue (SAR)': rev_display_name}
                 )
                 fig_rev_chan.update_layout(showlegend=False)
                 st.plotly_chart(fig_rev_chan, use_container_width=True)
         with rev_conv_col2:
             conv_col = 'Selected Conversions' if 'Selected Conversions' in chan_df.columns else 'Unique Conversions'
+            conv_display_name = get_selected_conversion_display_name(conversion_attribution) if conv_col == 'Selected Conversions' else 'Unique Conversions'
             fig_conv_chan = px.bar(
                 chan_df, x='Channel', y=conv_col,
-                title=f"{_attribution_display(conv_col)} by Channel",
+                title=f"{conv_display_name} by Channel",
                 color='Channel', color_discrete_map=CHANNEL_COLORS,
+                labels={conv_col: conv_display_name}
             )
             fig_conv_chan.update_layout(showlegend=False)
             st.plotly_chart(fig_conv_chan, use_container_width=True)
@@ -7359,18 +7279,22 @@ if uploaded_file is not None:
                 type_chan_col1, type_chan_col2 = st.columns(2)
                 with type_chan_col1:
                     if rev_col_type in type_chan_df.columns:
+                        rev_display_name = get_selected_revenue_display_name(revenue_attribution)
                         fig_type_chan_rev = px.bar(
                             type_chan_df, x='Channel', y=rev_col_type, color='Type of Campaign',
-                            barmode='stack', title="Revenue by Channel & Campaign Type",
+                            barmode='stack', title=f"{rev_display_name} by Channel & Campaign Type",
                             color_discrete_sequence=COLOR_SEQUENCE,
+                            labels={rev_col_type: rev_display_name}
                         )
                         fig_type_chan_rev.update_layout(legend=dict(orientation='h', y=-0.2))
                         st.plotly_chart(fig_type_chan_rev, use_container_width=True)
                 with type_chan_col2:
+                    conv_display_name = get_selected_conversion_display_name(conversion_attribution)
                     fig_type_chan_conv = px.bar(
                         type_chan_df, x='Channel', y=conv_col_type, color='Type of Campaign',
-                        barmode='stack', title="Conversions by Channel & Campaign Type",
+                        barmode='stack', title=f"{conv_display_name} by Channel & Campaign Type",
                         color_discrete_sequence=COLOR_SEQUENCE,
+                        labels={conv_col_type: conv_display_name}
                     )
                     fig_type_chan_conv.update_layout(legend=dict(orientation='h', y=-0.2))
                     st.plotly_chart(fig_type_chan_conv, use_container_width=True)
@@ -8008,7 +7932,7 @@ if uploaded_file is not None:
         
         # Optimization
         st.subheader("🎯 Campaign Optimization Recommendations")
-        top_camp = top_campaigns(filtered_df, 'Revenue (SAR)')
+        top_camp = top_campaigns(filtered_df, 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in filtered_df.columns else 'Revenue (SAR)')
         if not top_camp.empty:
             best_camp = top_camp.iloc[0]['Campaign Name']
             st.success(f"🚀 **Top Performer:** {best_camp} - Allocate more budget here!")
@@ -8017,9 +7941,10 @@ if uploaded_file is not None:
         
         # ROI Analysis
         st.subheader("💰 ROI Analysis")
-        roi_df = filtered_df.groupby('Channel').agg({'Revenue (SAR)': 'sum'}).reset_index()
-        roi_df['Estimated Cost'] = roi_df['Revenue (SAR)'] * 0.1  # placeholder
-        roi_df['ROI'] = (roi_df['Revenue (SAR)'] - roi_df['Estimated Cost']) / roi_df['Estimated Cost']
+        rev_col_roi = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in filtered_df.columns else 'Revenue (SAR)'
+        roi_df = filtered_df.groupby('Channel').agg({rev_col_roi: 'sum'}).reset_index()
+        roi_df['Estimated Cost'] = roi_df[rev_col_roi] * 0.1  # placeholder
+        roi_df['ROI'] = (roi_df[rev_col_roi] - roi_df['Estimated Cost']) / roi_df['Estimated Cost']
         st.dataframe(roi_df)
         st.write("**ROI Insights:** Channels with ROI > 1 are profitable. Focus on Email and Push.")
         
