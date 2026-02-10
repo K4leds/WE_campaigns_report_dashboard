@@ -3598,12 +3598,12 @@ if uploaded_file is not None:
                 st.metric("Total Unique Impressions", f"{filtered_df['Unique Impressions'].sum():,.0f}")
             with col3:
                 st.metric("Avg CTR", f"{filtered_df['CTR'].mean():.2%}")
-                # Fix: Handle missing Unique Conversion Rate
-                if 'Unique Conversion Rate' in filtered_df.columns:
-                    st.metric("Avg Conversion Rate", f"{filtered_df['Unique Conversion Rate'].mean():.2%}")
-                else:
-                    avg_conv_rate = filtered_df['Conversion Rate'].mean() if 'Conversion Rate' in filtered_df.columns else 0
-                    st.metric("Avg Conversion Rate", f"{avg_conv_rate:.2%}")
+                # Calculate conversion rate from raw data
+                total_clicks = filtered_df['Unique Clicks'].sum()
+                conv_col = 'Selected Conversions' if 'Selected Conversions' in filtered_df.columns else 'Unique Conversions'
+                total_conversions = filtered_df[conv_col].sum()
+                avg_conv_rate = (total_conversions / total_clicks) if total_clicks > 0 else 0
+                st.metric("Avg Conversion Rate", f"{avg_conv_rate:.2%}")
                 
                 # Calculate Control Group Uplift (respects attribution selection)
                 if 'Total in Control Group' in filtered_df.columns and 'Unique Control Group Conversions' in filtered_df.columns:
@@ -4440,6 +4440,10 @@ if uploaded_file is not None:
                     agg_dict['Selected Revenue (SAR)'] = 'sum'
                 elif 'Revenue (SAR)' in onetime_df.columns:
                     agg_dict['Revenue (SAR)'] = 'sum'
+                
+                # Add selected conversions if available
+                if 'Selected Conversions' in onetime_df.columns:
+                    agg_dict['Selected Conversions'] = 'sum'
 
                 onetime_summary = onetime_df.groupby('Campaign Name').agg(agg_dict).reset_index()
                 
@@ -4447,8 +4451,11 @@ if uploaded_file is not None:
                 onetime_summary['Delivery Rate'] = onetime_summary['Delivered'] / onetime_summary['Sent']
                 onetime_summary['CTR'] = np.where(onetime_summary['Delivered'] > 0, 
                                                 onetime_summary['Unique Clicks'] / onetime_summary['Delivered'], 0)
+                
+                # Use Selected Conversions for conversion rate if available
+                conv_col_for_rate = 'Selected Conversions' if 'Selected Conversions' in onetime_summary.columns else 'Unique Conversions'
                 onetime_summary['Conversion Rate'] = np.where(onetime_summary['Unique Clicks'] > 0,
-                                                            onetime_summary['Unique Conversions'] / onetime_summary['Unique Clicks'], 0)
+                                                            onetime_summary[conv_col_for_rate] / onetime_summary['Unique Clicks'], 0)
                 
                 # Sort by sent volume descending
                 onetime_summary = onetime_summary.sort_values('Sent', ascending=False)
@@ -4456,15 +4463,16 @@ if uploaded_file is not None:
                 # Format for display
                 # Use selected revenue column if available
                 revenue_col = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in onetime_summary.columns else 'Revenue (SAR)'
+                conv_col_display = 'Selected Conversions' if 'Selected Conversions' in onetime_summary.columns else 'Unique Conversions'
                 display_cols = ['Campaign Name', 'Channel', 'Sent', 'Delivered', 'Delivery Rate', 
-                              'Unique Clicks', 'CTR', 'Unique Conversions', 'Conversion Rate', revenue_col]
+                              'Unique Clicks', 'CTR', conv_col_display, 'Conversion Rate', revenue_col]
                 onetime_display = onetime_summary[display_cols].copy()
                 
                 # Format columns
                 onetime_display['Sent'] = onetime_display['Sent'].apply(format_metric)
                 onetime_display['Delivered'] = onetime_display['Delivered'].apply(format_metric)
                 onetime_display['Unique Clicks'] = onetime_display['Unique Clicks'].apply(format_metric)
-                onetime_display['Unique Conversions'] = onetime_display['Unique Conversions'].apply(format_metric)
+                onetime_display[conv_col_display] = onetime_display[conv_col_display].apply(format_metric)
                 onetime_display[revenue_col] = onetime_display[revenue_col].apply(lambda x: format_metric(x, "SAR"))
                 onetime_display['Delivery Rate'] = onetime_display['Delivery Rate'].apply(lambda x: f"{x:.1%}")
                 onetime_display['CTR'] = onetime_display['CTR'].apply(lambda x: f"{x:.2%}")
@@ -4603,7 +4611,11 @@ if uploaded_file is not None:
                 avg_ctr = camp_details['CTR'].mean()
                 st.metric("Avg CTR", f"{avg_ctr:.2%}", help="Average click-through rate")
             with biz_col4:
-                avg_conv_rate = camp_details['Conversion Rate'].mean()
+                # Calculate conversion rate from raw data
+                total_clicks_metric = camp_details['Unique Clicks'].sum()
+                conv_col_metric = 'Selected Conversions' if 'Selected Conversions' in camp_details.columns else 'Unique Conversions'
+                total_conversions_metric = camp_details[conv_col_metric].sum()
+                avg_conv_rate = (total_conversions_metric / total_clicks_metric) if total_clicks_metric > 0 else 0
                 st.metric("Avg Conversion Rate", f"{avg_conv_rate:.2%}", help="Average conversion rate")
             
             # Performance by Channel
