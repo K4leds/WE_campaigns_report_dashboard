@@ -2918,12 +2918,12 @@ if uploaded_file is not None:
         """Map selected attribution model to 'Selected Revenue/Conversions' columns."""
         return apply_attribution(df, revenue_attribution, conversion_attribution)
 
-    def _apply_dimension_filters(df, channels, campaign_types, campaigns, segments, journeys):
+    def _apply_dimension_filters(df, channels, campaign_types, campaigns, segments, journeys, conversion_events=None):
         """Apply sidebar dimension filters."""
-        return apply_dimension_filters(df, channels, campaign_types, campaigns, segments, journeys)
+        return apply_dimension_filters(df, channels, campaign_types, campaigns, segments, journeys, conversion_events)
 
     @st.cache_data
-    def apply_filters_and_attribution(df, revenue_attribution, conversion_attribution, date_range, channels, campaign_types, campaigns, segments, journeys):
+    def apply_filters_and_attribution(df, revenue_attribution, conversion_attribution, date_range, channels, campaign_types, campaigns, segments, journeys, conversion_events=None):
         df = df.copy()
         df = _apply_attribution(df, revenue_attribution, conversion_attribution)
         filtered_df = df.copy()
@@ -2936,7 +2936,7 @@ if uploaded_file is not None:
             elif 'Reporting Period Start Date' in filtered_df.columns:
                 filtered_df = filtered_df[(filtered_df['Reporting Period Start Date'] >= start_dt) &
                                           (filtered_df['Reporting Period End Date'] <= end_dt)]
-        filtered_df = _apply_dimension_filters(filtered_df, channels, campaign_types, campaigns, segments, journeys)
+        filtered_df = _apply_dimension_filters(filtered_df, channels, campaign_types, campaigns, segments, journeys, conversion_events)
         return filtered_df
     
     if not df.empty:
@@ -2994,16 +2994,18 @@ if uploaded_file is not None:
     campaigns = st.sidebar.multiselect("Campaigns", df['Campaign Name'].unique() if not df.empty else [])
     segments = st.sidebar.multiselect("Segments", df['Segment Name'].unique() if not df.empty else [])
     journeys = st.sidebar.multiselect("Journeys", df['Journey Name'].unique() if not df.empty else [])
+    conversion_events_available = sorted(df['Conversion Event'].dropna().unique().tolist()) if (not df.empty and 'Conversion Event' in df.columns) else []
+    conversion_events = st.sidebar.multiselect("Conversion Event", conversion_events_available, help="Filter by conversion event type (e.g., Order Completed, Cart Submitted)")
 
     # Apply filters using cached function
-    filtered_df = apply_filters_and_attribution(df, revenue_attribution, conversion_attribution, date_range, channels, campaign_types, campaigns, segments, journeys)
+    filtered_df = apply_filters_and_attribution(df, revenue_attribution, conversion_attribution, date_range, channels, campaign_types, campaigns, segments, journeys, conversion_events)
 
     # Calculate comparison data if comparison mode is enabled
     comparison_result = None
     if comparison_mode != "None":
         df_with_attribution = df.copy()
         df_with_attribution = _apply_attribution(df_with_attribution, revenue_attribution, conversion_attribution)
-        df_with_attribution = _apply_dimension_filters(df_with_attribution, channels, campaign_types, campaigns, segments, journeys)
+        df_with_attribution = _apply_dimension_filters(df_with_attribution, channels, campaign_types, campaigns, segments, journeys, conversion_events)
 
         comparison_result = calculate_comparison_periods(
             df_with_attribution,

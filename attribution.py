@@ -45,7 +45,7 @@ def apply_attribution(df, revenue_attribution, conversion_attribution):
     return df
 
 
-def apply_dimension_filters(df, channels, campaign_types, campaigns, segments, journeys):
+def apply_dimension_filters(df, channels, campaign_types, campaigns, segments, journeys, conversion_events=None):
     """Apply sidebar dimension filters."""
     if channels:
         df = df[df['Channel'].isin(channels)]
@@ -57,6 +57,8 @@ def apply_dimension_filters(df, channels, campaign_types, campaigns, segments, j
         df = df[df['Segment Name'].isin(segments)]
     if journeys:
         df = df[df['Journey Name'].isin(journeys)]
+    if conversion_events and 'Conversion Event' in df.columns:
+        df = df[df['Conversion Event'].isin(conversion_events)]
     return df
 
 
