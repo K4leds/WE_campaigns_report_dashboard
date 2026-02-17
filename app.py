@@ -2928,8 +2928,14 @@ if uploaded_file is not None:
         df = _apply_attribution(df, revenue_attribution, conversion_attribution)
         filtered_df = df.copy()
         if date_range and len(date_range) == 2:
-            filtered_df = filtered_df[(filtered_df['Reporting Period Start Date'] >= pd.to_datetime(date_range[0])) &
-                                      (filtered_df['Reporting Period End Date'] <= pd.to_datetime(date_range[1]))]
+            start_dt = pd.to_datetime(date_range[0])
+            end_dt = pd.to_datetime(date_range[1])
+            # Filter by the Day column (reporting date) to include all attribution window days
+            if 'Day' in filtered_df.columns:
+                filtered_df = filtered_df[(filtered_df['Day'] >= start_dt) & (filtered_df['Day'] <= end_dt)]
+            elif 'Reporting Period Start Date' in filtered_df.columns:
+                filtered_df = filtered_df[(filtered_df['Reporting Period Start Date'] >= start_dt) &
+                                          (filtered_df['Reporting Period End Date'] <= end_dt)]
         filtered_df = _apply_dimension_filters(filtered_df, channels, campaign_types, campaigns, segments, journeys)
         return filtered_df
     
@@ -4398,31 +4404,13 @@ if uploaded_file is not None:
         if 'Type of Campaign' in filtered_df.columns:
             onetime_df = filtered_df[filtered_df['Type of Campaign'].str.lower().str.contains('one-time', na=False)].copy()
             
-            # Filter out likely test campaigns (low volume)
+            # Filter out likely test campaigns (low volume) - applied AFTER aggregation
+            # to avoid excluding attribution-window rows where Sent=0
             min_sent_threshold = st.slider("Minimum Sent Threshold (exclude tests)", 0, 1000, 100, 
                                          help="Campaigns with fewer sends than this threshold will be excluded as potential tests")
-            onetime_df = onetime_df[onetime_df['Sent'] >= min_sent_threshold]
             
             if not onetime_df.empty:
                 st.subheader("🚀 One-Time Campaigns Overview")
-                
-                # Top summary metric
-                total_onetime_campaigns = onetime_df['Campaign Name'].nunique()
-                total_onetime_sent = onetime_df['Sent'].sum()
-                total_onetime_delivered = onetime_df['Delivered'].sum()
-                
-                # Summary row
-                sum_col1, sum_col2, sum_col3, sum_col4 = st.columns(4)
-                with sum_col1:
-                    st.metric("One-Time Campaigns", format_metric(total_onetime_campaigns), 
-                             help=f"Total unique one-time campaigns launched (sent ≥ {min_sent_threshold})")
-                with sum_col2:
-                    st.metric("Total Sent", format_metric(total_onetime_sent))
-                with sum_col3:
-                    st.metric("Total Delivered", format_metric(total_onetime_delivered))
-                with sum_col4:
-                    delivery_rate = total_onetime_delivered / total_onetime_sent if total_onetime_sent > 0 else 0
-                    st.metric("Avg Delivery Rate", f"{delivery_rate:.1%}")
                 
                 # Campaign details table
                 st.markdown("#### Campaign Details")
@@ -4444,8 +4432,53 @@ if uploaded_file is not None:
                 # Add selected conversions if available
                 if 'Selected Conversions' in onetime_df.columns:
                     agg_dict['Selected Conversions'] = 'sum'
+                
+                # Add all revenue attribution types (summed totals across all dates)
+                if 'Impression-Through Revenue (SAR)' in onetime_df.columns:
+                    agg_dict['Impression-Through Revenue (SAR)'] = 'sum'
+                if 'Click-Through Revenue (SAR)' in onetime_df.columns:
+                    agg_dict['Click-Through Revenue (SAR)'] = 'sum'
 
                 onetime_summary = onetime_df.groupby('Campaign Name').agg(agg_dict).reset_index()
+                
+                # Apply sent threshold AFTER aggregation so attribution-window rows (Sent=0) aren't lost
+                onetime_summary = onetime_summary[onetime_summary['Sent'] >= min_sent_threshold]
+                
+                # Summary metrics (computed after aggregation so they reflect true totals)
+                total_onetime_campaigns = len(onetime_summary)
+                total_onetime_sent = onetime_summary['Sent'].sum()
+                total_onetime_delivered = onetime_summary['Delivered'].sum()
+                
+                sum_col1, sum_col2, sum_col3, sum_col4 = st.columns(4)
+                with sum_col1:
+                    st.metric("One-Time Campaigns", format_metric(total_onetime_campaigns), 
+                             help=f"Total unique one-time campaigns launched (sent ≥ {min_sent_threshold})")
+                with sum_col2:
+                    st.metric("Total Sent", format_metric(total_onetime_sent))
+                with sum_col3:
+                    st.metric("Total Delivered", format_metric(total_onetime_delivered))
+                with sum_col4:
+                    delivery_rate = total_onetime_delivered / total_onetime_sent if total_onetime_sent > 0 else 0
+                    st.metric("Avg Delivery Rate", f"{delivery_rate:.1%}")
+                
+                # Debug: Show aggregation details
+                with st.expander("🔍 Debug: Revenue Aggregation Details", expanded=False):
+                    st.write("**Data before aggregation:**")
+                    sample_campaign = onetime_df['Campaign Name'].iloc[0] if not onetime_df.empty else None
+                    if sample_campaign:
+                        sample_data = onetime_df[onetime_df['Campaign Name'] == sample_campaign][['Campaign Name', 'Day', 'Sent', 'Delivered', 'Revenue (SAR)'] + 
+                                                                                                   ([col for col in ['Impression-Through Revenue (SAR)', 'Click-Through Revenue (SAR)', 'Selected Revenue (SAR)'] if col in onetime_df.columns])]
+                        st.write(f"Sample campaign: **{sample_campaign}**")
+                        st.dataframe(sample_data, use_container_width=True)
+                        
+                        st.write("**After aggregation:**")
+                        sample_agg = onetime_summary[onetime_summary['Campaign Name'] == sample_campaign]
+                        st.dataframe(sample_agg, use_container_width=True)
+                        
+                        st.write(f"**Number of days in raw data:** {len(sample_data)}")
+                        st.write(f"**Total campaigns in dataset:** {onetime_df['Campaign Name'].nunique()}")
+                        st.write(f"**Total rows before aggregation:** {len(onetime_df)}")
+                        st.write(f"**Total rows after aggregation:** {len(onetime_summary)}")
                 
                 # Add calculated columns
                 onetime_summary['Delivery Rate'] = onetime_summary['Delivered'] / onetime_summary['Sent']
@@ -4464,16 +4497,36 @@ if uploaded_file is not None:
                 # Use selected revenue column if available
                 revenue_col = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in onetime_summary.columns else 'Revenue (SAR)'
                 conv_col_display = 'Selected Conversions' if 'Selected Conversions' in onetime_summary.columns else 'Unique Conversions'
+                
+                # Build display columns dynamically to include all revenue types (but avoid duplicates)
                 display_cols = ['Campaign Name', 'Channel', 'Sent', 'Delivered', 'Delivery Rate', 
                               'Unique Clicks', 'CTR', conv_col_display, 'Conversion Rate', revenue_col]
+                
+                # Add attribution revenue columns ONLY if they won't conflict after rename
+                # revenue_col is 'Selected Revenue (SAR)' which will be renamed to selected_rev_label
+                # So we need to check if selected_rev_label != the column we're trying to add
+                if 'Impression-Through Revenue (SAR)' in onetime_summary.columns and selected_rev_label != 'Impression-Through Revenue (SAR)':
+                    display_cols.append('Impression-Through Revenue (SAR)')
+                if 'Click-Through Revenue (SAR)' in onetime_summary.columns and selected_rev_label != 'Click-Through Revenue (SAR)':
+                    display_cols.append('Click-Through Revenue (SAR)')
+                
+                # Remove any duplicates while preserving order
+                display_cols = list(dict.fromkeys(display_cols))
                 onetime_display = onetime_summary[display_cols].copy()
                 
-                # Format columns
+                # Format columns (convert to strings for display with K/M abbreviations)
                 onetime_display['Sent'] = onetime_display['Sent'].apply(format_metric)
                 onetime_display['Delivered'] = onetime_display['Delivered'].apply(format_metric)
                 onetime_display['Unique Clicks'] = onetime_display['Unique Clicks'].apply(format_metric)
                 onetime_display[conv_col_display] = onetime_display[conv_col_display].apply(format_metric)
                 onetime_display[revenue_col] = onetime_display[revenue_col].apply(lambda x: format_metric(x, "SAR"))
+                
+                # Format attribution revenue columns if they exist
+                if 'Impression-Through Revenue (SAR)' in onetime_display.columns:
+                    onetime_display['Impression-Through Revenue (SAR)'] = onetime_display['Impression-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
+                if 'Click-Through Revenue (SAR)' in onetime_display.columns:
+                    onetime_display['Click-Through Revenue (SAR)'] = onetime_display['Click-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
+                
                 onetime_display['Delivery Rate'] = onetime_display['Delivery Rate'].apply(lambda x: f"{x:.1%}")
                 onetime_display['CTR'] = onetime_display['CTR'].apply(lambda x: f"{x:.2%}")
                 onetime_display['Conversion Rate'] = onetime_display['Conversion Rate'].apply(lambda x: f"{x:.2%}")
