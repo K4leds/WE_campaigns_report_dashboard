@@ -6994,11 +6994,14 @@ if uploaded_file is not None:
         st.header("Channel Analysis")
         chan_df = channel_analysis(filtered_df)
 
-        # Create display version for table - drop Selected Revenue/Conversions since all attribution types are shown
+        # Create display version for table - keep conversions visible with labeled columns
         chan_df_display = chan_df.copy()
-        for drop_col in ['Selected Revenue (SAR)', 'Selected Conversions']:
+        for drop_col in ['Selected Revenue (SAR)']:
             if drop_col in chan_df_display.columns:
                 chan_df_display = chan_df_display.drop(columns=[drop_col])
+
+        # Rename selected attribution columns in display table only
+        chan_df_display = chan_df_display.rename(columns=attribution_rename)
         
         # If comparison mode is active, calculate comparison metrics and add percentage changes
         if comparison_result:
@@ -7008,8 +7011,20 @@ if uploaded_file is not None:
             # Create a new display dataframe with values and percentage changes
             chan_df_with_changes = chan_df_display.copy()
             
+            # Determine the actual conversion column shown in the table
+            conversion_col = None
+            for col in [selected_conv_label, 'Selected Conversions', 'Unique Conversions', 'Total Conversions']:
+                if col in chan_df_display.columns:
+                    conversion_col = col
+                    break
+
             # For each numeric column, add percentage change
-            numeric_cols = ['Sent', 'Delivered', 'Unique Impressions', 'Unique Clicks', 'Unique Conversions', 'Total Conversions']
+            numeric_cols = ['Sent', 'Delivered', 'Unique Impressions', 'Unique Clicks']
+            if conversion_col:
+                numeric_cols.append(conversion_col)
+            if 'Total Conversions' in chan_df_display.columns and 'Total Conversions' not in numeric_cols:
+                numeric_cols.append('Total Conversions')
+
             revenue_cols = [col for col in chan_df_display.columns if 'Revenue' in col]
             aov_cols = [col for col in chan_df_display.columns if 'AOV' in col]
             all_metric_cols = [col for col in (numeric_cols + revenue_cols + aov_cols) if col in chan_df_display.columns]
@@ -7087,7 +7102,18 @@ if uploaded_file is not None:
                     total_row_chan[col] = chan_df_display[col].sum()
             chan_df_display = pd.concat([chan_df_display, pd.DataFrame([total_row_chan])], ignore_index=True)
             # Format columns
-            numeric_cols = ['Sent', 'Delivered', 'Unique Impressions', 'Unique Clicks', 'Unique Conversions', 'Total Conversions']
+            conversion_col = None
+            for col in [selected_conv_label, 'Selected Conversions', 'Unique Conversions', 'Total Conversions']:
+                if col in chan_df_display.columns:
+                    conversion_col = col
+                    break
+
+            numeric_cols = ['Sent', 'Delivered', 'Unique Impressions', 'Unique Clicks']
+            if conversion_col:
+                numeric_cols.append(conversion_col)
+            if 'Total Conversions' in chan_df_display.columns and 'Total Conversions' not in numeric_cols:
+                numeric_cols.append('Total Conversions')
+
             for col in numeric_cols:
                 if col in chan_df_display.columns:
                     chan_df_display[col] = chan_df_display[col].apply(format_metric)
