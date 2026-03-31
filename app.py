@@ -7010,36 +7010,31 @@ if uploaded_file is not None:
             
             # Create a new display dataframe with values and percentage changes
             chan_df_with_changes = chan_df_display.copy()
-            
-            # Determine the actual conversion column shown in the table
-            conversion_col = None
-            for col in [selected_conv_label, 'Selected Conversions', 'Unique Conversions', 'Total Conversions']:
-                if col in chan_df_display.columns:
-                    conversion_col = col
-                    break
 
-            # For each numeric column, add percentage change
-            numeric_cols = ['Sent', 'Delivered', 'Unique Impressions', 'Unique Clicks']
-            if conversion_col:
-                numeric_cols.append(conversion_col)
-            if 'Total Conversions' in chan_df_display.columns and 'Total Conversions' not in numeric_cols:
-                numeric_cols.append('Total Conversions')
+            # Compare metric values for each channel
+            display_metric_cols = [c for c in chan_df_display.columns if c != 'Channel']
 
-            revenue_cols = [col for col in chan_df_display.columns if 'Revenue' in col]
-            aov_cols = [col for col in chan_df_display.columns if 'AOV' in col]
-            all_metric_cols = [col for col in (numeric_cols + revenue_cols + aov_cols) if col in chan_df_display.columns]
-            
-            for col in all_metric_cols:
-                # Create a new column for display with value + percentage
+            for display_col in display_metric_cols:
+                if display_col == selected_conv_label:
+                    source_col = 'Selected Conversions'
+                elif display_col == selected_rev_label:
+                    source_col = 'Selected Revenue (SAR)'
+                else:
+                    source_col = display_col
+
+                if source_col not in chan_df.columns:
+                    continue
+
                 new_col_data = []
                 for channel in chan_df_display['Channel']:
-                    current_val = chan_df.loc[chan_df['Channel'] == channel, col].values
+                    current_val = chan_df.loc[chan_df['Channel'] == channel, source_col].values
                     current_val = current_val[0] if len(current_val) > 0 else 0
-                    
-                    comp_val = chan_df_comparison.loc[chan_df_comparison['Channel'] == channel, col].values
-                    comp_val = comp_val[0] if len(comp_val) > 0 else 0
-                    
-                    # Calculate percentage change
+
+                    comp_val = 0
+                    if source_col in chan_df_comparison.columns:
+                        comp_val = chan_df_comparison.loc[chan_df_comparison['Channel'] == channel, source_col].values
+                        comp_val = comp_val[0] if len(comp_val) > 0 else 0
+
                     if comp_val > 0:
                         pct_change = ((current_val - comp_val) / comp_val) * 100
                         if pct_change > 0:
@@ -7052,24 +7047,32 @@ if uploaded_file is not None:
                         pct_str = " <span style='color: #17a2b8; font-weight: 600; white-space: nowrap; display: inline-block;'>🆕</span>"
                     else:
                         pct_str = ""
-                    
-                    # Format the value with abbreviation
-                    if 'Revenue' in col or 'AOV' in col:
+
+                    if 'Revenue' in source_col or 'AOV' in source_col:
                         formatted_val = format_metric(current_val, "SAR", abbreviate=True)
                     else:
                         formatted_val = format_metric(current_val, "", abbreviate=True)
-                    
+
                     new_col_data.append(formatted_val + pct_str)
-                
-                chan_df_with_changes[col] = new_col_data
-            
+
+                chan_df_with_changes[display_col] = new_col_data
+
             # Add total row with comparisons
             total_row_chan = {'Channel': 'Total'}
-            for col in all_metric_cols:
-                current_total = chan_df[col].sum()
-                comp_total = chan_df_comparison[col].sum() if col in chan_df_comparison.columns else 0
-                
-                # Calculate percentage change for total
+            for display_col in display_metric_cols:
+                if display_col == selected_conv_label:
+                    source_col = 'Selected Conversions'
+                elif display_col == selected_rev_label:
+                    source_col = 'Selected Revenue (SAR)'
+                else:
+                    source_col = display_col
+
+                if source_col not in chan_df.columns:
+                    continue
+
+                current_total = chan_df[source_col].sum()
+                comp_total = chan_df_comparison[source_col].sum() if source_col in chan_df_comparison.columns else 0
+
                 if comp_total > 0:
                     pct_change = ((current_total - comp_total) / comp_total) * 100
                     if pct_change > 0:
@@ -7082,15 +7085,14 @@ if uploaded_file is not None:
                     pct_str = " <span style='color: #17a2b8; font-weight: 600; white-space: nowrap; display: inline-block;'>🆕</span>"
                 else:
                     pct_str = ""
-                
-                # Format the total value with abbreviation
-                if 'Revenue' in col or 'AOV' in col:
+
+                if 'Revenue' in source_col or 'AOV' in source_col:
                     formatted_total = format_metric(current_total, "SAR", abbreviate=True)
                 else:
                     formatted_total = format_metric(current_total, "", abbreviate=True)
-                
-                total_row_chan[col] = formatted_total + pct_str
-            
+
+                total_row_chan[display_col] = formatted_total + pct_str
+
             chan_df_with_changes = pd.concat([chan_df_with_changes, pd.DataFrame([total_row_chan])], ignore_index=True)
             chan_df_display = chan_df_with_changes
         else:
