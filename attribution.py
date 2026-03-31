@@ -92,3 +92,16 @@ def get_selected_conversion_display_name(conversion_attribution):
     instead of the generic 'Selected Conversions'.
     """
     return CONVERSION_ATTRIBUTION_LABELS.get(conversion_attribution, "Unique Conversions")
+
+
+def resolve_source_column(display_col, revenue_attribution, conversion_attribution):
+    """Map display column names back to canonical source columns."""
+    selected_rev_display = get_selected_revenue_display_name(revenue_attribution)
+    selected_conv_display = get_selected_conversion_display_name(conversion_attribution)
+
+    if display_col == selected_rev_display:
+        return 'Selected Revenue (SAR)'
+    if display_col == selected_conv_display:
+        return 'Selected Conversions'
+
+    return display_col

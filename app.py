@@ -19,7 +19,7 @@ warnings.filterwarnings('ignore')
 
 # Import centralized configuration and attribution logic
 from config import CHANNEL_COSTS, REQUIRED_COLUMNS, COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
-from attribution import apply_attribution, apply_dimension_filters, get_attribution_display_label, get_selected_revenue_display_name, get_selected_conversion_display_name
+from attribution import apply_attribution, apply_dimension_filters, get_attribution_display_label, get_selected_revenue_display_name, get_selected_conversion_display_name, resolve_source_column
 
 # Register a global Plotly template for consistent styling
 import plotly.io as pio
@@ -7015,25 +7015,31 @@ if uploaded_file is not None:
             display_metric_cols = [c for c in chan_df_display.columns if c != 'Channel']
 
             for display_col in display_metric_cols:
-                if display_col == selected_conv_label:
-                    source_col = 'Selected Conversions'
-                elif display_col == selected_rev_label:
-                    source_col = 'Selected Revenue (SAR)'
-                else:
-                    source_col = display_col
+                source_col = resolve_source_column(display_col, revenue_attribution, conversion_attribution)
 
                 if source_col not in chan_df.columns:
                     continue
 
                 new_col_data = []
                 for channel in chan_df_display['Channel']:
-                    current_val = chan_df.loc[chan_df['Channel'] == channel, source_col].values
-                    current_val = current_val[0] if len(current_val) > 0 else 0
+                    if source_col == 'AOV (SAR)':
+                        curr_rev = chan_df.loc[chan_df['Channel'] == channel, 'Selected Revenue (SAR)'] if 'Selected Revenue (SAR)' in chan_df.columns else chan_df.loc[chan_df['Channel'] == channel, 'Revenue (SAR)']
+                        curr_conv = chan_df.loc[chan_df['Channel'] == channel, 'Selected Conversions'] if 'Selected Conversions' in chan_df.columns else chan_df.loc[chan_df['Channel'] == channel, 'Unique Conversions']
+                        current_val = curr_rev.sum() / curr_conv.sum() if curr_conv.sum() > 0 else 0
 
-                    comp_val = 0
-                    if source_col in chan_df_comparison.columns:
-                        comp_val = chan_df_comparison.loc[chan_df_comparison['Channel'] == channel, source_col].values
-                        comp_val = comp_val[0] if len(comp_val) > 0 else 0
+                        comp_val = 0
+                        if 'Selected Revenue (SAR)' in chan_df_comparison.columns and 'Selected Conversions' in chan_df_comparison.columns:
+                            comp_rev = chan_df_comparison.loc[chan_df_comparison['Channel'] == channel, 'Selected Revenue (SAR)']
+                            comp_conv = chan_df_comparison.loc[chan_df_comparison['Channel'] == channel, 'Selected Conversions']
+                            comp_val = comp_rev.sum() / comp_conv.sum() if comp_conv.sum() > 0 else 0
+                    else:
+                        current_val = chan_df.loc[chan_df['Channel'] == channel, source_col].values
+                        current_val = current_val[0] if len(current_val) > 0 else 0
+
+                        comp_val = 0
+                        if source_col in chan_df_comparison.columns:
+                            comp_val = chan_df_comparison.loc[chan_df_comparison['Channel'] == channel, source_col].values
+                            comp_val = comp_val[0] if len(comp_val) > 0 else 0
 
                     if comp_val > 0:
                         pct_change = ((current_val - comp_val) / comp_val) * 100
@@ -7060,18 +7066,26 @@ if uploaded_file is not None:
             # Add total row with comparisons
             total_row_chan = {'Channel': 'Total'}
             for display_col in display_metric_cols:
-                if display_col == selected_conv_label:
-                    source_col = 'Selected Conversions'
-                elif display_col == selected_rev_label:
-                    source_col = 'Selected Revenue (SAR)'
-                else:
-                    source_col = display_col
+                source_col = resolve_source_column(display_col, revenue_attribution, conversion_attribution)
 
                 if source_col not in chan_df.columns:
                     continue
 
                 current_total = chan_df[source_col].sum()
                 comp_total = chan_df_comparison[source_col].sum() if source_col in chan_df_comparison.columns else 0
+
+                if source_col == 'AOV (SAR)':
+                    total_rev = chan_df['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in chan_df.columns else chan_df['Revenue (SAR)'].sum()
+                    total_conv = chan_df['Selected Conversions'].sum() if 'Selected Conversions' in chan_df.columns else chan_df['Unique Conversions'].sum()
+                    current_total = total_rev / total_conv if total_conv > 0 else 0
+                    comp_total = 0
+                    if 'Selected Revenue (SAR)' in chan_df_comparison.columns and 'Selected Conversions' in chan_df_comparison.columns:
+                        comp_rev = chan_df_comparison['Selected Revenue (SAR)'].sum()
+                        comp_conv = chan_df_comparison['Selected Conversions'].sum()
+                        comp_total = comp_rev / comp_conv if comp_conv > 0 else 0
+                else:
+                    current_total = chan_df[source_col].sum()
+                    comp_total = chan_df_comparison[source_col].sum() if source_col in chan_df_comparison.columns else 0
 
                 if comp_total > 0:
                     pct_change = ((current_total - comp_total) / comp_total) * 100
@@ -7100,8 +7114,27 @@ if uploaded_file is not None:
             # Add total row
             total_row_chan = {'Channel': 'Total'}
             for col in chan_df_display.columns:
-                if col != 'Channel':
-                    total_row_chan[col] = chan_df_display[col].sum()
+                if col == 'Channel':
+                    continue
+                if 'AOV' in col:
+                    continue
+                total_row_chan[col] = chan_df_display[col].sum()
+
+            # Compute total AOV from total revenue/total conversions
+            if 'Selected Revenue (SAR)' in chan_df.columns and 'Selected Conversions' in chan_df.columns:
+                total_conv = chan_df['Selected Conversions'].sum()
+                total_rev = chan_df['Selected Revenue (SAR)'].sum()
+            elif 'Revenue (SAR)' in chan_df.columns and 'Unique Conversions' in chan_df.columns:
+                total_conv = chan_df['Unique Conversions'].sum()
+                total_rev = chan_df['Revenue (SAR)'].sum()
+            else:
+                total_conv = 0
+                total_rev = 0
+
+            total_aov = (total_rev / total_conv) if total_conv > 0 else 0
+            for col in [c for c in chan_df_display.columns if 'AOV' in c]:
+                total_row_chan[col] = total_aov
+
             chan_df_display = pd.concat([chan_df_display, pd.DataFrame([total_row_chan])], ignore_index=True)
             # Format columns
             conversion_col = None
