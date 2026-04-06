@@ -4447,7 +4447,13 @@ if uploaded_file is not None:
                 # Add selected conversions if available
                 if 'Selected Conversions' in onetime_df.columns:
                     agg_dict['Selected Conversions'] = 'sum'
-                
+                # Add click-through conversion counts if available; these should drive the campaign-level conversion rate
+                if 'Unique Click-Through Conversions' in onetime_df.columns:
+                    agg_dict['Unique Click-Through Conversions'] = 'sum'
+                # Add impression counts if available, so we can fall back to impression-based rate when clicks-only metrics are unavailable
+                if 'Unique Impressions' in onetime_df.columns:
+                    agg_dict['Unique Impressions'] = 'sum'
+
                 # Add all revenue attribution types (summed totals across all dates)
                 if 'Impression-Through Revenue (SAR)' in onetime_df.columns:
                     agg_dict['Impression-Through Revenue (SAR)'] = 'sum'
@@ -4500,10 +4506,20 @@ if uploaded_file is not None:
                 onetime_summary['CTR'] = np.where(onetime_summary['Delivered'] > 0, 
                                                 onetime_summary['Unique Clicks'] / onetime_summary['Delivered'], 0)
                 
-                # Use Selected Conversions for conversion rate if available
-                conv_col_for_rate = 'Selected Conversions' if 'Selected Conversions' in onetime_summary.columns else 'Unique Conversions'
-                onetime_summary['Conversion Rate'] = np.where(onetime_summary['Unique Clicks'] > 0,
-                                                            onetime_summary[conv_col_for_rate] / onetime_summary['Unique Clicks'], 0)
+                # Compute campaign conversion rate using the correct numerator/denominator pairing
+                if 'Unique Click-Through Conversions' in onetime_summary.columns and 'Unique Clicks' in onetime_summary.columns:
+                    conv_numer = onetime_summary['Unique Click-Through Conversions']
+                    conv_denom = onetime_summary['Unique Clicks']
+                elif 'Unique Impressions' in onetime_summary.columns and 'Unique Conversions' in onetime_summary.columns:
+                    conv_numer = onetime_summary['Unique Conversions']
+                    conv_denom = onetime_summary['Unique Impressions']
+                else:
+                    conv_col_for_rate = 'Selected Conversions' if 'Selected Conversions' in onetime_summary.columns else 'Unique Conversions'
+                    conv_numer = onetime_summary[conv_col_for_rate]
+                    conv_denom = onetime_summary['Unique Clicks'] if 'Unique Clicks' in onetime_summary.columns else 1
+
+                onetime_summary['Conversion Rate'] = np.where(conv_denom > 0,
+                                                            conv_numer / conv_denom, 0)
                 
                 # Sort by sent volume descending
                 onetime_summary = onetime_summary.sort_values('Sent', ascending=False)
