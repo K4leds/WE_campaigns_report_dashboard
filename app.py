@@ -4597,7 +4597,8 @@ if uploaded_file is not None:
                     
                     # Rename columns to show actual attribution model
                     channel_display = channel_display.rename(columns=attribution_rename)
-                    st.dataframe(channel_display[['Channel', 'Sent', 'Delivered', 'Delivery Rate', 'Conversions', rev_col_channel]], 
+                    display_rev_col = selected_rev_label if rev_col_channel == 'Selected Revenue (SAR)' else rev_col_channel
+                    st.dataframe(channel_display[['Channel', 'Sent', 'Delivered', 'Delivery Rate', 'Conversions', display_rev_col]], 
                                use_container_width=True, hide_index=True)
             else:
                 st.info("No one-time campaigns found matching the criteria.")
