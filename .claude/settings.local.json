@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(find C:/Users/USER/vs_projects/WE_campaigns_report_dashboard -maxdepth 1 -name *.csv -o -name report-*)",
+      "Bash(find C:/Users/USER/vs_projects/WE_campaigns_report_dashboard -name *.csv)"
     ]
   }
 }

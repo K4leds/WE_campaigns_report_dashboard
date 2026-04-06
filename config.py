@@ -12,9 +12,12 @@ CHANNEL_COSTS = {
     'App Push': 0.0,
     'Web Push': 0.0,
     'In-App': 0.0,
+    'In-app Notification': 0.0,
     'On-Site': 0.0,
     'Onsite': 0.0,
     'On-site': 0.0,
+    'On-site Notification': 0.0,
+    'Web Personalization (Inline content)': 0.0,
 }
 
 # Minimum columns required in uploaded CSV for the dashboard to work
@@ -45,9 +48,12 @@ CHANNEL_COLORS = {
     'App Push': '#EA580C',
     'Web Push': '#0891B2',
     'In-App': '#4F46E5',
+    'In-app Notification': '#4F46E5',
     'On-Site': '#0D9488',
     'Onsite': '#0D9488',
     'On-site': '#0D9488',
+    'On-site Notification': '#0D9488',
+    'Web Personalization (Inline content)': '#6366F1',
 }
 
 # Attribution model labels for display

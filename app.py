@@ -195,17 +195,17 @@ def clean_data(df):
     
     # Add calculated metrics - only if required columns exist
     if 'Unique Clicks' in df.columns and 'Unique Impressions' in df.columns:
-        df['CTR'] = np.where(df['Unique Impressions'] > 0, df['Unique Clicks'] / df['Unique Impressions'], 0)
+        df['CTR'] = np.where(df['Unique Impressions'] > 0, np.minimum(df['Unique Clicks'] / df['Unique Impressions'], 1.0), 0)
     else:
         df['CTR'] = 0
     
     if 'Unique Conversions' in df.columns and 'Unique Clicks' in df.columns:
-        df['Conversion Rate'] = np.where(df['Unique Clicks'] > 0, df['Unique Conversions'] / df['Unique Clicks'], 0)
+        df['Conversion Rate'] = np.where(df['Unique Clicks'] > 0, np.minimum(df['Unique Conversions'] / df['Unique Clicks'], 1.0), 0)
     else:
         df['Conversion Rate'] = 0
     
     if 'Delivered' in df.columns and 'Sent' in df.columns:
-        df['Delivery Rate'] = np.where(df['Sent'] > 0, df['Delivered'] / df['Sent'], 0)
+        df['Delivery Rate'] = np.where(df['Sent'] > 0, np.minimum(df['Delivered'] / df['Sent'], 1.0), 0)
     else:
         df['Delivery Rate'] = 0
     
@@ -305,11 +305,17 @@ def top_campaigns(df, metric='Unique Conversions', top_n=10):
 
 def get_top_journeys(df, metric='Delivered Rate', top_n=10):
     agg = _metric_agg(metric)
-    return df.groupby('Journey Name')[metric].agg(agg).nlargest(top_n).reset_index()
+    df_filtered = df[df['Journey Name'].notna() & (df['Journey Name'] != 'nan') & (df['Journey Name'] != '')]
+    if df_filtered.empty:
+        return pd.DataFrame(columns=['Journey Name', metric])
+    return df_filtered.groupby('Journey Name')[metric].agg(agg).nlargest(top_n).reset_index()
 
 def top_segments(df, metric='Unique Conversions', top_n=10):
     agg = _metric_agg(metric)
-    return df.groupby('Segment Name')[metric].agg(agg).nlargest(top_n).reset_index()
+    df_filtered = df[df['Segment Name'].notna() & (df['Segment Name'] != 'nan') & (df['Segment Name'] != '')]
+    if df_filtered.empty:
+        return pd.DataFrame(columns=['Segment Name', metric])
+    return df_filtered.groupby('Segment Name')[metric].agg(agg).nlargest(top_n).reset_index()
 
 def channel_analysis(df):
     agg_dict = {
@@ -360,29 +366,36 @@ def failed_reasons_analysis(df):
     return pd.DataFrame()
 
 def esp_analysis(df):
+    # Filter out nan/empty ESP values
+    if 'ESP/SSP/WSP/RSP name' not in df.columns:
+        return pd.DataFrame()
+    df_filtered = df[df['ESP/SSP/WSP/RSP name'].notna() & (df['ESP/SSP/WSP/RSP name'] != 'nan') & (df['ESP/SSP/WSP/RSP name'] != '')]
+    if df_filtered.empty:
+        return pd.DataFrame()
+
     agg_dict = {
         'Sent': 'sum',
         'Delivered': 'sum',
-        'Selected Conversions': 'sum' if 'Selected Conversions' in df.columns else 'Unique Conversions',
+        'Selected Conversions': 'sum' if 'Selected Conversions' in df_filtered.columns else 'Unique Conversions',
     }
-    if 'Selected Conversions' not in df.columns:
+    if 'Selected Conversions' not in df_filtered.columns:
         agg_dict['Unique Conversions'] = 'sum'
-    
+
     # Only add columns that exist in the dataframe
-    if 'Total Conversions' in df.columns:
+    if 'Total Conversions' in df_filtered.columns:
         agg_dict['Total Conversions'] = 'sum'
-    if 'Selected Revenue (SAR)' in df.columns:
+    if 'Selected Revenue (SAR)' in df_filtered.columns:
         agg_dict['Selected Revenue (SAR)'] = 'sum'
-    elif 'Revenue (SAR)' in df.columns:
+    elif 'Revenue (SAR)' in df_filtered.columns:
         agg_dict['Revenue (SAR)'] = 'sum'
-    
+
     # Keep original columns for reference
-    if 'Click-Through Revenue (SAR)' in df.columns:
+    if 'Click-Through Revenue (SAR)' in df_filtered.columns:
         agg_dict['Click-Through Revenue (SAR)'] = 'sum'
-    if 'Impression-Through Revenue (SAR)' in df.columns:
+    if 'Impression-Through Revenue (SAR)' in df_filtered.columns:
         agg_dict['Impression-Through Revenue (SAR)'] = 'sum'
-        
-    return df.groupby('ESP/SSP/WSP/RSP name').agg(agg_dict).reset_index()
+
+    return df_filtered.groupby('ESP/SSP/WSP/RSP name').agg(agg_dict).reset_index()
 
 def ab_testing_analysis(df):
     """Calculate lift and statistical significance for campaigns with control groups."""
@@ -2987,13 +3000,13 @@ if uploaded_file is not None:
         else:
             comparison_date_range = st.sidebar.date_input("Custom Comparison Range", [], key="comparison_date_range")
     
-    channels = st.sidebar.multiselect("Channels", df['Channel'].unique() if not df.empty else [])
+    channels = st.sidebar.multiselect("Channels", sorted(df['Channel'].dropna().unique().tolist()) if not df.empty else [])
     # Campaign Type filter (Journey vs One-Time)
-    campaign_types_available = df['Type of Campaign'].dropna().unique().tolist() if (not df.empty and 'Type of Campaign' in df.columns) else []
+    campaign_types_available = sorted(df['Type of Campaign'].dropna().unique().tolist()) if (not df.empty and 'Type of Campaign' in df.columns) else []
     campaign_types = st.sidebar.multiselect("Campaign Type", campaign_types_available, help="Filter by Journey or One-Time campaigns")
-    campaigns = st.sidebar.multiselect("Campaigns", df['Campaign Name'].unique() if not df.empty else [])
-    segments = st.sidebar.multiselect("Segments", df['Segment Name'].unique() if not df.empty else [])
-    journeys = st.sidebar.multiselect("Journeys", df['Journey Name'].unique() if not df.empty else [])
+    campaigns = st.sidebar.multiselect("Campaigns", sorted([c for c in df['Campaign Name'].dropna().unique().tolist() if c != 'nan']) if not df.empty else [])
+    segments = st.sidebar.multiselect("Segments", sorted([s for s in df['Segment Name'].dropna().unique().tolist() if s != 'nan']) if not df.empty else [])
+    journeys = st.sidebar.multiselect("Journeys", sorted([j for j in df['Journey Name'].dropna().unique().tolist() if j != 'nan']) if not df.empty else [])
     conversion_events_available = sorted(df['Conversion Event'].dropna().unique().tolist()) if (not df.empty and 'Conversion Event' in df.columns) else []
     conversion_events = st.sidebar.multiselect("Conversion Event", conversion_events_available, help="Filter by conversion event type (e.g., Order Completed, Cart Submitted)")
 
@@ -7521,12 +7534,42 @@ if uploaded_file is not None:
 
     elif page == "Correlations":
         st.header("Correlations")
-        numeric_df = filtered_df.select_dtypes(include=[np.number])
-        if not numeric_df.empty:
-            corr = numeric_df.corr()
-            fig_corr = px.imshow(corr, text_auto=True, title="Correlation Matrix",
-                                 color_continuous_scale='RdBu_r')
+        # Focus on key business metrics for a readable correlation matrix
+        key_metric_cols = [c for c in [
+            'Sent', 'Delivered', 'Unique Impressions', 'Unique Clicks',
+            'Unique Conversions', 'Selected Conversions', 'Selected Revenue (SAR)',
+            'Revenue (SAR)', 'CTR', 'Conversion Rate', 'Delivery Rate',
+            'AOV', 'Revenue Per Click', 'Revenue Per Send', 'ROAS',
+            'Campaign Cost', 'Engagement Rate',
+        ] if c in filtered_df.columns]
+
+        if key_metric_cols:
+            corr = filtered_df[key_metric_cols].corr()
+            fig_corr = px.imshow(corr, text_auto='.2f', title="Key Metrics Correlation Matrix",
+                                 color_continuous_scale='RdBu_r', aspect='auto',
+                                 zmin=-1, zmax=1)
+            fig_corr.update_layout(width=900, height=700)
             st.plotly_chart(fig_corr, use_container_width=True)
+
+            # Highlight strongest correlations
+            st.subheader("Strongest Correlations")
+            corr_pairs = []
+            for i in range(len(corr.columns)):
+                for j in range(i + 1, len(corr.columns)):
+                    val = corr.iloc[i, j]
+                    if abs(val) >= 0.5 and abs(val) < 1.0:
+                        corr_pairs.append({
+                            'Metric 1': corr.columns[i],
+                            'Metric 2': corr.columns[j],
+                            'Correlation': val,
+                            'Strength': 'Strong' if abs(val) >= 0.7 else 'Moderate'
+                        })
+            if corr_pairs:
+                corr_pairs_df = pd.DataFrame(corr_pairs).sort_values('Correlation', key=abs, ascending=False)
+                corr_pairs_df['Correlation'] = corr_pairs_df['Correlation'].apply(lambda x: f"{x:+.3f}")
+                st.dataframe(corr_pairs_df, use_container_width=True)
+            else:
+                st.info("No strong correlations (|r| >= 0.5) found between key metrics.")
         else:
             st.write("No numeric data for correlation.")
 
@@ -7563,13 +7606,13 @@ if uploaded_file is not None:
             # Format counts
             failed_df_display['Count'] = failed_df_display['Count'].apply(format_metric)
             st.dataframe(failed_df_display)
-            
+
             # Create chart with original numeric values
             fig_fail = px.bar(failed_df, x='Reason', y='Count', title="Failed Reasons Breakdown",
                               color_discrete_sequence=[COLORS['danger']])
             st.plotly_chart(fig_fail, use_container_width=True)
-            
-        # Drill-down: Failed reasons by channel
+
+            # Drill-down: Failed reasons by channel
             st.subheader("Failed Reasons by Channel")
             failed_cols = [col for col in filtered_df.columns if 'Failed' in col and col != 'Failed']
             if failed_cols:
@@ -7580,7 +7623,7 @@ if uploaded_file is not None:
                 for col in failed_cols:
                     failed_by_channel_display[col] = failed_by_channel_display[col].apply(format_metric)
                 st.dataframe(failed_by_channel_display)
-                
+
                 # Melt for plotting (use original numeric values)
                 failed_melt = failed_by_channel.melt(id_vars='Channel', var_name='Reason', value_name='Count')
                 fig_fail_chan = px.bar(failed_melt, x='Channel', y='Count', color='Reason',
@@ -8045,8 +8088,24 @@ if uploaded_file is not None:
                     model.fit(df_prophet)
                     future = model.make_future_dataframe(periods=3, freq='M')
                     forecast = model.predict(future)
-                    fig_forecast = model.plot(forecast)
-                    st.plotly_chart(fig_forecast)
+                    # Build Plotly figure from Prophet forecast data
+                    fig_forecast = go.Figure()
+                    fig_forecast.add_trace(go.Scatter(
+                        x=df_prophet['ds'], y=df_prophet['y'],
+                        mode='markers', name='Actual', marker=dict(color=COLORS['primary'], size=8)
+                    ))
+                    fig_forecast.add_trace(go.Scatter(
+                        x=forecast['ds'], y=forecast['yhat'],
+                        mode='lines', name='Forecast', line=dict(color=COLORS['success'], width=2)
+                    ))
+                    fig_forecast.add_trace(go.Scatter(
+                        x=pd.concat([forecast['ds'], forecast['ds'][::-1]]),
+                        y=pd.concat([forecast['yhat_upper'], forecast['yhat_lower'][::-1]]),
+                        fill='toself', fillcolor='rgba(5,150,105,0.15)', line=dict(width=0),
+                        name='Confidence Interval'
+                    ))
+                    fig_forecast.update_layout(title="Revenue Forecast (Next 3 Months)", xaxis_title="Date", yaxis_title="Revenue (SAR)")
+                    st.plotly_chart(fig_forecast, use_container_width=True)
                     st.write("**Forecast Insights:** Next 3 months revenue prediction with confidence intervals.")
                 except Exception as e:
                     st.write(f"Forecasting error: {e}")
@@ -8087,21 +8146,59 @@ if uploaded_file is not None:
         # ROI Analysis
         st.subheader("💰 ROI Analysis")
         rev_col_roi = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in filtered_df.columns else 'Revenue (SAR)'
-        roi_df = filtered_df.groupby('Channel').agg({rev_col_roi: 'sum'}).reset_index()
-        roi_df['Estimated Cost'] = roi_df[rev_col_roi] * 0.1  # placeholder
-        roi_df['ROI'] = (roi_df[rev_col_roi] - roi_df['Estimated Cost']) / roi_df['Estimated Cost']
-        st.dataframe(roi_df)
-        st.write("**ROI Insights:** Channels with ROI > 1 are profitable. Focus on Email and Push.")
-        
-        # Actionable Recommendations
+        roi_df = filtered_df.groupby('Channel').agg({
+            rev_col_roi: 'sum',
+            'Sent': 'sum',
+            'Campaign Cost': 'sum',
+        }).reset_index()
+        roi_df = roi_df.rename(columns={'Campaign Cost': 'Cost (SAR)', rev_col_roi: 'Revenue (SAR)'})
+        roi_df['Profit (SAR)'] = roi_df['Revenue (SAR)'] - roi_df['Cost (SAR)']
+        roi_df['ROAS'] = np.where(roi_df['Cost (SAR)'] > 0, roi_df['Revenue (SAR)'] / roi_df['Cost (SAR)'], 0)
+        roi_df['Revenue Per Send'] = np.where(roi_df['Sent'] > 0, roi_df['Revenue (SAR)'] / roi_df['Sent'], 0)
+
+        # Format for display
+        roi_display = roi_df.copy()
+        for col in ['Revenue (SAR)', 'Cost (SAR)', 'Profit (SAR)']:
+            roi_display[col] = roi_display[col].apply(lambda x: format_metric(x, "SAR"))
+        roi_display['Sent'] = roi_display['Sent'].apply(format_metric)
+        roi_display['ROAS'] = roi_display['ROAS'].apply(lambda x: f"{x:.2f}x")
+        roi_display['Revenue Per Send'] = roi_display['Revenue Per Send'].apply(lambda x: f"{x:.4f} SAR")
+        st.dataframe(roi_display, use_container_width=True)
+
+        # ROI chart
+        fig_roi = px.bar(roi_df, x='Channel', y=['Revenue (SAR)', 'Cost (SAR)'], barmode='group',
+                         title="Revenue vs Cost by Channel", color_discrete_sequence=[COLORS['success'], COLORS['danger']])
+        st.plotly_chart(fig_roi, use_container_width=True)
+
+        # Dynamic Actionable Recommendations
         st.subheader("📋 Actionable Recommendations")
-        st.markdown("""
-        - **Increase Email Budget:** Highest ROI channel
-        - **Optimize SMS Campaigns:** High delivery but low conversion
-        - **Target High-Value Segments:** From clustering analysis
-        - **Monitor Trends:** Use forecasting for budget planning
-        - **A/B Test Creatives:** For underperforming campaigns
-        """)
+        # Generate recommendations based on actual data
+        _recs = []
+        if not roi_df.empty:
+            best_roas_ch = roi_df.loc[roi_df['ROAS'].idxmax(), 'Channel'] if roi_df['ROAS'].max() > 0 else None
+            best_rps_ch = roi_df.loc[roi_df['Revenue Per Send'].idxmax(), 'Channel'] if roi_df['Revenue Per Send'].max() > 0 else None
+            highest_cost_ch = roi_df.loc[roi_df['Cost (SAR)'].idxmax(), 'Channel'] if roi_df['Cost (SAR)'].max() > 0 else None
+
+            if best_roas_ch:
+                _recs.append(f"- **Scale {best_roas_ch}:** Highest ROAS ({roi_df.loc[roi_df['Channel']==best_roas_ch, 'ROAS'].values[0]:.1f}x) - consider increasing budget")
+            if best_rps_ch and best_rps_ch != best_roas_ch:
+                _recs.append(f"- **Leverage {best_rps_ch}:** Best revenue per send - efficient at converting messages to revenue")
+            if highest_cost_ch:
+                cost_ch_roas = roi_df.loc[roi_df['Channel']==highest_cost_ch, 'ROAS'].values[0]
+                if cost_ch_roas < 2:
+                    _recs.append(f"- **Optimize {highest_cost_ch}:** Highest cost channel with ROAS of only {cost_ch_roas:.1f}x - review targeting and content")
+
+        # Add data-driven segment and campaign recommendations
+        if 'Selected Conversions' in filtered_df.columns:
+            ch_conv = filtered_df.groupby('Channel')['Selected Conversions'].sum()
+            low_conv_channels = ch_conv[ch_conv > 0].nsmallest(2).index.tolist()
+            if low_conv_channels:
+                _recs.append(f"- **Improve conversion on {', '.join(low_conv_channels)}:** Low conversion volume - test different CTAs and offers")
+
+        _recs.append("- **A/B test creatives:** For campaigns with below-average CTR")
+        _recs.append("- **Monitor forecasts:** Use revenue predictions above for budget planning")
+
+        st.markdown("\n".join(_recs))
 
 else:
     st.write("Please upload a CSV file.")

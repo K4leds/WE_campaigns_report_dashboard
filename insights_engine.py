@@ -838,10 +838,10 @@ def generate_executive_summary(df):
             max_date = df['date'].max()
             summary['period'] = f"{min_date.strftime('%b %d')} - {max_date.strftime('%b %d, %Y')}"
         
-        # Headline metrics
+        # Headline metrics - use attribution-selected columns when available
         summary['headline_metrics'] = {
-            'total_revenue': df['Revenue (SAR)'].sum() if 'Revenue (SAR)' in df.columns else 0,
-            'total_conversions': df['Unique Conversions'].sum() if 'Unique Conversions' in df.columns else 0,
+            'total_revenue': df['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in df.columns else (df['Revenue (SAR)'].sum() if 'Revenue (SAR)' in df.columns else 0),
+            'total_conversions': df['Selected Conversions'].sum() if 'Selected Conversions' in df.columns else (df['Unique Conversions'].sum() if 'Unique Conversions' in df.columns else 0),
             'total_sent': df['Sent'].sum() if 'Sent' in df.columns else 0,
             'avg_delivery_rate': (df['Delivered'].sum() / max(df['Sent'].sum(), 1)) if 'Delivered' in df.columns and 'Sent' in df.columns else 0,
             'avg_ctr': (df['Unique Clicks'].sum() / max(df['Unique Impressions'].sum(), 1)) if 'Unique Clicks' in df.columns and 'Unique Impressions' in df.columns else 0,

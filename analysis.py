@@ -27,33 +27,39 @@ def top_campaigns(df, metric='Unique Conversions', top_n=10):
 def get_top_journeys(df, metric='Delivered Rate', top_n=10):
     """
     Get top journeys by specified metric.
-    
+
     Args:
         df: DataFrame with journey data
         metric: Metric column to rank by
         top_n: Number of top journeys to return
-    
+
     Returns:
         DataFrame with top journeys
     """
     agg = metric_aggregation_method(metric)
-    return df.groupby('Journey Name')[metric].agg(agg).nlargest(top_n).reset_index()
+    df_filtered = df[df['Journey Name'].notna() & (df['Journey Name'] != 'nan') & (df['Journey Name'] != '')]
+    if df_filtered.empty:
+        return pd.DataFrame(columns=['Journey Name', metric])
+    return df_filtered.groupby('Journey Name')[metric].agg(agg).nlargest(top_n).reset_index()
 
 
 def top_segments(df, metric='Unique Conversions', top_n=10):
     """
     Get top segments by specified metric.
-    
+
     Args:
         df: DataFrame with segment data
         metric: Metric column to rank by
         top_n: Number of top segments to return
-    
+
     Returns:
         DataFrame with top segments
     """
     agg = metric_aggregation_method(metric)
-    return df.groupby('Segment Name')[metric].agg(agg).nlargest(top_n).reset_index()
+    df_filtered = df[df['Segment Name'].notna() & (df['Segment Name'] != 'nan') & (df['Segment Name'] != '')]
+    if df_filtered.empty:
+        return pd.DataFrame(columns=['Segment Name', metric])
+    return df_filtered.groupby('Segment Name')[metric].agg(agg).nlargest(top_n).reset_index()
 
 
 def channel_analysis(df):
@@ -139,36 +145,40 @@ def failed_reasons_analysis(df):
 def esp_analysis(df):
     """
     Analyze performance by ESP/SSP/WSP/RSP provider.
-    
+
     Args:
         df: DataFrame with ESP data
-    
+
     Returns:
         DataFrame with ESP-level aggregations
     """
+    if 'ESP/SSP/WSP/RSP name' not in df.columns:
+        return pd.DataFrame()
+    df_filtered = df[df['ESP/SSP/WSP/RSP name'].notna() & (df['ESP/SSP/WSP/RSP name'] != 'nan') & (df['ESP/SSP/WSP/RSP name'] != '')]
+    if df_filtered.empty:
+        return pd.DataFrame()
+
     agg_dict = {
         'Sent': 'sum',
         'Delivered': 'sum',
-        'Selected Conversions': 'sum' if 'Selected Conversions' in df.columns else 'Unique Conversions',
+        'Selected Conversions': 'sum' if 'Selected Conversions' in df_filtered.columns else 'Unique Conversions',
     }
-    if 'Selected Conversions' not in df.columns:
+    if 'Selected Conversions' not in df_filtered.columns:
         agg_dict['Unique Conversions'] = 'sum'
-    
-    # Only add columns that exist in the dataframe
-    if 'Total Conversions' in df.columns:
+
+    if 'Total Conversions' in df_filtered.columns:
         agg_dict['Total Conversions'] = 'sum'
-    if 'Selected Revenue (SAR)' in df.columns:
+    if 'Selected Revenue (SAR)' in df_filtered.columns:
         agg_dict['Selected Revenue (SAR)'] = 'sum'
-    elif 'Revenue (SAR)' in df.columns:
+    elif 'Revenue (SAR)' in df_filtered.columns:
         agg_dict['Revenue (SAR)'] = 'sum'
-    
-    # Keep original columns for reference
-    if 'Click-Through Revenue (SAR)' in df.columns:
+
+    if 'Click-Through Revenue (SAR)' in df_filtered.columns:
         agg_dict['Click-Through Revenue (SAR)'] = 'sum'
-    if 'Impression-Through Revenue (SAR)' in df.columns:
+    if 'Impression-Through Revenue (SAR)' in df_filtered.columns:
         agg_dict['Impression-Through Revenue (SAR)'] = 'sum'
-        
-    return df.groupby('ESP/SSP/WSP/RSP name').agg(agg_dict).reset_index()
+
+    return df_filtered.groupby('ESP/SSP/WSP/RSP name').agg(agg_dict).reset_index()
 
 
 def ab_testing_analysis(df):

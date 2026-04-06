@@ -87,17 +87,17 @@ def clean_data(df):
     # === ENGAGEMENT METRICS ===
     # Add calculated metrics - only if required columns exist
     if 'Unique Clicks' in df.columns and 'Unique Impressions' in df.columns:
-        df['CTR'] = np.where(df['Unique Impressions'] > 0, df['Unique Clicks'] / df['Unique Impressions'], 0)
+        df['CTR'] = np.where(df['Unique Impressions'] > 0, np.minimum(df['Unique Clicks'] / df['Unique Impressions'], 1.0), 0)
     else:
         df['CTR'] = 0
     
     if 'Unique Conversions' in df.columns and 'Unique Clicks' in df.columns:
-        df['Conversion Rate'] = np.where(df['Unique Clicks'] > 0, df['Unique Conversions'] / df['Unique Clicks'], 0)
+        df['Conversion Rate'] = np.where(df['Unique Clicks'] > 0, np.minimum(df['Unique Conversions'] / df['Unique Clicks'], 1.0), 0)
     else:
         df['Conversion Rate'] = 0
     
     if 'Delivered' in df.columns and 'Sent' in df.columns:
-        df['Delivery Rate'] = np.where(df['Sent'] > 0, df['Delivered'] / df['Sent'], 0)
+        df['Delivery Rate'] = np.where(df['Sent'] > 0, np.minimum(df['Delivered'] / df['Sent'], 1.0), 0)
     else:
         df['Delivery Rate'] = 0
     
