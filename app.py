@@ -334,7 +334,7 @@ def channel_analysis(df):
         agg_dict['Total Conversions'] = 'sum'
     if 'Selected Revenue (SAR)' in df.columns:
         agg_dict['Selected Revenue (SAR)'] = 'sum'
-    elif 'Revenue (SAR)' in df.columns:
+    if 'Revenue (SAR)' in df.columns:
         agg_dict['Revenue (SAR)'] = 'sum'
     
     # Keep original columns for reference but they won't be displayed by default
@@ -7024,14 +7024,44 @@ if uploaded_file is not None:
         st.header("Channel Analysis")
         chan_df = channel_analysis(filtered_df)
 
-        # Create display version for table - keep conversions visible with labeled columns
+        # Channel conversion rate based on selected conversion attribution
+        conv_rate_source_col = 'Selected Conversions' if 'Selected Conversions' in chan_df.columns else 'Unique Conversions'
+        if conv_rate_source_col in chan_df.columns and 'Unique Clicks' in chan_df.columns:
+            chan_df['Conversion Rate'] = np.where(
+                chan_df['Unique Clicks'] > 0,
+                (chan_df[conv_rate_source_col] / chan_df['Unique Clicks']) * 100,
+                0
+            )
+
+        # Create display version for table - keep selected attribution columns visible
         chan_df_display = chan_df.copy()
-        for drop_col in ['Selected Revenue (SAR)']:
-            if drop_col in chan_df_display.columns:
-                chan_df_display = chan_df_display.drop(columns=[drop_col])
+        # For Total attribution, Selected Revenue (SAR) == Revenue (SAR) and will be renamed to it,
+        # so drop the raw Revenue (SAR) first to avoid a duplicate after the rename.
+        # For CT/IT attribution, keep Revenue (SAR) so total revenue stays visible in the table.
+        if (selected_rev_label == 'Revenue (SAR)'
+                and 'Selected Revenue (SAR)' in chan_df_display.columns
+                and 'Revenue (SAR)' in chan_df_display.columns):
+            chan_df_display = chan_df_display.drop(columns=['Revenue (SAR)'])
+        if 'Selected Conversions' in chan_df_display.columns and 'Unique Conversions' in chan_df_display.columns:
+            chan_df_display = chan_df_display.drop(columns=['Unique Conversions'])
+
+        # If selected labels match existing raw attribution columns, drop the raw duplicate first.
+        # Example: selecting Click-Through makes 'Selected Revenue (SAR)' rename to
+        # 'Click-Through Revenue (SAR)', which may already exist in chan_df_display.
+        selected_rev_display = attribution_rename.get('Selected Revenue (SAR)')
+        if selected_rev_display and selected_rev_display != 'Selected Revenue (SAR)' and selected_rev_display in chan_df_display.columns:
+            chan_df_display = chan_df_display.drop(columns=[selected_rev_display])
+
+        selected_conv_display = attribution_rename.get('Selected Conversions')
+        if selected_conv_display and selected_conv_display != 'Selected Conversions' and selected_conv_display in chan_df_display.columns:
+            chan_df_display = chan_df_display.drop(columns=[selected_conv_display])
 
         # Rename selected attribution columns in display table only
         chan_df_display = chan_df_display.rename(columns=attribution_rename)
+
+        # Safety guard: ensure concat/reindex operations always see unique columns.
+        if not chan_df_display.columns.is_unique:
+            chan_df_display = chan_df_display.loc[:, ~chan_df_display.columns.duplicated(keep='first')]
         
         # If comparison mode is active, calculate comparison metrics and add percentage changes
         if comparison_result:
@@ -7062,6 +7092,16 @@ if uploaded_file is not None:
                             comp_rev = chan_df_comparison.loc[chan_df_comparison['Channel'] == channel, 'Selected Revenue (SAR)']
                             comp_conv = chan_df_comparison.loc[chan_df_comparison['Channel'] == channel, 'Selected Conversions']
                             comp_val = comp_rev.sum() / comp_conv.sum() if comp_conv.sum() > 0 else 0
+                    elif source_col == 'Conversion Rate':
+                        curr_clicks = chan_df.loc[chan_df['Channel'] == channel, 'Unique Clicks'].sum()
+                        curr_conv = chan_df.loc[chan_df['Channel'] == channel, conv_rate_source_col].sum() if conv_rate_source_col in chan_df.columns else 0
+                        current_val = (curr_conv / curr_clicks) * 100 if curr_clicks > 0 else 0
+
+                        comp_val = 0
+                        if conv_rate_source_col in chan_df_comparison.columns and 'Unique Clicks' in chan_df_comparison.columns:
+                            comp_clicks = chan_df_comparison.loc[chan_df_comparison['Channel'] == channel, 'Unique Clicks'].sum()
+                            comp_conv = chan_df_comparison.loc[chan_df_comparison['Channel'] == channel, conv_rate_source_col].sum()
+                            comp_val = (comp_conv / comp_clicks) * 100 if comp_clicks > 0 else 0
                     else:
                         current_val = chan_df.loc[chan_df['Channel'] == channel, source_col].values
                         current_val = current_val[0] if len(current_val) > 0 else 0
@@ -7084,7 +7124,9 @@ if uploaded_file is not None:
                     else:
                         pct_str = ""
 
-                    if 'Revenue' in source_col or 'AOV' in source_col:
+                    if source_col == 'Conversion Rate':
+                        formatted_val = f"{current_val:.2f}%"
+                    elif 'Revenue' in source_col or 'AOV' in source_col:
                         formatted_val = format_metric(current_val, "SAR", abbreviate=True)
                     else:
                         formatted_val = format_metric(current_val, "", abbreviate=True)
@@ -7113,6 +7155,14 @@ if uploaded_file is not None:
                         comp_rev = chan_df_comparison['Selected Revenue (SAR)'].sum()
                         comp_conv = chan_df_comparison['Selected Conversions'].sum()
                         comp_total = comp_rev / comp_conv if comp_conv > 0 else 0
+                elif source_col == 'Conversion Rate':
+                    current_clicks = chan_df['Unique Clicks'].sum() if 'Unique Clicks' in chan_df.columns else 0
+                    current_conv = chan_df[conv_rate_source_col].sum() if conv_rate_source_col in chan_df.columns else 0
+                    current_total = (current_conv / current_clicks) * 100 if current_clicks > 0 else 0
+
+                    comp_clicks = chan_df_comparison['Unique Clicks'].sum() if 'Unique Clicks' in chan_df_comparison.columns else 0
+                    comp_conv = chan_df_comparison[conv_rate_source_col].sum() if conv_rate_source_col in chan_df_comparison.columns else 0
+                    comp_total = (comp_conv / comp_clicks) * 100 if comp_clicks > 0 else 0
                 else:
                     current_total = chan_df[source_col].sum()
                     comp_total = chan_df_comparison[source_col].sum() if source_col in chan_df_comparison.columns else 0
@@ -7130,7 +7180,9 @@ if uploaded_file is not None:
                 else:
                     pct_str = ""
 
-                if 'Revenue' in source_col or 'AOV' in source_col:
+                if source_col == 'Conversion Rate':
+                    formatted_total = f"{current_total:.2f}%"
+                elif 'Revenue' in source_col or 'AOV' in source_col:
                     formatted_total = format_metric(current_total, "SAR", abbreviate=True)
                 else:
                     formatted_total = format_metric(current_total, "", abbreviate=True)
@@ -7165,6 +7217,12 @@ if uploaded_file is not None:
             for col in [c for c in chan_df_display.columns if 'AOV' in c]:
                 total_row_chan[col] = total_aov
 
+            # Compute total conversion rate from totals (not sum of row percentages)
+            if 'Conversion Rate' in chan_df_display.columns:
+                total_clicks = chan_df['Unique Clicks'].sum() if 'Unique Clicks' in chan_df.columns else 0
+                total_conv_for_rate = chan_df[conv_rate_source_col].sum() if conv_rate_source_col in chan_df.columns else 0
+                total_row_chan['Conversion Rate'] = (total_conv_for_rate / total_clicks) * 100 if total_clicks > 0 else 0
+
             chan_df_display = pd.concat([chan_df_display, pd.DataFrame([total_row_chan])], ignore_index=True)
             # Format columns
             conversion_col = None
@@ -7189,6 +7247,8 @@ if uploaded_file is not None:
             aov_cols = [col for col in chan_df_display.columns if 'AOV' in col]
             for col in aov_cols:
                 chan_df_display[col] = chan_df_display[col].apply(lambda x: format_metric(x, "SAR"))
+            if 'Conversion Rate' in chan_df_display.columns:
+                chan_df_display['Conversion Rate'] = chan_df_display['Conversion Rate'].apply(lambda x: f"{x:.2f}%")
         
         # Display table with HTML rendering if comparison is active
         if comparison_result:
@@ -7353,10 +7413,15 @@ if uploaded_file is not None:
             chan_rates['Unique Impressions'] > 0,
             (chan_rates['Unique Clicks'] / chan_rates['Unique Impressions']) * 100, 0
         )
+        chan_rates['Conversion Rate'] = np.where(
+            chan_rates['Unique Clicks'] > 0,
+            (chan_rates[conv_rate_source_col] / chan_rates['Unique Clicks']) * 100,
+            0
+        )
 
-        # Charts: Delivery Rate + CTR
+        # Charts: Delivery Rate + CTR + Conversion Rate
         st.subheader("Engagement & Delivery Rates")
-        ch_col1, ch_col2 = st.columns(2)
+        ch_col1, ch_col2, ch_col3 = st.columns(3)
         with ch_col1:
             fig_dr = px.bar(
                 chan_rates, x='Channel', y='Delivery Rate',
@@ -7375,6 +7440,14 @@ if uploaded_file is not None:
             )
             fig_ctr.update_layout(showlegend=False, yaxis_title="CTR (%)")
             st.plotly_chart(fig_ctr, use_container_width=True)
+        with ch_col3:
+            fig_cvr = px.bar(
+                chan_rates, x='Channel', y='Conversion Rate',
+                title="Conversion Rate by Channel (%)",
+                color='Channel', color_discrete_map=CHANNEL_COLORS,
+            )
+            fig_cvr.update_layout(showlegend=False, yaxis_title="Conversion Rate (%)")
+            st.plotly_chart(fig_cvr, use_container_width=True)
 
         # Volume comparison (Sent vs Delivered side-by-side)
         st.subheader("Send Volume & Delivery")
