@@ -300,6 +300,17 @@ def _metric_agg(metric):
     return 'sum'
 
 def top_campaigns(df, metric='Unique Conversions', top_n=10):
+    # Conversion Rate in Top Campaigns should be weighted by clicks:
+    # sum(conversions) / sum(clicks), not an unweighted mean of row rates.
+    if metric == 'Conversion Rate' and {'Unique Conversions', 'Unique Clicks'}.issubset(df.columns):
+        grouped = df.groupby('Campaign Name')[['Unique Conversions', 'Unique Clicks']].sum()
+        grouped['Conversion Rate'] = np.where(
+            grouped['Unique Clicks'] > 0,
+            np.minimum(grouped['Unique Conversions'] / grouped['Unique Clicks'], 1.0),
+            0.0,
+        )
+        return grouped['Conversion Rate'].nlargest(top_n).reset_index()
+
     agg = _metric_agg(metric)
     return df.groupby('Campaign Name')[metric].agg(agg).nlargest(top_n).reset_index()
 
@@ -4302,7 +4313,9 @@ if uploaded_file is not None:
             top_camp_display[camp_metric] = top_camp_display[camp_metric].apply(lambda x: format_metric(x, "SAR"))
         elif camp_metric in ['Unique Conversions', 'Unique Clicks', 'Unique Click-Through Conversions', 'Unique Impression-Through Conversions']:
             top_camp_display[camp_metric] = top_camp_display[camp_metric].apply(format_metric)
-        # For rates, keep as is
+        elif camp_metric == 'Conversion Rate':
+            top_camp_display[camp_metric] = top_camp_display[camp_metric].apply(lambda x: f"{x:.2%}")
+        # For other rates, keep as is
         
         # Display table with proper sorting
         st.dataframe(top_camp_display.rename(columns=attribution_rename))
