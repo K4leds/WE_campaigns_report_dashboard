@@ -300,13 +300,15 @@ def _metric_agg(metric):
     return 'sum'
 
 def top_campaigns(df, metric='Unique Conversions', top_n=10):
-    # Conversion Rate in Top Campaigns should be weighted by clicks:
-    # sum(conversions) / sum(clicks), not an unweighted mean of row rates.
-    if metric == 'Conversion Rate' and {'Unique Conversions', 'Unique Clicks'}.issubset(df.columns):
-        grouped = df.groupby('Campaign Name')[['Unique Conversions', 'Unique Clicks']].sum()
+    # Conversion Rate: weighted sum(click-through conversions) / sum(clicks).
+    # We use Unique Click-Through Conversions when available because Unique Conversions
+    # includes impression-through conversions and can exceed Unique Clicks (causing 100% cap).
+    if metric == 'Conversion Rate' and 'Unique Clicks' in df.columns:
+        conv_col = 'Unique Click-Through Conversions' if 'Unique Click-Through Conversions' in df.columns else 'Unique Conversions'
+        grouped = df.groupby('Campaign Name')[[conv_col, 'Unique Clicks']].sum()
         grouped['Conversion Rate'] = np.where(
             grouped['Unique Clicks'] > 0,
-            np.minimum(grouped['Unique Conversions'] / grouped['Unique Clicks'], 1.0),
+            grouped[conv_col] / grouped['Unique Clicks'],
             0.0,
         )
         return grouped['Conversion Rate'].nlargest(top_n).reset_index()
