@@ -4360,14 +4360,71 @@ if uploaded_file is not None:
                 journey_row = type_comparison[type_comparison['Type of Campaign'] == 'Journey']
                 onetime_row = type_comparison[type_comparison['Type of Campaign'] == 'One-time']
                 if not journey_row.empty and not onetime_row.empty:
-                    j_rps = journey_row['Rev/Send'].values[0]
-                    o_rps = onetime_row['Rev/Send'].values[0]
-                    if o_rps > 0:
-                        ratio = j_rps / o_rps
-                        if ratio > 1:
-                            st.success(f"**Insight:** Journeys generate **{ratio:.1f}x** more revenue per send than one-time campaigns. Consider shifting more volume to automated journeys.")
+                        # Robust ratio calculation: parse totals (handles any formatted strings)
+                        from utils import parse_short_number
+                        # Extract totals and sends for each type
+                        j_total = parse_short_number(journey_row['Total_Revenue'].values[0])
+                        j_sends = parse_short_number(journey_row['Total_Sent'].values[0])
+                        o_total = parse_short_number(onetime_row['Total_Revenue'].values[0])
+                        o_sends = parse_short_number(onetime_row['Total_Sent'].values[0])
+
+                        # Compute revenue-per-send with safe guards
+                        j_rps = (j_total / j_sends) if j_sends > 0 else 0
+                        o_rps = (o_total / o_sends) if o_sends > 0 else 0
+
+                        # If both RPS present, compute ratio. Otherwise fall back to total revenue ratio
+                        ratio = None
+                        if o_rps > 0:
+                            ratio = j_rps / o_rps
+                        elif o_total > 0 and o_sends == 0 and j_sends > 0:
+                            # fallback: compare totals per send using only the other side's sends to avoid div0
+                            ratio = (j_total / max(j_sends, 1)) / max(o_total / max(o_sends, 1), 1e-9)
+
+                        # Safety: if ratio is None or not finite, avoid showing misleading large numbers
+                        try:
+                            if ratio is None or not (ratio > 0 and ratio < 1e6):
+                                # fallback to simple total revenue ratio (bounded)
+                                ratio = (j_total / max(o_total, 1)) if o_total > 0 else 0
+                        except Exception:
+                            ratio = 0
+
+                        # Show a more informative insight with totals and Rev/Send to explain large ratios
+                        from utils import format_metric
+                        j_total_fmt = format_metric(j_total, 'SAR')
+                        o_total_fmt = format_metric(o_total, 'SAR')
+                        j_sends_fmt = f"{int(j_sends):,}"
+                        o_sends_fmt = f"{int(o_sends):,}"
+                        j_rps_fmt = f"{j_rps:.3f} SAR/send"
+                        o_rps_fmt = f"{o_rps:.3f} SAR/send"
+
+                        # Headline: compare total revenue (this addresses your requested phrasing)
+                        total_ratio = (j_total / o_total) if o_total > 0 else None
+                        if total_ratio and total_ratio > 0:
+                            st.success(f"Insight: Automated journeys produced about {total_ratio:.1f}× the total revenue of one-time campaigns.")
+                            # Provide the detailed breakdown for context
+                            st.caption(
+                                f"(Journeys: {j_total_fmt} over {j_sends_fmt} sends → {j_rps_fmt}; "
+                                f"One-time: {o_total_fmt} over {o_sends_fmt} sends → {o_rps_fmt})"
+                            )
                         else:
-                            st.warning(f"**Insight:** One-time campaigns generate **{1/ratio:.1f}x** more revenue per send. Review journey targeting and content.")
+                            # Fallback to Rev/Send comparison when totals aren't available
+                            if ratio > 1:
+                                st.success(
+                                    f"**Insight:** Journeys generate **{ratio:.1f}x** more revenue per send than one-time campaigns. "
+                                    f"(Journeys: {j_total_fmt} over {j_sends_fmt} sends → {j_rps_fmt}; "
+                                    f"One-time: {o_total_fmt} over {o_sends_fmt} sends → {o_rps_fmt}). "
+                                )
+                            elif 0 < ratio <= 1:
+                                st.warning(
+                                    f"**Insight:** One-time campaigns generate **{1/ratio:.1f}x** more revenue per send. "
+                                    f"(Journeys: {j_total_fmt} over {j_sends_fmt} sends → {j_rps_fmt}; "
+                                    f"One-time: {o_total_fmt} over {o_sends_fmt} sends → {o_rps_fmt}). "
+                                )
+                            else:
+                                st.info(
+                                    "**Insight:** Unable to compute a reliable comparison with current data. "
+                                    f"(Journeys: {j_total_fmt} / {j_sends_fmt} sends; One-time: {o_total_fmt} / {o_sends_fmt} sends)"
+                                )
         else:
             st.info("No campaign type data available with current filters.")
 

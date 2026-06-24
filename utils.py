@@ -80,6 +80,61 @@ def format_number_with_suffix(value):
         return f"{value:,.0f}"
 
 
+def parse_short_number(value):
+    """
+    Parse a possibly-shortened number string into a float.
+
+    Handles formats like:
+      - 54K, 54k, 54.18K
+      - 1.2M
+      - Arabic abbreviations such as '54 ألف' or '2.5 مليون'
+      - plain numeric types (int/float)
+
+    Returns 0.0 for unparseable or NaN-like inputs.
+    """
+    import re
+    import pandas as _pd
+
+    if value is None:
+        return 0.0
+    # passthrough numeric types
+    if isinstance(value, (int, float, np.integer, np.floating)) and not _pd.isna(value):
+        return float(value)
+
+    s = str(value).strip()
+    if s == '' or s.lower() in {'nan', 'none'}:
+        return 0.0
+
+    # Normalize common punctuation
+    s = s.replace(',', '').replace('\u00A0', '').replace('\xa0', '')
+
+    # Detect multipliers from suffix text
+    multiplier = 1.0
+    sl = s.lower()
+    # Arabic words
+    if 'ألف' in s or 'الف' in s:
+        multiplier = 1_000.0
+    elif 'مليون' in s or 'ملايين' in s:
+        multiplier = 1_000_000.0
+    # Latin suffixes
+    elif 'k' in sl and 'km' not in sl:
+        multiplier = 1_000.0
+    elif 'm' in sl:
+        multiplier = 1_000_000.0
+
+    # Extract the numeric portion
+    m = re.search(r'[-+]?[0-9]*\.?[0-9]+', s)
+    if not m:
+        return 0.0
+
+    try:
+        num = float(m.group())
+    except Exception:
+        return 0.0
+
+    return num * multiplier
+
+
 def style_total_row(df):
     """
     Apply bold + light background styling to the last row (Total row) of a DataFrame.
