@@ -825,8 +825,6 @@ def generate_executive_summary(df):
     }
     
     try:
-        df = df.copy()  # Avoid mutating caller's DataFrame
-
         # Get date range
         if 'Reporting Period Start Date' in df.columns:
             df['date'] = pd.to_datetime(df['Reporting Period Start Date'])
@@ -850,13 +848,10 @@ def generate_executive_summary(df):
         
         # Generate insights
         summary['narrative_insights'] = generate_narrative_insights(df, lookback_days=30)
-        
+
         # Count alerts
         summary['alerts_count'] = len(summary['narrative_insights'].get('performance_alerts', []))
-        
-        # Generate forecast
-        summary['forecast'] = predict_revenue_forecast(df, forecast_days=14)
-        
+
         # Generate top actions
         summary['top_actions'] = generate_top_actions(df, max_actions=5)
         

@@ -2951,9 +2951,8 @@ if uploaded_file is not None:
 
     @st.cache_data
     def apply_filters_and_attribution(df, revenue_attribution, conversion_attribution, date_range, channels, campaign_types, campaigns, segments, journeys, conversion_events=None):
-        df = df.copy()
         df = _apply_attribution(df, revenue_attribution, conversion_attribution)
-        filtered_df = df.copy()
+        filtered_df = df
         if date_range and len(date_range) == 2:
             start_dt = pd.to_datetime(date_range[0])
             end_dt = pd.to_datetime(date_range[1])
@@ -2965,7 +2964,44 @@ if uploaded_file is not None:
                                           (filtered_df['Reporting Period End Date'] <= end_dt)]
         filtered_df = _apply_dimension_filters(filtered_df, channels, campaign_types, campaigns, segments, journeys, conversion_events)
         return filtered_df
-    
+
+    @st.cache_data
+    def cached_executive_summary(filtered_df):
+        return generate_executive_summary(filtered_df)
+
+    @st.cache_data
+    def cached_journey_health_scores(filtered_df):
+        journey_health_data = []
+        unique_journeys = filtered_df['Journey Name'].dropna().unique()
+        for journey in unique_journeys:
+            if str(journey) != 'nan' and journey:
+                journey_data = filtered_df[filtered_df['Journey Name'] == journey]
+                health_info = calculate_journey_health_score(journey_data, filtered_df)
+                journey_health_data.append({
+                    'Journey Name': journey,
+                    'Health Score': health_info['health_score'],
+                    'Tier': health_info['tier'],
+                    'Revenue (SAR)': journey_data['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in journey_data.columns else journey_data['Revenue (SAR)'].sum(),
+                    'Impression-Through Revenue (SAR)': journey_data['Impression-Through Revenue (SAR)'].sum() if 'Impression-Through Revenue (SAR)' in journey_data.columns else 0,
+                    'Click-Through Revenue (SAR)': journey_data['Click-Through Revenue (SAR)'].sum() if 'Click-Through Revenue (SAR)' in journey_data.columns else 0,
+                    'Total Conversions': journey_data['Selected Conversions'].sum() if 'Selected Conversions' in journey_data.columns else journey_data['Unique Conversions'].sum(),
+                    'Delivery Score': health_info['component_scores'].get('delivery', 0),
+                    'Engagement Score': health_info['component_scores'].get('engagement', 0),
+                    'Conversion Score': health_info['component_scores'].get('conversion', 0),
+                    'Revenue Score': health_info['component_scores'].get('revenue', 0)
+                })
+        return journey_health_data
+
+    @st.cache_data
+    def cached_journey_lifecycle(filtered_df):
+        return analyze_journey_lifecycle(filtered_df)
+
+    @st.cache_data
+    def cached_comparison(df, revenue_attribution, conversion_attribution, channels, campaign_types, campaigns, segments, journeys, conversion_events, date_range, comparison_mode, comparison_date_range):
+        base = apply_attribution(df, revenue_attribution, conversion_attribution)
+        base = apply_dimension_filters(base, list(channels), list(campaign_types), list(campaigns), list(segments), list(journeys), list(conversion_events))
+        return calculate_comparison_periods(base, date_range, comparison_mode, comparison_date_range)
+
     if not df.empty:
         min_date = df['Reporting Period Start Date'].min()
         max_date = df['Reporting Period End Date'].max()
@@ -3014,15 +3050,26 @@ if uploaded_file is not None:
         else:
             comparison_date_range = st.sidebar.date_input("Custom Comparison Range", [], key="comparison_date_range")
     
-    channels = st.sidebar.multiselect("Channels", sorted(df['Channel'].dropna().unique().tolist()) if not df.empty else [])
-    # Campaign Type filter (Journey vs One-Time)
-    campaign_types_available = sorted(df['Type of Campaign'].dropna().unique().tolist()) if (not df.empty and 'Type of Campaign' in df.columns) else []
-    campaign_types = st.sidebar.multiselect("Campaign Type", campaign_types_available, help="Filter by Journey or One-Time campaigns")
-    campaigns = st.sidebar.multiselect("Campaigns", sorted([c for c in df['Campaign Name'].dropna().unique().tolist() if c != 'nan']) if not df.empty else [])
-    segments = st.sidebar.multiselect("Segments", sorted([s for s in df['Segment Name'].dropna().unique().tolist() if s != 'nan']) if not df.empty else [])
-    journeys = st.sidebar.multiselect("Journeys", sorted([j for j in df['Journey Name'].dropna().unique().tolist() if j != 'nan']) if not df.empty else [])
-    conversion_events_available = sorted(df['Conversion Event'].dropna().unique().tolist()) if (not df.empty and 'Conversion Event' in df.columns) else []
-    conversion_events = st.sidebar.multiselect("Conversion Event", conversion_events_available, help="Filter by conversion event type (e.g., Order Completed, Cart Submitted)")
+    # Compute filter option lists once per uploaded file and store them
+    _file_id = uploaded_file.file_id if hasattr(uploaded_file, 'file_id') else uploaded_file.name
+    if st.session_state.get('_filter_options_file_id') != _file_id:
+        st.session_state['_filter_options_file_id'] = _file_id
+        st.session_state['_filter_options'] = {
+            'channels': sorted(df['Channel'].dropna().unique().tolist()) if not df.empty else [],
+            'campaign_types': sorted(df['Type of Campaign'].dropna().unique().tolist()) if (not df.empty and 'Type of Campaign' in df.columns) else [],
+            'campaigns': sorted([c for c in df['Campaign Name'].dropna().unique().tolist() if c != 'nan']) if not df.empty else [],
+            'segments': sorted([s for s in df['Segment Name'].dropna().unique().tolist() if s != 'nan']) if not df.empty else [],
+            'journeys': sorted([j for j in df['Journey Name'].dropna().unique().tolist() if j != 'nan']) if not df.empty else [],
+            'conversion_events': sorted(df['Conversion Event'].dropna().unique().tolist()) if (not df.empty and 'Conversion Event' in df.columns) else [],
+        }
+    _opts = st.session_state['_filter_options']
+
+    channels = st.sidebar.multiselect("Channels", _opts['channels'])
+    campaign_types = st.sidebar.multiselect("Campaign Type", _opts['campaign_types'], help="Filter by Journey or One-Time campaigns")
+    campaigns = st.sidebar.multiselect("Campaigns", _opts['campaigns'])
+    segments = st.sidebar.multiselect("Segments", _opts['segments'])
+    journeys = st.sidebar.multiselect("Journeys", _opts['journeys'])
+    conversion_events = st.sidebar.multiselect("Conversion Event", _opts['conversion_events'], help="Filter by conversion event type (e.g., Order Completed, Cart Submitted)")
 
     # Apply filters using cached function
     filtered_df = apply_filters_and_attribution(df, revenue_attribution, conversion_attribution, date_range, channels, campaign_types, campaigns, segments, journeys, conversion_events)
@@ -3030,15 +3077,11 @@ if uploaded_file is not None:
     # Calculate comparison data if comparison mode is enabled
     comparison_result = None
     if comparison_mode != "None":
-        df_with_attribution = df.copy()
-        df_with_attribution = _apply_attribution(df_with_attribution, revenue_attribution, conversion_attribution)
-        df_with_attribution = _apply_dimension_filters(df_with_attribution, channels, campaign_types, campaigns, segments, journeys, conversion_events)
-
-        comparison_result = calculate_comparison_periods(
-            df_with_attribution,
-            date_range,
-            comparison_mode,
-            comparison_date_range
+        comparison_result = cached_comparison(
+            df, revenue_attribution, conversion_attribution,
+            tuple(channels), tuple(campaign_types), tuple(campaigns),
+            tuple(segments), tuple(journeys), tuple(conversion_events or []),
+            date_range, comparison_mode, comparison_date_range
         )
 
     st.write(f"Filtered data: {len(filtered_df)} rows")
@@ -3052,7 +3095,7 @@ if uploaded_file is not None:
         
         # Generate executive summary
         with st.spinner("🧠 Analyzing data and generating insights..."):
-            exec_summary = generate_executive_summary(filtered_df)
+            exec_summary = cached_executive_summary(filtered_df)
         
         # === EXECUTIVE SUMMARY CARD ===
         st.markdown("---")
@@ -6016,26 +6059,7 @@ if uploaded_file is not None:
         
         
         # Calculate health scores for all journeys
-        journey_health_data = []
-        unique_journeys = filtered_df['Journey Name'].dropna().unique()
-        
-        for journey in unique_journeys:
-            if str(journey) != 'nan' and journey:
-                journey_data = filtered_df[filtered_df['Journey Name'] == journey]
-                health_info = calculate_journey_health_score(journey_data, filtered_df)
-                journey_health_data.append({
-                    'Journey Name': journey,
-                    'Health Score': health_info['health_score'],
-                    'Tier': health_info['tier'],
-                    'Revenue (SAR)': journey_data['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in journey_data.columns else journey_data['Revenue (SAR)'].sum(),
-                    'Impression-Through Revenue (SAR)': journey_data['Impression-Through Revenue (SAR)'].sum() if 'Impression-Through Revenue (SAR)' in journey_data.columns else 0,
-                    'Click-Through Revenue (SAR)': journey_data['Click-Through Revenue (SAR)'].sum() if 'Click-Through Revenue (SAR)' in journey_data.columns else 0,
-                    'Total Conversions': journey_data['Selected Conversions'].sum() if 'Selected Conversions' in journey_data.columns else journey_data['Unique Conversions'].sum(),
-                    'Delivery Score': health_info['component_scores'].get('delivery', 0),
-                    'Engagement Score': health_info['component_scores'].get('engagement', 0),
-                    'Conversion Score': health_info['component_scores'].get('conversion', 0),
-                    'Revenue Score': health_info['component_scores'].get('revenue', 0)
-                })
+        journey_health_data = cached_journey_health_scores(filtered_df)
         
         if journey_health_data:
             health_df = pd.DataFrame(journey_health_data)
@@ -6614,7 +6638,7 @@ if uploaded_file is not None:
         st.subheader("🔄 Journey Lifecycle Analytics")
         
         with st.spinner("Analyzing journey maturity and performance curves..."):
-            lifecycle_data = analyze_journey_lifecycle(filtered_df)
+            lifecycle_data = cached_journey_lifecycle(filtered_df)
             
             if lifecycle_data and not isinstance(lifecycle_data, dict) and len(lifecycle_data) > 0:
                 lifecycle_df = pd.DataFrame(lifecycle_data)
