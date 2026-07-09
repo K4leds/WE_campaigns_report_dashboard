@@ -5221,10 +5221,15 @@ if uploaded_file is not None:
                     
                     # Optional chart
                     if st.checkbox("Show Monthly Trend Chart", key='monthly_onetime_chart'):
-                        fig_monthly = px.bar(monthly_campaigns, x='Month', y='Unique Campaigns',
+                        chart_data = monthly_campaigns.sort_values('Month')
+                        fig_monthly = px.bar(chart_data, x='Month', y='Unique Campaigns',
                                            title="Unique One-Time Campaigns per Month",
                                            color_discrete_sequence=[COLORS['primary']])
-                        fig_monthly.update_layout(xaxis_title="Month", yaxis_title="Number of Campaigns")
+                        fig_monthly.update_layout(
+                            xaxis_title="Month",
+                            yaxis_title="Number of Campaigns",
+                            xaxis=dict(type='category')
+                        )
                         st.plotly_chart(fig_monthly, use_container_width=True)
 
         # Campaign Drill-Down
