@@ -5007,7 +5007,6 @@ if uploaded_file is not None:
                     'Failed': 'sum',
                     'Unique Clicks': 'sum',
                     'Unique Conversions': 'sum',
-                    'Channel': 'first',  # Take first channel if multiple
                     'Day': 'min'  # Launch date
                 }
                 if 'Selected Revenue (SAR)' in onetime_df.columns:
@@ -5031,13 +5030,14 @@ if uploaded_file is not None:
                 if 'Click-Through Revenue (SAR)' in onetime_df.columns:
                     agg_dict['Click-Through Revenue (SAR)'] = 'sum'
 
-                onetime_summary = onetime_df.groupby('Campaign Name').agg(agg_dict).reset_index()
+                groupby_cols = ['Campaign Name', 'Channel'] if 'Channel' in onetime_df.columns else ['Campaign Name']
+                onetime_summary = onetime_df.groupby(groupby_cols).agg(agg_dict).reset_index()
                 
                 # Apply sent threshold AFTER aggregation so attribution-window rows (Sent=0) aren't lost
                 onetime_summary = onetime_summary[onetime_summary['Sent'] >= min_sent_threshold]
                 
                 # Summary metrics (computed after aggregation so they reflect true totals)
-                total_onetime_campaigns = len(onetime_summary)
+                total_onetime_campaigns = onetime_summary['Campaign Name'].nunique()
                 total_onetime_sent = onetime_summary['Sent'].sum()
                 total_onetime_delivered = onetime_summary['Delivered'].sum()
                 
@@ -5101,7 +5101,8 @@ if uploaded_file is not None:
                 conv_col_display = 'Selected Conversions' if 'Selected Conversions' in onetime_summary.columns else 'Unique Conversions'
                 
                 # Build display columns dynamically to include all revenue types (but avoid duplicates)
-                display_cols = ['Campaign Name', 'Channel', 'Sent', 'Delivered', 'Delivery Rate', 
+                base_cols = ['Campaign Name'] + (['Channel'] if 'Channel' in onetime_summary.columns else [])
+                display_cols = base_cols + ['Sent', 'Delivered', 'Delivery Rate',
                               'Unique Clicks', 'CTR', conv_col_display, 'Conversion Rate', revenue_col]
                 
                 # Add attribution revenue columns ONLY if they won't conflict after rename
