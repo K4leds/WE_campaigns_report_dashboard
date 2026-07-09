@@ -2951,7 +2951,8 @@ if uploaded_file is not None:
 
     @st.cache_data
     def apply_filters_and_attribution(df, revenue_attribution, conversion_attribution, date_range, channels, campaign_types, campaigns, segments, journeys, conversion_events=None):
-        df = _apply_attribution(df, revenue_attribution, conversion_attribution)
+        # copy() because apply_attribution writes columns in place; df is the shared cached object
+        df = _apply_attribution(df.copy(), revenue_attribution, conversion_attribution)
         filtered_df = df
         if date_range and len(date_range) == 2:
             start_dt = pd.to_datetime(date_range[0])
@@ -2998,7 +2999,8 @@ if uploaded_file is not None:
 
     @st.cache_data
     def cached_comparison(df, revenue_attribution, conversion_attribution, channels, campaign_types, campaigns, segments, journeys, conversion_events, date_range, comparison_mode, comparison_date_range):
-        base = apply_attribution(df, revenue_attribution, conversion_attribution)
+        # copy() because apply_attribution writes columns in place; df is the shared cached object
+        base = apply_attribution(df.copy(), revenue_attribution, conversion_attribution)
         base = apply_dimension_filters(base, list(channels), list(campaign_types), list(campaigns), list(segments), list(journeys), list(conversion_events))
         return calculate_comparison_periods(base, date_range, comparison_mode, comparison_date_range)
 

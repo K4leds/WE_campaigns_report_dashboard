@@ -825,6 +825,8 @@ def generate_executive_summary(df):
     }
     
     try:
+        df = df.copy()  # avoid mutating caller's DataFrame (adds a 'date' column below)
+
         # Get date range
         if 'Reporting Period Start Date' in df.columns:
             df['date'] = pd.to_datetime(df['Reporting Period Start Date'])
