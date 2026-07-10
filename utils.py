@@ -33,29 +33,38 @@ def configure_plotly_template(color_sequence):
 def format_metric(value, unit="", abbreviate=True):
     """
     Format metric values for display.
-    
+
+    IMPORTANT: This function returns DISPLAY STRINGS and must NEVER be applied
+    to DataFrame columns. Use st.column_config.NumberColumn for DataFrame display
+    instead, which keeps underlying values numeric for proper sorting.
+
     Args:
         value: The numeric value to format
         unit: Optional unit label (e.g., "SAR")
         abbreviate: If True, use K/M abbreviations. If False, show full number with commas
-    
+
     Returns:
-        Formatted string representation of the metric
+        Formatted string representation of the metric, or "N/A" for NaN/None
     """
-    if isinstance(value, (int, float, np.integer, np.floating)) and not pd.isna(value):
+    if value is None:
+        return "N/A"
+    if isinstance(value, (int, float, np.integer, np.floating)) and not np.isnan(float(value)):
         if abbreviate:
             abs_val = abs(value)
             if abs_val >= 1e6:
-                return f"{value/1e6:.1f}M {unit}".strip()
+                result = f"{value/1e6:.1f}M"
             elif abs_val >= 1e3:
-                return f"{value/1e3:.1f}K {unit}".strip()
+                result = f"{value/1e3:.1f}K"
             else:
-                return f"{value:,.0f} {unit}".strip()
+                result = f"{value:,.0f}"
         else:
-            # Show full number with thousand separators
-            return f"{value:,.0f} {unit}".strip()
+            result = f"{value:,.0f}"
+
+        if unit:
+            return f"{result} {unit}"
+        return result
     else:
-        return f"{value} {unit}".strip()
+        return "N/A"
 
 
 def format_number_with_suffix(value):
