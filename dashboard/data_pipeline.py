@@ -11,9 +11,9 @@ from dashboard.comparisons_logic import calculate_comparison_periods
 
 
 @st.cache_data
-def load_and_clean_data(uploaded_file):
+def load_and_clean_data(uploaded_file, channel_costs=None):
     df = pd.read_csv(uploaded_file)
-    df = clean_data(df)
+    df = clean_data(df, channel_costs=channel_costs)
     return df
 
 

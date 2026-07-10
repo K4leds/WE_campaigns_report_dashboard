@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
 from utils import format_metric
-from config import CHANNEL_COSTS, COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
+from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_selected_revenue_display_name, get_selected_conversion_display_name
 from analysis import failed_reasons_analysis
 from dashboard.comparisons_logic import (
@@ -23,6 +23,7 @@ selected_rev_label = ctx.selected_rev_label
 selected_conv_label = ctx.selected_conv_label
 date_range = ctx.date_range
 comparison_mode = ctx.comparison_mode
+channel_costs = ctx.channel_costs
 
 # Display-friendly rename map for attribution-selected columns (mirrors app.py prelude)
 attribution_rename = {'Selected Revenue (SAR)': selected_rev_label, 'Selected Conversions': selected_conv_label}
@@ -158,7 +159,7 @@ if comparison_result:
     # NEW: ROI & Cost Efficiency Metrics
     st.markdown("---")
     st.subheader("💵 ROI & Cost Efficiency")
-    cost_display = ", ".join(f"{ch} ({c} SAR/1k)" for ch, c in CHANNEL_COSTS.items() if c > 0)
+    cost_display = ", ".join(f"{ch} ({c} SAR/1k)" for ch, c in channel_costs.items() if c > 0)
     st.caption(f"*Based on channel costs: {cost_display}*")
     
     roi_col1, roi_col2, roi_col3, roi_col4 = st.columns(4)
@@ -481,9 +482,9 @@ if 'Channel' in filtered_df.columns:
         0
     ).round(2)
     
-    # Calculate cost-based metrics for channels (uses centralized CHANNEL_COSTS)
+    # Calculate cost-based metrics for channels (uses this session's channel_costs, defaulting to config.CHANNEL_COSTS)
     channel_data['Cost'] = channel_data.apply(
-        lambda row: (row['Sent'] / 1000) * CHANNEL_COSTS.get(row['Channel'], 0),
+        lambda row: (row['Sent'] / 1000) * channel_costs.get(row['Channel'], 0),
         axis=1
     ).round(2)
     

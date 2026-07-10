@@ -274,7 +274,19 @@ if uploaded_file is None:
         uploaded_file = _test_csv_path
 
 if uploaded_file is not None:
-    df = load_and_clean_data(uploaded_file)
+    # Channel cost overrides — different clients negotiate different per-channel
+    # rates, so the hardcoded config.CHANNEL_COSTS defaults won't fit everyone.
+    # Collected before cleaning so Campaign Cost/ROAS/Cost-Per-* reflect them.
+    with st.sidebar.expander("💰 Channel Costs (SAR per 1,000 sends)", expanded=False):
+        st.caption("Override with this client's actual negotiated rates. Defaults shown are the dashboard's built-in estimates.")
+        channel_cost_overrides = {}
+        for channel, default_cost in CHANNEL_COSTS.items():
+            channel_cost_overrides[channel] = st.number_input(
+                channel, min_value=0.0, value=float(default_cost), step=0.1,
+                key=f"channel_cost_{channel}", format="%.2f",
+            )
+
+    df = load_and_clean_data(uploaded_file, channel_costs=channel_cost_overrides)
 
     # Validate required columns exist
     missing_cols = [col for col in REQUIRED_COLUMNS if col not in df.columns]
@@ -414,6 +426,7 @@ if uploaded_file is not None:
         conversion_attribution=conversion_attribution,
         selected_rev_label=selected_rev_label, selected_conv_label=selected_conv_label,
         date_range=date_range, comparison_mode=comparison_mode,
+        channel_costs=channel_cost_overrides,
         filter_options=_opts,
         channels=channels, campaign_types=campaign_types, campaigns=campaigns,
         segments=segments, journeys=journeys, conversion_events=conversion_events,

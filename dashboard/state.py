@@ -16,6 +16,7 @@ class DashboardState:
     selected_conv_label: str
     date_range: Any
     comparison_mode: str
+    channel_costs: dict = field(default_factory=dict)
     filter_options: dict = field(default_factory=dict)
     channels: list = field(default_factory=list)
     campaign_types: list = field(default_factory=list)

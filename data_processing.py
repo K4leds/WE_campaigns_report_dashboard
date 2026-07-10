@@ -8,10 +8,10 @@ import numpy as np
 from config import CHANNEL_COSTS
 
 
-def clean_data(df):
+def clean_data(df, channel_costs=None):
     """
     Clean and prepare raw data for analysis.
-    
+
     Performs:
     - Date column conversion
     - Numeric type conversion
@@ -19,13 +19,18 @@ def clean_data(df):
     - Revenue column parsing
     - Calculated metric generation
     - Cost-based metric calculation
-    
+
     Args:
         df: Raw DataFrame from CSV
-    
+        channel_costs: Optional dict of {channel: cost per 1000 sends (SAR)},
+            overriding config.CHANNEL_COSTS. Lets callers use client-specific
+            negotiated rates instead of the hardcoded defaults.
+
     Returns:
         Cleaned DataFrame with calculated metrics
     """
+    if channel_costs is None:
+        channel_costs = CHANNEL_COSTS
     # Convert date columns to datetime - try multiple possible column names
     date_cols = []
     possible_date_cols = ['Reporting Period Start Date', 'Reporting Period End Date', 'Campaign Start Date', 'Campaign End Date', 'Day', 'Start Date']
@@ -135,7 +140,7 @@ def clean_data(df):
     # Calculate campaign cost based on channel and sends (uses centralized CHANNEL_COSTS)
     if 'Channel' in df.columns and 'Sent' in df.columns:
         df['Campaign Cost'] = df.apply(
-            lambda row: (row['Sent'] / 1000) * CHANNEL_COSTS.get(row['Channel'], 0),
+            lambda row: (row['Sent'] / 1000) * channel_costs.get(row['Channel'], 0),
             axis=1
         )
     else:
