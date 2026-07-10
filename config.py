@@ -25,13 +25,41 @@ REQUIRED_COLUMNS = ['Day', 'Campaign Name', 'Channel', 'Sent', 'Delivered']
 
 # Chart theme & colors - Professional color palette for client-ready charts
 COLORS = {
-    'primary': '#2563EB',      # Blue
+    'primary': '#0EA5E9',      # Sky Blue
     'secondary': '#7C3AED',    # Purple
-    'success': '#059669',      # Green
-    'warning': '#D97706',      # Amber
-    'danger': '#DC2626',       # Red
-    'info': '#0891B2',         # Cyan
+    'success': '#22C55E',      # Green
+    'warning': '#F59E0B',      # Amber
+    'danger': '#EF4444',       # Red
+    'info': '#6366F1',         # Indigo
     'muted': '#6B7280',        # Gray
+}
+
+# Full design tokens for themes (matches .streamlit/config.toml)
+PALETTE = {
+    'dark': {
+        'background': '#0F172A',          # slate-900
+        'surface': '#1E293B',             # slate-800
+        'text': '#F1F5F9',                # slate-100
+        'text_muted': '#94A3B8',          # slate-400
+        'border': '#334155',              # slate-700
+        'primary': '#0EA5E9',
+        'success': '#22C55E',
+        'warning': '#F59E0B',
+        'danger': '#EF4444',
+        'info': '#6366F1',
+    },
+    'light': {
+        'background': '#F8FAFC',          # slate-50
+        'surface': '#FFFFFF',
+        'text': '#0F172A',                # slate-900
+        'text_muted': '#64748B',          # slate-500
+        'border': '#E2E8F0',              # slate-200
+        'primary': '#0EA5E9',
+        'success': '#22C55E',
+        'warning': '#F59E0B',
+        'danger': '#EF4444',
+        'info': '#6366F1',
+    },
 }
 
 # Ordered sequence for multi-series charts
