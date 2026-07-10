@@ -7,3 +7,5 @@ __pycache__/
 *.md
 *.csv
 validate_november.py
+.streamlit/secrets.toml
+.env
