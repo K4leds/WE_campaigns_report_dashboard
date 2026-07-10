@@ -3,6 +3,7 @@ Utility functions for formatting, styling, and common operations.
 Includes formatting, display helpers, and data transformation utilities.
 """
 
+import streamlit as st
 import pandas as pd
 import numpy as np
 from io import BytesIO
@@ -263,3 +264,39 @@ def apply_formatting_to_columns(df, columns_by_type):
             df_display[col] = df_display[col].apply(lambda x: f"{x:.2f}")
     
     return df_display
+
+
+def render_kpi_card(
+    label: str,
+    value: str,
+    delta: str | None = None,
+    icon: str | None = None,
+    progress: float | None = None,
+    help_text: str | None = None,
+    use_container_width: bool = True,
+) -> None:
+    """Render a styled KPI metric card with optional icon, delta badge, and progress bar."""
+    card_html = '<div style="background: var(--st-secondary-background-color, #1E293B); border-radius: 8px; padding: 16px; margin-bottom: 8px; border: 1px solid var(--st-border-color, #334155);">'
+
+    if icon:
+        card_html += f'<div style="font-size: 24px; margin-bottom: 4px;">{icon}</div>'
+
+    card_html += f'<div style="font-size: 13px; color: var(--st-text-muted, #94A3B8); margin-bottom: 4px;">{label}</div>'
+    card_html += f'<div style="font-size: 28px; font-weight: 700; color: var(--st-text-color, #F1F5F9); line-height: 1.2;">{value}</div>'
+
+    if delta:
+        is_positive = delta.startswith("+")
+        delta_color = "#22C55E" if is_positive else "#EF4444"
+        card_html += f'<div style="font-size: 14px; color: {delta_color}; margin-top: 4px;">{delta}</div>'
+
+    if progress is not None:
+        pct = max(0, min(100, progress * 100))
+        card_html += f'''
+        <div style="margin-top: 12px; height: 4px; background: var(--st-border-color, #334155); border-radius: 2px; overflow: hidden;">
+            <div style="height: 100%; width: {pct:.0f}%; background: var(--st-primary-color, #0EA5E9); border-radius: 2px; transition: width 0.3s;"></div>
+        </div>
+        '''
+
+    card_html += "</div>"
+
+    st.markdown(card_html, unsafe_allow_html=True)
