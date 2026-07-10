@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -91,30 +92,53 @@ def _month_range_options(start_date, end_date):
     months = pd.period_range(start, end, freq='M')
     return [m.to_timestamp() for m in months]
 
-# Define multipage navigation using st.Page + st.navigation
-_pages = [
-    st.Page("pages/01_automated_insights.py", title="Automated Insights", icon="🎯"),
-    st.Page("pages/02_overview.py", title="Overview", icon="📊"),
-    st.Page("pages/03_marketing_actions.py", title="Marketing Actions", icon="📈"),
-    st.Page("pages/04_campaigns.py", title="Campaigns", icon="🚀"),
-    st.Page("pages/05_journeys.py", title="Journeys", icon="🔄"),
-    st.Page("pages/06_segments.py", title="Segments", icon="👥"),
-    st.Page("pages/07_channels.py", title="Channels", icon="📡"),
-    st.Page("pages/08_time_series.py", title="Time Series", icon="📅"),
-    st.Page("pages/09_correlations.py", title="Correlations", icon="🔗"),
-    st.Page("pages/10_ab_testing.py", title="A/B Testing", icon="🔬"),
-    st.Page("pages/11_attribution.py", title="Attribution", icon="📋"),
-    st.Page("pages/12_failed_reasons.py", title="Failed Reasons", icon="❌"),
-    st.Page("pages/13_export.py", title="Export", icon="📤"),
-    st.Page("pages/14_comparisons.py", title="Comparisons", icon="⚖️"),
-    st.Page("pages/15_ai_insights.py", title="AI Insights", icon="🤖"),
+# Define grouped multipage navigation using st.Page + st.navigation
+_overview_pages = [
+    st.Page("pages/01_automated_insights.py", title="Automated Insights", icon=":material/insights:"),
+    st.Page("pages/02_overview.py", title="Executive Overview", icon=":material/dashboard:", default=True),
+    st.Page("pages/03_marketing_actions.py", title="Marketing Actions", icon=":material/campaign:"),
 ]
+
+_analysis_pages = [
+    st.Page("pages/04_campaigns.py", title="Campaigns", icon=":material/rocket_launch:"),
+    st.Page("pages/05_journeys.py", title="Journeys", icon=":material/route:"),
+    st.Page("pages/07_channels.py", title="Channels", icon=":material/satellite_alt:"),
+    st.Page("pages/06_segments.py", title="Segments", icon=":material/groups:"),
+    st.Page("pages/11_attribution.py", title="Attribution", icon=":material/assignment:"),
+    st.Page("pages/10_ab_testing.py", title="A/B Testing", icon=":material/science:"),
+    st.Page("pages/08_time_series.py", title="Time Series & Correlations", icon=":material/trending_up:"),
+]
+
+_ai_pages = [
+    st.Page("pages/15_ai_insights.py", title="AI Insights", icon=":material/psychology:"),
+    st.Page("pages/14_comparisons.py", title="Comparisons", icon=":material/compare_arrows:"),
+    st.Page("pages/01_automated_insights.py", title="Automated Insights", icon=":material/insights:", url_path="ai_automated_insights"),
+]
+
+_export_pages = [
+    st.Page("pages/13_export.py", title="Export Reports", icon=":material/download:"),
+]
+
+_pages = {
+    "🔍  Overview": _overview_pages,
+    "📈  Analysis": _analysis_pages,
+    "🤖  AI & Forecasting": _ai_pages,
+    "📤  Export": _export_pages,
+}
+
 pg = st.navigation(_pages)
 
 st.title("WebEngage CSV Dashboard")
 
 # Upload CSV
 uploaded_file = st.file_uploader("Upload WebEngage CSV", type="csv")
+
+# Test-only fallback: set DASHBOARD_TEST_CSV to a local path to skip manual
+# upload during automated/browser testing. Never active otherwise.
+if uploaded_file is None:
+    _test_csv_path = os.environ.get("DASHBOARD_TEST_CSV")
+    if _test_csv_path and os.path.exists(_test_csv_path):
+        uploaded_file = _test_csv_path
 
 if uploaded_file is not None:
     df = load_and_clean_data(uploaded_file)
@@ -214,7 +238,7 @@ if uploaded_file is not None:
             comparison_date_range = st.sidebar.date_input("Custom Comparison Range", [], key="comparison_date_range")
     
     # Compute filter option lists once per uploaded file and store them
-    _file_id = uploaded_file.file_id if hasattr(uploaded_file, 'file_id') else uploaded_file.name
+    _file_id = uploaded_file.file_id if hasattr(uploaded_file, 'file_id') else getattr(uploaded_file, 'name', uploaded_file)
     if st.session_state.get('_filter_options_file_id') != _file_id:
         st.session_state['_filter_options_file_id'] = _file_id
         st.session_state['_filter_options'] = {
