@@ -16,6 +16,10 @@ warnings.filterwarnings('ignore')
 
 logger = logging.getLogger(__name__)
 
+# Minimum Sent volume for a channel to be eligible for its own alerts/opportunities/
+# actions -- avoids flagging noise on a client's low-volume test channel.
+CHANNEL_MIN_SENT = 200
+
 
 def _approx_ramadan_month(year):
     """
@@ -137,10 +141,12 @@ def generate_narrative_insights(df, journey_name=None, lookback_days=30):
         # === PERFORMANCE ALERTS ===
         alerts = detect_performance_alerts(df, recent_df)
         insights['performance_alerts'].extend(alerts)
-        
+        insights['performance_alerts'].extend(detect_channel_performance_alerts(df, recent_df))
+
         # === OPPORTUNITIES ===
         opportunities = identify_optimization_opportunities(df, recent_df)
         insights['opportunities'].extend(opportunities)
+        insights['opportunities'].extend(identify_channel_optimization_opportunities(df, recent_df))
         
         # === CONTEXT NOTES (Seasonality, Events) ===
         context_notes = add_business_context(df)
@@ -327,6 +333,79 @@ def detect_performance_alerts(df, recent_df):
     return alerts
 
 
+def detect_channel_performance_alerts(df, recent_df):
+    """
+    Per-channel version of detect_performance_alerts -- same thresholds, scoped to
+    each channel present in the data (with enough volume to be meaningful), so a
+    client-specific channel mix surfaces client-specific alerts instead of only
+    portfolio-wide ones.
+    """
+    alerts = []
+
+    if 'Channel' not in recent_df.columns:
+        return alerts
+
+    try:
+        channel_volumes = recent_df.groupby('Channel')['Sent'].sum() if 'Sent' in recent_df.columns else pd.Series(dtype=float)
+        eligible_channels = channel_volumes[channel_volumes >= CHANNEL_MIN_SENT].index
+
+        for channel in eligible_channels:
+            chan_recent = recent_df[recent_df['Channel'] == channel]
+            chan_all = df[df['Channel'] == channel]
+
+            # Delivery rate alert
+            if 'Delivered' in chan_recent.columns and 'Sent' in chan_recent.columns:
+                recent_delivery = chan_recent['Delivered'].sum() / max(chan_recent['Sent'].sum(), 1)
+                if recent_delivery < 0.85:
+                    alerts.append({
+                        'emoji': '🚨',
+                        'title': f'{channel} Delivery Issue',
+                        'message': f"{channel} delivery rate dropped to {recent_delivery:.1%} (target: >90%). Investigate sender reputation and authentication.",
+                        'severity': 'critical',
+                        'action': f'Review {channel} ESP settings, check blocklists, verify authentication',
+                        'scope': 'channel',
+                        'channel': channel,
+                    })
+
+            # Conversion rate alert
+            if 'Unique Conversions' in chan_recent.columns and 'Unique Clicks' in chan_recent.columns:
+                recent_conv_rate = chan_recent['Unique Conversions'].sum() / max(chan_recent['Unique Clicks'].sum(), 1)
+                overall_conv_rate = chan_all['Unique Conversions'].sum() / max(chan_all['Unique Clicks'].sum(), 1)
+
+                if overall_conv_rate > 0 and recent_conv_rate < overall_conv_rate * 0.7:
+                    decline_pct = ((recent_conv_rate - overall_conv_rate) / overall_conv_rate) * 100
+                    alerts.append({
+                        'emoji': '⚠️',
+                        'title': f'{channel} Conversion Rate Decline',
+                        'message': f"{channel} conversion rate down {abs(decline_pct):.1f}% vs its historical average. Landing page or offer may need optimization.",
+                        'severity': 'warning',
+                        'action': f'A/B test {channel} landing page elements, review offer relevance',
+                        'scope': 'channel',
+                        'channel': channel,
+                    })
+
+            # Engagement alert
+            if 'Unique Clicks' in chan_recent.columns and 'Unique Impressions' in chan_recent.columns:
+                recent_ctr = chan_recent['Unique Clicks'].sum() / max(chan_recent['Unique Impressions'].sum(), 1)
+                overall_ctr = chan_all['Unique Clicks'].sum() / max(chan_all['Unique Impressions'].sum(), 1)
+
+                if overall_ctr > 0 and recent_ctr < overall_ctr * 0.6:
+                    alerts.append({
+                        'emoji': '📉',
+                        'title': f'{channel} Engagement Fatigue',
+                        'message': f"{channel} CTR significantly below its normal ({recent_ctr:.2%} vs {overall_ctr:.2%}). Audience may be experiencing creative fatigue.",
+                        'severity': 'warning',
+                        'action': f'Refresh {channel} creative assets, test new messaging',
+                        'scope': 'channel',
+                        'channel': channel,
+                    })
+
+    except Exception as e:
+        logger.warning(f"detect_channel_performance_alerts failed: {e}")
+
+    return alerts
+
+
 def identify_optimization_opportunities(df, recent_df):
     """
     Identify specific, actionable optimization opportunities
@@ -389,6 +468,66 @@ def identify_optimization_opportunities(df, recent_df):
         
     except Exception as e:
         logger.warning(f"identify_optimization_opportunities failed: {e}")
+
+    return opportunities
+
+
+def identify_channel_optimization_opportunities(df, recent_df):
+    """
+    Per-channel version of identify_optimization_opportunities -- same thresholds,
+    scoped to each channel present in the data (with enough volume to be
+    meaningful).
+    """
+    opportunities = []
+
+    if 'Channel' not in recent_df.columns:
+        return opportunities
+
+    try:
+        channel_volumes = recent_df.groupby('Channel')['Sent'].sum() if 'Sent' in recent_df.columns else pd.Series(dtype=float)
+        eligible_channels = channel_volumes[channel_volumes >= CHANNEL_MIN_SENT].index
+
+        for channel in eligible_channels:
+            chan_recent = recent_df[recent_df['Channel'] == channel]
+
+            # High impressions, low clicks
+            if 'Unique Impressions' in chan_recent.columns and 'Unique Clicks' in chan_recent.columns:
+                impressions = chan_recent['Unique Impressions'].sum()
+                clicks = chan_recent['Unique Clicks'].sum()
+                ctr = clicks / max(impressions, 1)
+
+                if impressions > 1000 and ctr < 0.02:
+                    opportunities.append({
+                        'emoji': '🎯',
+                        'title': f'{channel} Creative Optimization Opportunity',
+                        'message': f"{channel} has strong reach ({impressions:,.0f} impressions) but low engagement (CTR: {ctr:.2%})",
+                        'severity': 'opportunity',
+                        'action': f'Test new {channel} subject lines/creative and visual elements',
+                        'expected_impact': f"+{((0.03 - ctr) * impressions):,.0f} additional clicks at 3% CTR",
+                        'scope': 'channel',
+                        'channel': channel,
+                    })
+
+            # High clicks, low conversions
+            if 'Unique Clicks' in chan_recent.columns and 'Unique Conversions' in chan_recent.columns:
+                clicks = chan_recent['Unique Clicks'].sum()
+                conversions = chan_recent['Unique Conversions'].sum()
+                conv_rate = conversions / max(clicks, 1)
+
+                if clicks > 500 and conv_rate < 0.05:
+                    opportunities.append({
+                        'emoji': '🛒',
+                        'title': f'{channel} Conversion Funnel Optimization',
+                        'message': f"{channel} has good traffic ({clicks:,.0f} clicks) but low conversion (CR: {conv_rate:.2%})",
+                        'severity': 'opportunity',
+                        'action': f'Review the {channel} landing page/offer, reduce friction points',
+                        'expected_impact': f"+{((0.08 - conv_rate) * clicks):,.0f} conversions at 8% CR",
+                        'scope': 'channel',
+                        'channel': channel,
+                    })
+
+    except Exception as e:
+        logger.warning(f"identify_channel_optimization_opportunities failed: {e}")
 
     return opportunities
 
@@ -783,6 +922,36 @@ def generate_top_actions(df, journey_name=None, max_actions=5):
                             'implementation_time': '3-5 days',
                             'score': potential_rev
                         })
+
+        # Action 7: Channel budget reallocation -- shift spend from a low-ROAS paid
+        # channel toward a high-ROAS one. Uses 'Campaign Cost', which already reflects
+        # this session's per-channel cost overrides (see DashboardState.channel_costs),
+        # not just the hardcoded config defaults.
+        if 'Channel' in recent_df.columns and 'Campaign Cost' in recent_df.columns and 'Revenue (SAR)' in recent_df.columns:
+            chan_perf = recent_df.groupby('Channel').agg({
+                'Revenue (SAR)': 'sum', 'Campaign Cost': 'sum', 'Sent': 'sum'
+            }).reset_index()
+            paid_channels = chan_perf[(chan_perf['Campaign Cost'] > 0) & (chan_perf['Sent'] >= CHANNEL_MIN_SENT)].copy()
+
+            if len(paid_channels) >= 2:
+                paid_channels['ROAS'] = paid_channels['Revenue (SAR)'] / paid_channels['Campaign Cost']
+                best = paid_channels.nlargest(1, 'ROAS').iloc[0]
+                worst = paid_channels.nsmallest(1, 'ROAS').iloc[0]
+
+                if worst['ROAS'] > 0 and best['ROAS'] >= worst['ROAS'] * 1.5:
+                    reallocated_spend = worst['Campaign Cost'] * 0.2
+                    expected_revenue = reallocated_spend * best['ROAS']
+
+                    actions.append({
+                        'priority': 'HIGH' if best['ROAS'] >= worst['ROAS'] * 2 else 'MEDIUM',
+                        'title': 'Reallocate Channel Budget',
+                        'action': (f"Shift budget from {worst['Channel']} (ROAS {worst['ROAS']:.1f}x) "
+                                   f"toward {best['Channel']} (ROAS {best['ROAS']:.1f}x)"),
+                        'expected_impact': f"+{format_sar(expected_revenue)} by moving 20% of {worst['Channel']}'s spend to {best['Channel']}",
+                        'confidence': '65%',
+                        'implementation_time': '1-2 days',
+                        'score': expected_revenue
+                    })
 
         # Sort by expected impact (score) and take top N
         actions.sort(key=lambda x: x['score'], reverse=True)
