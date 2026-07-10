@@ -11,23 +11,29 @@ import plotly.graph_objects as go
 
 
 # Configure Plotly template
-def configure_plotly_template(color_sequence):
+def configure_plotly_template(color_sequence, is_dark=False):
     """Configure the default Plotly template for dashboard consistency."""
+    text_color = '#F1F5F9' if is_dark else '#1F2937'
+    title_color = '#F1F5F9' if is_dark else '#111827'
+    grid_color = '#334155' if is_dark else '#F3F4F6'
+    line_color = '#475569' if is_dark else '#E5E7EB'
+    legend_color = '#94A3B8' if is_dark else '#6B7280'
+
     _we_template = go.layout.Template()
     _we_template.layout = go.Layout(
-        font=dict(family='Inter, Segoe UI, Roboto, sans-serif', size=13, color='#1F2937'),
-        title=dict(font=dict(size=18, color='#111827'), x=0, xanchor='left'),
-        paper_bgcolor='white',
-        plot_bgcolor='white',
+        font=dict(family='Inter, Segoe UI, Roboto, sans-serif', size=13, color=text_color),
+        title=dict(font=dict(size=18, color=title_color), x=0.02, xanchor='left'),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
         colorway=color_sequence,
-        xaxis=dict(showgrid=False, linecolor='#E5E7EB', linewidth=1),
-        yaxis=dict(gridcolor='#F3F4F6', gridwidth=1, linecolor='#E5E7EB', linewidth=1, zerolinecolor='#E5E7EB'),
-        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1, bgcolor='rgba(0,0,0,0)'),
-        margin=dict(l=40, r=20, t=50, b=40),
+        xaxis=dict(showgrid=True, gridcolor=grid_color, gridwidth=1, linecolor=line_color, linewidth=1),
+        yaxis=dict(gridcolor=grid_color, gridwidth=1, linecolor=line_color, linewidth=1, zerolinecolor=line_color),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1, bgcolor='rgba(0,0,0,0)', font=dict(color=legend_color)),
+        margin=dict(l=40, r=20, t=60, b=40),
         hovermode='x unified',
     )
     pio.templates['we_dashboard'] = _we_template
-    pio.templates.default = 'plotly_white+we_dashboard'
+    pio.templates.default = 'we_dashboard'
 
 
 def format_metric(value, unit="", abbreviate=True):

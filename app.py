@@ -48,24 +48,59 @@ from dashboard.data_pipeline import (
 from dashboard.charts import attribution_display
 from dashboard.state import DashboardState, set_ctx
 
+# --- Theme detection ---
+# Streamlit's dark/light picker (in the "..." menu) is a client-side-only setting:
+# switching it does NOT trigger a script rerun, so st.context.theme only reflects
+# the current choice once *some* rerun happens (any widget interaction, filter
+# change, etc.). There is no supported way to set the theme from Python --
+# st._config.set_option("theme.base", ...) was tested and does not move the
+# actual rendered theme, only st.context.theme can be *read*, not set.
+_theme_type = st.context.theme.type if hasattr(st.context, "theme") else "dark"
+_is_dark = _theme_type == "dark"
+
 # Register a global Plotly template for consistent styling
 import plotly.io as pio
 
 _we_template = go.layout.Template()
 _we_template.layout = go.Layout(
-    font=dict(family='Inter, Segoe UI, Roboto, sans-serif', size=13, color='#1F2937'),
-    title=dict(font=dict(size=18, color='#111827'), x=0, xanchor='left'),
-    paper_bgcolor='white',
-    plot_bgcolor='white',
+    font=dict(
+        family='Inter, Segoe UI, Roboto, sans-serif',
+        size=13,
+        color='#F1F5F9' if _is_dark else '#1F2937',
+    ),
+    title=dict(
+        font=dict(size=18, color='#F1F5F9' if _is_dark else '#111827'),
+        x=0.02,
+        xanchor='left',
+    ),
+    paper_bgcolor='rgba(0,0,0,0)',
+    plot_bgcolor='rgba(0,0,0,0)',
     colorway=COLOR_SEQUENCE,
-    xaxis=dict(showgrid=False, linecolor='#E5E7EB', linewidth=1),
-    yaxis=dict(gridcolor='#F3F4F6', gridwidth=1, linecolor='#E5E7EB', linewidth=1, zerolinecolor='#E5E7EB'),
-    legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1, bgcolor='rgba(0,0,0,0)'),
-    margin=dict(l=40, r=20, t=50, b=40),
+    xaxis=dict(
+        showgrid=True,
+        gridcolor='#334155' if _is_dark else '#F3F4F6',
+        gridwidth=1,
+        linecolor='#475569' if _is_dark else '#E5E7EB',
+        linewidth=1,
+        title=dict(standoff=12),
+    ),
+    yaxis=dict(
+        gridcolor='#334155' if _is_dark else '#F3F4F6',
+        gridwidth=1,
+        linecolor='#475569' if _is_dark else '#E5E7EB',
+        linewidth=1,
+        zerolinecolor='#475569' if _is_dark else '#E5E7EB',
+    ),
+    legend=dict(
+        orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1,
+        bgcolor='rgba(0,0,0,0)',
+        font=dict(color='#94A3B8' if _is_dark else '#6B7280'),
+    ),
+    margin=dict(l=40, r=20, t=60, b=40),
     hovermode='x unified',
 )
 pio.templates['we_dashboard'] = _we_template
-pio.templates.default = 'plotly_white+we_dashboard'
+pio.templates.default = 'we_dashboard'
 
 
 # Import our new insights engine
