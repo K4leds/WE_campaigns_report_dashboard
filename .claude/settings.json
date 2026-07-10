@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest *)",
+      "Bash(python -c *)",
+      "Bash(python3 -c *)",
+      "Bash(python -m py_compile *)",
+      "Bash(git add *)",
+      "Bash(git commit -m *)",
+      "Bash(grep -n *)"
+    ]
+  }
+}
