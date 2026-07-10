@@ -119,6 +119,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Placeholder for brand logo — replace with actual logo path
+# st.logo("assets/logo.png", size="large")
+
 def _month_range_options(start_date, end_date):
     if pd.isna(start_date) or pd.isna(end_date):
         return []
@@ -162,6 +165,101 @@ _pages = {
 }
 
 pg = st.navigation(_pages)
+
+# --- Theme sync affordance ---
+# Streamlit's own dark/light/system picker (⋮ menu, top right) is the actual
+# theme control -- there's no supported way to drive it from Python. Switching
+# it doesn't rerun the script, so our Plotly/CSS (which read _theme_type once
+# per rerun) can lag by one interaction. This button just forces that resync;
+# any other widget interaction (filters, etc.) does the same thing implicitly.
+with st.sidebar:
+    st.caption(f"{'🌙 Dark' if _is_dark else '☀️ Light'} theme — switch via the ⋮ menu (top right)")
+    if st.button("🔄 Sync charts to theme", help="Refresh charts/styling to match your current theme selection", use_container_width=True):
+        st.rerun()
+    st.markdown("---")
+
+# --- Inject global CSS variables and Inter font ---
+def _inject_global_styles():
+    """Inject CSS variables and global styles via st.markdown."""
+    bg_color = "#0F172A" if _is_dark else "#F8FAFC"
+    surface_color = "#1E293B" if _is_dark else "#FFFFFF"
+    text_color = "#F1F5F9" if _is_dark else "#0F172A"
+    text_muted = "#94A3B8" if _is_dark else "#64748B"
+    border_color = "#334155" if _is_dark else "#E2E8F0"
+
+    st.markdown(
+        f"""
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+            :root {{
+                --st-font: 'Inter', 'Segoe UI', Roboto, sans-serif;
+                --st-primary-color: #0EA5E9;
+                --st-background-color: {bg_color};
+                --st-secondary-background-color: {surface_color};
+                --st-text-color: {text_color};
+                --st-text-muted: {text_muted};
+                --st-border-color: {border_color};
+                --st-success-color: #22C55E;
+                --st-warning-color: #F59E0B;
+                --st-danger-color: #EF4444;
+                --st-info-color: #6366F1;
+            }}
+
+            html, body, [class*="css"] {{
+                font-family: var(--st-font);
+            }}
+
+            /* Metric cards */
+            div[data-testid="metric-container"] {{
+                background: var(--st-secondary-background-color);
+                border: 1px solid var(--st-border-color);
+                border-radius: 8px;
+                padding: 12px 16px;
+            }}
+
+            div[data-testid="metric-container"] label {{
+                color: var(--st-text-muted) !important;
+                font-size: 13px !important;
+            }}
+
+            div[data-testid="metric-container"] div[data-testid="stMetricValue"] {{
+                color: var(--st-text-color) !important;
+            }}
+
+            /* Expander styling */
+            div[data-testid="stExpander"] {{
+                border-color: var(--st-border-color) !important;
+            }}
+
+            /* Dataframe styling */
+            div[data-testid="stDataFrame"] {{
+                border: 1px solid var(--st-border-color);
+                border-radius: 8px;
+                overflow: hidden;
+            }}
+
+            /* Tabs styling */
+            button[data-baseweb="tab"] {{
+                font-size: 14px !important;
+                font-weight: 500 !important;
+            }}
+
+            /* Progress bar override */
+            div[role="progressbar"] {{
+                background-color: var(--st-primary-color) !important;
+            }}
+
+            /* General transitions for theme switching */
+            * {{
+                transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+            }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+_inject_global_styles()
 
 st.title("WebEngage CSV Dashboard")
 
