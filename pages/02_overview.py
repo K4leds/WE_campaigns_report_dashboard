@@ -27,7 +27,7 @@ comparison_mode = ctx.comparison_mode
 # Display-friendly rename map for attribution-selected columns (mirrors app.py prelude)
 attribution_rename = {'Selected Revenue (SAR)': selected_rev_label, 'Selected Conversions': selected_conv_label}
 
-st.header("Overview")
+st.header("Executive Overview")
 
 # Executive narrative summary
 _total_rev = filtered_df['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in filtered_df.columns else filtered_df['Revenue (SAR)'].sum()
@@ -668,28 +668,33 @@ if 'Channel' in filtered_df.columns:
         st.markdown("#### Detailed Channel Metrics")
         st.caption("*Conversion Rate = Click-Through Conversions / Unique Clicks. Hover over abbreviated metrics for full names.*")
         
-        # Create display dataframe
+        # Build column config for numeric columns
+        overview_cc = {}
+        for num_col in ['Sent', 'Delivered', 'Unique Clicks']:
+            overview_cc[num_col] = st.column_config.NumberColumn(label=num_col, format='%.0f')
+        if conv_col_for_calc in channel_data.columns:
+            overview_cc[conv_col_for_calc] = st.column_config.NumberColumn(label=conv_col_for_calc, format='%.0f')
+        overview_cc[revenue_col] = st.column_config.NumberColumn(label=revenue_col, format='%.2f')
+
+        # Create display dataframe with original numeric values
         channel_display = channel_data.copy()
         channel_display['Channel'] = channel_display['Channel'].apply(lambda x: f"{channel_icons.get(x, '📊')} {x}")
-        channel_display['Sent'] = channel_display['Sent'].apply(format_metric)
-        channel_display['Delivered'] = channel_display['Delivered'].apply(format_metric)
-        channel_display['Unique Clicks'] = channel_display['Unique Clicks'].apply(format_metric)
-        
-        # Format the selected conversion column
-        if conv_col_for_calc in channel_display.columns:
-            channel_display[conv_col_for_calc] = channel_display[conv_col_for_calc].apply(format_metric)
-        
-        channel_display[revenue_col] = channel_display[revenue_col].apply(lambda x: format_metric(x, "SAR"))
-        
+
         # Select columns to display - use selected conversion column
-        display_cols = ['Channel', 'Sent', 'Delivered', 'Delivery Rate', 'Unique Clicks', 
+        display_cols = ['Channel', 'Sent', 'Delivered', 'Delivery Rate', 'Unique Clicks',
                        'CTR', conv_col_for_calc, 'Conversion Rate', revenue_col]
         channel_display = channel_display[display_cols]
-        
+
         # Rename columns to show actual attribution model
         channel_display = channel_display.rename(columns=attribution_rename)
-        
-        st.dataframe(channel_display, width='stretch', hide_index=True)
+
+        # Rebuild column config with renamed column names
+        overview_cc_renamed = {}
+        for orig_name, cfg in overview_cc.items():
+            renamed = attribution_rename.get(orig_name, orig_name)
+            overview_cc_renamed[renamed] = cfg
+
+        st.dataframe(channel_display, column_config=overview_cc_renamed, width='stretch', hide_index=True)
         
         # Channel performance charts
         col1, col2 = st.columns(2)
