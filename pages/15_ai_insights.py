@@ -6,16 +6,12 @@ import plotly.graph_objects as go
 
 from sklearn.cluster import KMeans
 
-try:
-    from prophet import Prophet
-except ImportError:
-    Prophet = None
-
 from dashboard.state import get_ctx
 from components.table import render_table
 from config import COLORS, COLOR_SEQUENCE
 from attribution import get_attribution_display_label
 from analysis import top_campaigns
+from insights_engine import predict_revenue_forecast
 
 ctx = get_ctx()
 df = ctx.df
@@ -34,42 +30,49 @@ attribution_rename = {'Selected Revenue (SAR)': selected_rev_label, 'Selected Co
 st.header("🤖 AI-Powered Insights")
 
 # Forecasting
+# Uses the same Prophet model as Automated Insights' forecast (insights_engine.predict_revenue_forecast)
+# so the two pages never show contradictory numbers for the same data.
 st.subheader("📈 Revenue Forecasting")
 if not filtered_df.empty:
-    monthly_df = filtered_df.copy()
-    monthly_df['Month'] = monthly_df['Reporting Period Start Date'].dt.to_period('M').dt.to_timestamp()
-    monthly_rev = monthly_df.groupby('Month')['Revenue (SAR)'].sum().reset_index()
-    if len(monthly_rev) > 2:
-        # Prepare data for Prophet
-        df_prophet = monthly_rev.rename(columns={'Month': 'ds', 'Revenue (SAR)': 'y'})
-        try:
-            model = Prophet()
-            model.fit(df_prophet)
-            future = model.make_future_dataframe(periods=3, freq='M')
-            forecast = model.predict(future)
-            # Build Plotly figure from Prophet forecast data
-            fig_forecast = go.Figure()
-            fig_forecast.add_trace(go.Scatter(
-                x=df_prophet['ds'], y=df_prophet['y'],
-                mode='markers', name='Actual', marker=dict(color=COLORS['primary'], size=8)
-            ))
-            fig_forecast.add_trace(go.Scatter(
-                x=forecast['ds'], y=forecast['yhat'],
-                mode='lines', name='Forecast', line=dict(color=COLORS['success'], width=2)
-            ))
-            fig_forecast.add_trace(go.Scatter(
-                x=pd.concat([forecast['ds'], forecast['ds'][::-1]]),
-                y=pd.concat([forecast['yhat_upper'], forecast['yhat_lower'][::-1]]),
-                fill='toself', fillcolor='rgba(5,150,105,0.15)', line=dict(width=0),
-                name='Confidence Interval'
-            ))
-            fig_forecast.update_layout(title="Revenue Forecast (Next 3 Months)", xaxis_title="Date", yaxis_title="Revenue (SAR)")
-            st.plotly_chart(fig_forecast, width='stretch')
-            st.write("**Forecast Insights:** Next 3 months revenue prediction with confidence intervals.")
-        except Exception as e:
-            st.write(f"Forecasting error: {e}")
+    forecast = predict_revenue_forecast(filtered_df, forecast_days=90)
+    if forecast:
+        insight = forecast.get('insight', {})
+        severity = insight.get('severity', 'info')
+        message = f"{insight.get('emoji', '📊')} {insight.get('message', '')}"
+        if severity == 'positive':
+            st.success(message)
+        elif severity == 'warning':
+            st.warning(message)
+        else:
+            st.info(message)
+
+        actual_df = filtered_df.copy()
+        actual_df['date'] = pd.to_datetime(actual_df['Reporting Period Start Date'])
+        actual_rev = actual_df.groupby('date')['Revenue (SAR)'].sum().reset_index()
+
+        forecast_df = forecast['forecast_df']
+        fig_forecast = go.Figure()
+        fig_forecast.add_trace(go.Scatter(
+            x=actual_rev['date'], y=actual_rev['Revenue (SAR)'],
+            mode='markers', name='Actual', marker=dict(color=COLORS['primary'], size=6)
+        ))
+        fig_forecast.add_trace(go.Scatter(
+            x=forecast_df['ds'], y=forecast_df['yhat'],
+            mode='lines', name='Forecast', line=dict(color=COLORS['success'], width=2)
+        ))
+        fig_forecast.add_trace(go.Scatter(
+            x=pd.concat([forecast_df['ds'], forecast_df['ds'][::-1]]),
+            y=pd.concat([forecast_df['yhat_upper'], forecast_df['yhat_lower'][::-1]]),
+            fill='toself', fillcolor='rgba(5,150,105,0.15)', line=dict(width=0),
+            name='95% Confidence Interval'
+        ))
+        fig_forecast.update_layout(
+            title=f"{forecast.get('forecast_days', 90)}-Day Revenue Forecast",
+            xaxis_title="Date", yaxis_title="Revenue (SAR)", hovermode='x unified',
+        )
+        st.plotly_chart(fig_forecast, width='stretch')
     else:
-        st.write("Not enough data for forecasting.")
+        st.write("Not enough data for forecasting (need at least 14 days of history).")
 
 # Segmentation
 st.subheader("👥 Advanced Customer Segmentation")
