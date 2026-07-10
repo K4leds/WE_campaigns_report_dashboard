@@ -671,6 +671,7 @@ for campaign in unique_campaigns:
         health_info = calculate_campaign_health_score(campaign_data, filtered_df)
         campaign_health_data.append({
             'Campaign Name': campaign,
+            'Status': campaign_data['Status'].iloc[-1] if 'Status' in campaign_data.columns else None,
             'Health Score': health_info['health_score'],
             'Tier': health_info['tier'],
             'Revenue (SAR)': campaign_data['Revenue (SAR)'].sum(),
@@ -707,7 +708,9 @@ if campaign_health_data:
 
     with col2:
         st.subheader("🚨 Campaigns Needing Attention")
-        bottom_campaigns = health_df[health_df['Health Score'] < 60].head(5)
+        st.caption("Only currently *Running* campaigns are shown here — there's nothing to act on for an Ended or Paused campaign.")
+        needs_attention_pool = health_df[health_df['Status'] == 'Running'] if 'Status' in health_df.columns else health_df
+        bottom_campaigns = needs_attention_pool[needs_attention_pool['Health Score'] < 60].head(5)
         if not bottom_campaigns.empty:
             for _, row in bottom_campaigns.iterrows():
                 # Use expandable containers for full campaign names

@@ -340,7 +340,9 @@ if journey_health_data:
 
     with col2:
         st.subheader("🚨 Journeys Needing Attention")
-        bottom_journeys = health_df[health_df['Health Score'] < 60].head(5)
+        st.caption("Only currently *Running* journeys are shown here — there's nothing to act on for an Ended or Paused journey.")
+        needs_attention_pool = health_df[health_df['Status'] == 'Running'] if 'Status' in health_df.columns else health_df
+        bottom_journeys = needs_attention_pool[needs_attention_pool['Health Score'] < 60].head(5)
         if not bottom_journeys.empty:
             for _, row in bottom_journeys.iterrows():
                 # Use expandable containers for full journey names

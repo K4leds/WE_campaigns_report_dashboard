@@ -50,6 +50,7 @@ def cached_journey_health_scores(filtered_df):
             health_info = calculate_journey_health_score(journey_data, filtered_df)
             journey_health_data.append({
                 'Journey Name': journey,
+                'Status': journey_data['Status'].iloc[-1] if 'Status' in journey_data.columns else None,
                 'Health Score': health_info['health_score'],
                 'Tier': health_info['tier'],
                 'Revenue (SAR)': journey_data['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in journey_data.columns else journey_data['Revenue (SAR)'].sum(),

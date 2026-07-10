@@ -41,6 +41,11 @@ def detect_campaign_anomalies(df, lookback_days=30):
             if len(campaign_data) < 5 or len(recent_campaign_data) == 0:
                 continue
 
+            # Skip campaigns that aren't currently running — nothing actionable
+            # about a performance swing on a campaign that's already Ended/Paused.
+            if 'Status' in campaign_data.columns and campaign_data['Status'].iloc[-1] != 'Running':
+                continue
+
             # Calculate historical metrics
             historical_metrics = {
                 'conversion_rate': campaign_data['Unique Conversions'].sum() / max(campaign_data['Unique Clicks'].sum(), 1),
@@ -137,6 +142,11 @@ def detect_journey_anomalies(df, lookback_days=30):
             recent_journey_data = recent_df[recent_df['Journey Name'] == journey]
 
             if len(journey_data) < 5 or len(recent_journey_data) == 0:
+                continue
+
+            # Skip journeys that aren't currently running — nothing actionable
+            # about a performance swing on a journey that's already Ended/Paused.
+            if 'Status' in journey_data.columns and journey_data['Status'].iloc[-1] != 'Running':
                 continue
 
             # Calculate historical metrics
