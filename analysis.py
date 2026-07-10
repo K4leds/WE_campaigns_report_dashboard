@@ -20,6 +20,19 @@ def top_campaigns(df, metric='Unique Conversions', top_n=10):
     Returns:
         DataFrame with top campaigns
     """
+    # Conversion Rate: weighted sum(click-through conversions) / sum(clicks).
+    # We use Unique Click-Through Conversions when available because Unique Conversions
+    # includes impression-through conversions and can exceed Unique Clicks (causing 100% cap).
+    if metric == 'Conversion Rate' and 'Unique Clicks' in df.columns:
+        conv_col = 'Unique Click-Through Conversions' if 'Unique Click-Through Conversions' in df.columns else 'Unique Conversions'
+        grouped = df.groupby('Campaign Name')[[conv_col, 'Unique Clicks']].sum()
+        grouped['Conversion Rate'] = np.where(
+            grouped['Unique Clicks'] > 0,
+            grouped[conv_col] / grouped['Unique Clicks'],
+            0.0,
+        )
+        return grouped['Conversion Rate'].nlargest(top_n).reset_index()
+
     agg = metric_aggregation_method(metric)
     return df.groupby('Campaign Name')[metric].agg(agg).nlargest(top_n).reset_index()
 
@@ -89,7 +102,7 @@ def channel_analysis(df):
         agg_dict['Total Conversions'] = 'sum'
     if 'Selected Revenue (SAR)' in df.columns:
         agg_dict['Selected Revenue (SAR)'] = 'sum'
-    elif 'Revenue (SAR)' in df.columns:
+    if 'Revenue (SAR)' in df.columns:
         agg_dict['Revenue (SAR)'] = 'sum'
     
     # Keep original columns for reference but they won't be displayed by default
