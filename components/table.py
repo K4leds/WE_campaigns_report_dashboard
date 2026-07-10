@@ -11,8 +11,11 @@ Usage:
     # Plain table, auto-detected numeric columns shown compact (e.g. "125.23K")
     render_table(df, key="campaigns")
 
-    # With explicit per-column st.column_config overrides (format string is
-    # reused for ag-Grid's printf-style formatting; "compact" is supported)
+    # With explicit per-column st.column_config overrides. Supported `format`
+    # values: "compact" (K/M abbreviation), "%.2f%%"/"percent" (or any column
+    # whose name contains "Rate"/"%"), and printf-style decimal formats like
+    # "%.1f", "%+.2f", "%.2f SAR" (see _printf_js_formatter). Anything else
+    # renders as a plain, unformatted numeric column.
     render_table(df, key="campaigns", column_config={
         "Revenue (SAR)": st.column_config.NumberColumn(format="compact"),
     })
@@ -23,6 +26,7 @@ Usage:
     # value.
     render_table(df, key="channels", comparison_df=prior_period_df, compare_on="Channel")
 """
+import re
 from typing import Any
 
 import numpy as np
@@ -122,6 +126,35 @@ function(params) {
 }
 """
 
+# Matches printf-style decimal formats like '%.1f', '%+.2f', '%.2f%%', '%.2f SAR'
+_PRINTF_RE = re.compile(r'^%(?P<sign>\+)?\.(?P<prec>\d+)f(?P<suffix>.*)$')
+
+
+def _printf_js_formatter(fmt: str) -> str | None:
+    """Build a JS valueFormatter for a printf-style decimal format string.
+
+    Handles the common '%.Nf'-family formats used across the dashboard's
+    column_config calls (e.g. '%.1f', '%.2f SAR', '%+.2f') that aren't
+    "compact" or the dedicated percent format. Returns None if `fmt` doesn't
+    match, so the caller can fall back to an unformatted numeric column.
+    """
+    m = _PRINTF_RE.match(fmt)
+    if not m:
+        return None
+    prec = int(m.group('prec'))
+    suffix = m.group('suffix').replace('%%', '%')
+    sign_prefix = "(value >= 0 ? '+' : '') + " if m.group('sign') else ""
+    suffix_js = f" + {suffix!r}" if suffix else ""
+    return f"""
+function(params) {{
+    if (params.value === null || params.value === undefined || isNaN(params.value)) {{
+        return '';
+    }}
+    var value = params.value;
+    return {sign_prefix}value.toFixed({prec}){suffix_js};
+}}
+"""
+
 
 def _column_config_to_aggrid(col_cfg: Any) -> dict:
     """Extract a printf/predefined format string from an st.column_config object.
@@ -209,7 +242,16 @@ def _build_grid_options(
                 valueFormatter=JsCode(_PERCENT_JS),
             )
         else:
-            gb.configure_column(field=col, header_name=header_name, type=["numericColumn"])
+            printf_js = _printf_js_formatter(fmt) if fmt else None
+            if printf_js:
+                gb.configure_column(
+                    field=col,
+                    header_name=header_name,
+                    type=["numericColumn"],
+                    valueFormatter=JsCode(printf_js),
+                )
+            else:
+                gb.configure_column(field=col, header_name=header_name, type=["numericColumn"])
 
     if column_order:
         gb.configure_columns(column_order, hide=False)
