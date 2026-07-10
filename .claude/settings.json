@@ -12,7 +12,23 @@
       "mcp__Claude_Preview__preview_screenshot",
       "mcp__Claude_Preview__preview_eval",
       "mcp__firecrawl__firecrawl_scrape",
-      "Bash(curl -s *)"
+      "Bash(curl -s *)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__query-docs",
+      "Bash(pip show *)",
+      "Bash(python -c \"import st_aggrid\")",
+      "Bash(python -c ' *)",
+      "Read(//c/Users/54led/AppData/Local/Temp/**)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('pages/04_campaigns.py', encoding='utf-8'\\).read\\(\\)\\); print\\('ok'\\)\")",
+      "Bash(python .superpowers/sdd/smoke-test-snippet.py pages/05_journeys.py)",
+      "Bash(python .superpowers/sdd/smoke-test-snippet.py pages/03_marketing_actions.py)",
+      "Bash(python .superpowers/sdd/smoke-test-snippet.py pages/01_automated_insights.py)",
+      "Bash(python .superpowers/sdd/smoke-test-snippet.py pages/06_segments.py)",
+      "Bash(python .superpowers/sdd/smoke-test-snippet.py pages/14_comparisons.py)",
+      "Bash(python .superpowers/sdd/smoke-test-snippet.py pages/04_campaigns.py)",
+      "Bash(python -c \"import playwright; print\\('playwright installed'\\)\")",
+      "Bash(python -c \"from playwright.sync_api import sync_playwright; print\\('sync api ok'\\)\")",
+      "Bash(python -m pytest tests/ -q)"
     ]
   }
 }

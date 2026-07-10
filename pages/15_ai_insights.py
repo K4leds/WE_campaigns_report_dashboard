@@ -12,7 +12,7 @@ except ImportError:
     Prophet = None
 
 from dashboard.state import get_ctx
-from utils import format_metric
+from components.table import render_table
 from config import COLORS, COLOR_SEQUENCE
 from attribution import get_attribution_display_label
 from analysis import top_campaigns
@@ -115,14 +115,16 @@ roi_df['Profit (SAR)'] = roi_df['Revenue (SAR)'] - roi_df['Cost (SAR)']
 roi_df['ROAS'] = np.where(roi_df['Cost (SAR)'] > 0, roi_df['Revenue (SAR)'] / roi_df['Cost (SAR)'], 0)
 roi_df['Revenue Per Send'] = np.where(roi_df['Sent'] > 0, roi_df['Revenue (SAR)'] / roi_df['Sent'], 0)
 
-# Format for display
-roi_display = roi_df.copy()
-for col in ['Revenue (SAR)', 'Cost (SAR)', 'Profit (SAR)']:
-    roi_display[col] = roi_display[col].apply(lambda x: format_metric(x, "SAR"))
-roi_display['Sent'] = roi_display['Sent'].apply(format_metric)
-roi_display['ROAS'] = roi_display['ROAS'].apply(lambda x: f"{x:.2f}x")
-roi_display['Revenue Per Send'] = roi_display['Revenue Per Send'].apply(lambda x: f"{x:.4f} SAR")
-st.dataframe(roi_display, width='stretch')
+# Use column_config for proper numeric formatting
+roi_cc = {
+    'Revenue (SAR)': st.column_config.NumberColumn(label='Revenue (SAR)', format='%.2f'),
+    'Cost (SAR)': st.column_config.NumberColumn(label='Cost (SAR)', format='%.2f'),
+    'Profit (SAR)': st.column_config.NumberColumn(label='Profit (SAR)', format='%.2f'),
+    'Sent': st.column_config.NumberColumn(label='Sent', format='%.0f'),
+    'ROAS': st.column_config.NumberColumn(label='ROAS', format='%.2f'),
+    'Revenue Per Send': st.column_config.NumberColumn(label='Revenue Per Send', format='%.4f'),
+}
+render_table(roi_df, key="roi_analysis", column_config=roi_cc)
 
 # ROI chart
 fig_roi = px.bar(roi_df, x='Channel', y=['Revenue (SAR)', 'Cost (SAR)'], barmode='group',

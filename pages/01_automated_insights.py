@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
 from dashboard.charts import attribution_display
-from utils import format_metric, style_total_row
+from utils import format_metric
 from config import CHANNEL_COSTS, REQUIRED_COLUMNS, COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import (
     apply_attribution, apply_dimension_filters, get_attribution_display_label,

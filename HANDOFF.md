@@ -1,299 +1,173 @@
-# Handoff: app.py Multipage Refactor (in progress)
+# Handoff: WebEngage Dashboard — Phase 2 (Navigation + Visual Design System)
 
+**Date:** 2026-07-10
 **Repo:** `c:\Users\54led\vs_projects\WE_campaigns_report_dashboard`
 **Branch:** `webengage-marketing-analytics-dashboard`
-**Current HEAD:** `7c88aa5`
-**Progress:** Tasks 1–14 of 28 complete. Foundation phase (1–10) fully done. Page-split phase (11–27) is 4 of 17 pages done (14 done overall, 14 remaining: Tasks 15–28).
+**This session was run in an IDE-integrated Claude Code session; you are picking this up in a terminal Claude Code session.**
 
-This file is self-contained — everything needed to resume is embedded below, not linked. No need to read anything else first, though the full plan and ledger still exist on disk at the paths named in "Where things live" if you want more detail than what's here.
+This file is self-contained — everything needed to resume is here. Read it fully before touching code.
 
 ---
 
-## 1. What this refactor is
+## 1. What's done, what's next
 
-`app.py` was an 8,896-line Streamlit monolith: one `if page == "..." / elif` chain (17 pages) plus ~40 analytical helper functions, all in one file. Goal: split it into
+| Phase | Status |
+|---|---|
+| Phase 1 — Data trust foundation (Section 1: accuracy, Section 2: unified ag-Grid tables) | **Section 2 DONE. Section 1 only 1c done (1a/1b not wired up — see below).** |
+| Phase 2 — Navigation reorg + visual design system (Section 3 + 4) | **NOT STARTED — this is your task** |
+| Phase 3 — Export system (Section 5) | Not started |
+| Phase 4 — AI router (Section 6) | Not started |
 
-- `dashboard/` — a logic package (data pipeline, health scores, funnels, anomalies, lifecycle/stopped-journey/cohort analysis, comparison math, chart helpers). **Done, all 8 modules exist.**
-- `pages/` — one file per dashboard page, using Streamlit's modern `st.Page` + `st.navigation` API. **4 of 17 done: 01_automated_insights.py, 02_overview.py, 03_marketing_actions.py, 04_campaigns.py.**
-- `app.py` — becomes a thin entrypoint (upload, clean, sidebar filters, build `DashboardState`, then `st.navigation([...]).run()`). **Not yet wired — the old `if/elif` routing still exists in app.py for the NOT-yet-split pages (Journeys onward). Task 28 replaces it with real navigation once all 17 pages are split.**
+Full spec: `docs/superpowers/specs/2026-07-10-production-ready-enhancements-design.md` (just updated with accurate STATUS blocks for Sections 1 & 2 — read those before starting, they correct some inaccuracies in the original draft).
 
-**Hard constraint across every task: ZERO behavior change.** This is a pure structural refactor — no logic edits, only code moves. Every page must render identically to the pre-refactor app.
+Full Phase 2 task-by-task plan (12 tasks, already written, ready to execute): `docs/superpowers/plans/2026-07-10-phase2-navigation-visual-design.md`
 
-## 2. Current app.py state (as of HEAD `7c88aa5`)
+**Your job: execute that plan.** It's already fully specified with exact code snippets per task. Don't re-derive the design — follow the plan, adapting only where the current codebase has drifted from what the plan assumed (see section 3 below for known drift).
 
-`app.py` is now 3,367 lines (down from 8,896). The remaining `if/elif` routing chain, with real line numbers as of this commit:
+---
 
-```
-434:    if page == "Journeys":
-2059:    elif page == "Segments":
-2096:    elif page == "Channels":
-2675:    elif page == "Time Series":
-2698:    elif page == "Correlations":
-2739:    elif page == "A/B Testing":
-2750:    elif page == "Attribution":
-2763:    elif page == "Failed Reasons":
-2799:    elif page == "Export":
-2831:    elif page == "Comparisons":
-3237:    elif page == "AI Insights":
-```
+## 2. What Phase 1 actually built (context you need before touching nav/pages)
 
-**These line numbers WILL shift after every page-split task**, since each task deletes a branch's body from app.py. Always re-grep before trusting a line number:
-```bash
-grep -nE '^    if page ==|^    elif page ==' app.py
-```
+### The table component: `components/table.py`
 
-## 3. Remaining tasks (15–28)
-
-Task numbers below match the original plan's task numbering (`docs/superpowers/plans/2026-07-10-app-multipage-refactor.md`, section "Tasks 11–27" + "Task 28"), renumbered here for the page each targets:
-
-| Task | Page file | Source branch (name to grep for) | Notes |
-|---|---|---|---|
-| 15 | `pages/05_journeys.py` | `if page == "Journeys":` | **Only the "Journey Analysis" portion** — stop before the `st.header("📊 Advanced Business Intelligence Analytics")` sub-section (that's Task 16) and before `st.header("🚨 Stopped Journey Analysis...")` (Task 17). Read the full "Journeys" branch first to find those two `st.header(...)` boundaries by string search — do not assume line offsets. |
-| 16 | `pages/06_advanced_bi.py` | inside the Journeys branch: `st.header("📊 Advanced Business Intelligence Analytics")` block | Uses `dashboard.comparisons_logic` (create_journey_comparison_analysis, create_custom_date_range_comparison, calculate_period_metrics) and `dashboard.lifecycle.create_cohort_analysis`. |
-| 17 | `pages/07_stopped_journeys.py` | inside the Journeys branch: `st.header("🚨 Stopped Journey Analysis & Revenue Loss Estimation")` block | Uses `dashboard.lifecycle` (analyze_stopped_journeys, estimate_revenue_loss_ml, generate_stopped_journey_recommendations). |
-| 18 | `pages/08_segments.py` | `elif page == "Segments":` | Uses `analysis.top_segments`. |
-| 19 | `pages/09_channels.py` | `elif page == "Channels":` | Uses `analysis.channel_analysis`. |
-| 20 | `pages/10_time_series.py` | `elif page == "Time Series":` | Uses `analysis.time_series_analysis`. |
-| 21 | `pages/11_correlations.py` | `elif page == "Correlations":` | |
-| 22 | `pages/12_ab_testing.py` | `elif page == "A/B Testing":` | Uses `analysis.ab_testing_analysis`. |
-| 23 | `pages/13_attribution.py` | `elif page == "Attribution":` | Uses `analysis.attribution_analysis`. |
-| 24 | `pages/14_failed_reasons.py` | `elif page == "Failed Reasons":` | Uses `analysis.failed_reasons_analysis`, `analysis.esp_analysis`. |
-| 25 | `pages/15_comparisons.py` | `elif page == "Comparisons":` | Uses `dashboard.comparisons_logic` (calculate_comparison_periods, calculate_period_metrics, calculate_metric_changes, calculate_uplift_significance). |
-| 26 | `pages/16_ai_insights.py` | `elif page == "AI Insights":` | Uses `insights_engine` and `temporal_intelligence` functions — trace actual names used, don't assume. |
-| 27 | `pages/17_export.py` | `elif page == "Export":` | |
-| 28 | wire `st.navigation`, delete dead routing, final verify | — | See section 6 below. |
-
-**Journeys (Task 15) is the trickiest remaining task** because it's really 3 pages bundled in one `elif` branch. Locate the 3 sub-boundaries by searching for these exact strings inside the Journeys branch before splitting:
-- `st.header("Journey Analysis")` — start of Task 15's content
-- `st.header("📊 Advanced Business Intelligence Analytics")` — start of Task 16's content
-- `st.header("🚨 Stopped Journey Analysis & Revenue Loss Estimation")` — start of Task 17's content
-
-## 4. The exact page-split pattern to follow (copy this)
-
-Every page task follows this recipe. Use `pages/03_marketing_actions.py` as the cleanest concrete reference (below is its real header, verbatim from the file):
+Every page's tables now go through `render_table()`, backed by `streamlit-aggrid` (already installed, v1.2.1.post2 — do NOT reinstall or change version). Real signature:
 
 ```python
-import streamlit as st
-import pandas as pd
-import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
-
-from dashboard.state import get_ctx
-from utils import format_metric, style_total_row, export_chart_image
-from config import CHANNEL_COSTS, REQUIRED_COLUMNS, COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
-from attribution import (
-    apply_attribution, apply_dimension_filters, get_attribution_display_label,
-    get_selected_revenue_display_name, get_selected_conversion_display_name, resolve_source_column,
-)
-
-ctx = get_ctx()
-df = ctx.df
-filtered_df = ctx.filtered_df
-comparison_result = ctx.comparison_result
-revenue_attribution = ctx.revenue_attribution
-conversion_attribution = ctx.conversion_attribution
-selected_rev_label = ctx.selected_rev_label
-selected_conv_label = ctx.selected_conv_label
-date_range = ctx.date_range
-comparison_mode = ctx.comparison_mode
-
-# ... then the page body, pasted verbatim from app.py, de-indented by 8 spaces ...
+def render_table(
+    df, key=None, column_config=None,
+    comparison_df=None, compare_on=None,
+    height=400, use_container_width=True, hide_index=True,
+    column_order=None, total_row=None,
+) -> None
 ```
 
-**⚠️ Known erratum, already fixed in every completed page — do not repeat the mistake:** the ORIGINAL plan document's header template said `from dashboard.charts import format_metric, style_total_row, export_chart_image, attribution_display`. That's WRONG — `format_metric`, `style_total_row`, `export_chart_image` live in `utils.py`, not `dashboard/charts.py`. `dashboard/charts.py` only exports `attribution_display(ctx, col_name)`. Only import from `dashboard.charts` if the page body actually calls `attribution_display` or needs the local `_attribution_display(col_name)` closure pattern (see `pages/02_overview.py` for how to reconstruct `attribution_rename` + `_attribution_display` locally when a page needs them — grep the branch body for those two names to decide).
+- `column_config={"Revenue (SAR)": st.column_config.NumberColumn(format="compact")}` → sortable `125.23K`-style cells. `format="compact"` is a real, native Streamlit 1.56 `NumberColumn` option (verified against the installed library source — not a workaround).
+- `comparison_df` + `compare_on="Channel"` (or whatever the key column is) → pass a **raw, unformatted** prior-period DataFrame with matching columns. The component internally builds hidden `f"{col}__comp"` shadow columns and a JS `valueFormatter`/`cellStyle` that renders `"125.23K ▲12.0%"` (green/red/teal "NEW") in one cell, sorting on the real current value.
+- `total_row={col: value, ...}` → pinned, highlighted bottom row via ag-Grid's `pinnedBottomRowData`. Include `f"{col}__total_comp"` keys for the pinned row's own delta. **Never** `pd.concat()` a manual total row into the DataFrame — that was a real bug found and fixed in 6 places this session; it sorts the "Total" row into the middle of the table.
+- Theme auto-syncs to Streamlit's dark/light mode via ag-Grid's `theme='streamlit'` default — no manual dark-mode CSS was needed for tables. This matters for Phase 2 Task 7 (theme toggle): when you flip `st.session_state["theme"]`, ag-Grid tables should already follow along for free. **Verify this still holds after you build the toggle** — don't assume, check with Playwright (see section 4).
 
-**Rules for every page task:**
-1. Read the full branch body first (by name/header string, not trusted line numbers).
-2. Copy the header above, but PRUNE unused imports — trace every name the pasted body actually references and only keep what's used. Never remove the `get_ctx()`/ctx-unpacking block.
-3. Paste the branch body verbatim, de-indented by 8 spaces (branch body is at 8-space indent under `if`/`elif`; page-file module level is 0-space).
-4. In app.py: delete the branch's `if`/`elif` line and its entire body. If you deleted the very first `if page == ...` branch, change the next `elif` to `if`. Otherwise leave the rest of the chain untouched.
-5. If any name in the pasted body doesn't resolve to an already-extracted module (`dashboard.health`, `dashboard.funnels`, `dashboard.anomalies`, `dashboard.lifecycle`, `dashboard.comparisons_logic`, `dashboard.data_pipeline`, `dashboard.charts`, `analysis.py`, `utils.py`, `config.py`, `attribution.py`, `insights_engine.py`, `temporal_intelligence.py`, `data_processing.py`) or a standard library/pandas/numpy/plotly/sklearn import, **stop and report the specific missing name** rather than guessing.
+All ~15 pages are migrated off raw `st.dataframe()` / hand-built `to_html()` HTML tables onto this component. If you find one that isn't, that's drift — fix it opportunistically but don't scope-creep into a full audit unless something's visibly broken.
 
-## 5. Verification (do this for every task)
+### Known pre-existing bug, NOT in scope for Phase 2
 
-`ast.parse` alone is NOT enough — it only checks syntax, not whether names resolve at runtime (page files call `get_ctx()` at module scope, which needs real Streamlit session state). Use this 4-step check every time:
+`pages/05_journeys.py` throws `KeyError: 'Column not found: Delivered Rate'` in the smoke-test harness. Confirmed via `git stash` that this reproduces even without any table-migration changes applied — it predates all this session's work. Leave it alone unless the user asks you to fix it specifically.
+
+### Section 1 (Data Accuracy) is NOT fully done — don't assume otherwise
+
+`dashboard/verification.py` has `create_audit_trail()`, `get_audit_tooltip()`, `validate_metric()`, `DERIVED_METRICS` — but **zero pages actually call these functions**. A previous handoff doc overclaimed this as done; it isn't. This is out of scope for Phase 2 but flagging so you don't build Phase 2 assuming audit tooltips exist anywhere.
+
+---
+
+## 3. Known drift from the Phase 2 plan doc — read before executing
+
+The plan at `docs/superpowers/plans/2026-07-10-phase2-navigation-visual-design.md` was written before this session's table work. A few things to double check as you go, since the plan's line numbers/context snippets may have shifted:
+
+1. **Task 2 (merge Failed Reasons into Channels as a tab)** — `pages/07_channels.py` was substantially rewritten this session (ag-Grid migration). Re-read the current file fresh before inserting the `st.tabs()` wrapper — do not trust the plan's "existing content starts with `st.header("Channel Analysis")`" as a literal line number, but the header text itself is still accurate as of this handoff.
+2. **Task 9 (Plotly template dark mode)** — check `utils.py`'s current `configure_plotly_template()` signature before overwriting; it may have picked up unrelated changes.
+3. **Task 8 (`render_kpi_card()`)** — the plan's code sample has a typo bug already called out inline in the plan itself (`st.markdowm` → `st.markdown`) — the plan document already corrects this in its own text, just make sure you use the corrected version, not the first buggy snippet shown.
+4. Run `git status --short` and `git diff --stat` first thing to see exactly what's uncommitted before you start — there may still be uncommitted Phase 1 cleanup sitting in the working tree that hasn't been committed. Check with the user before committing anything that isn't yours if you're unsure it's intentional.
+
+---
+
+## 4. How to verify your work — use Playwright for real visual checks
+
+Playwright is installed in this environment (`pip show playwright` confirms `playwright-1.61.0`, Chromium browser downloaded to `~/.cache/ms-playwright` equivalent on Windows). **Use it to actually see what you built, not just to check "no Python exception."** This was essential this session — several bugs (column truncation, wrong table rendering, theme mismatches) were only caught by literally screenshotting the running app, not by smoke tests or pytest.
+
+### 4a. Running the app with a real CSV, no manual upload
+
+`app.py` has a test-only fallback already wired in (search for `DASHBOARD_TEST_CSV` in `app.py`) — set this env var to a real WebEngage CSV path and the app loads it automatically on start, skipping the manual file-upload UI:
 
 ```bash
-# 1. Syntax check both files
-python -c "import ast; ast.parse(open('pages/NN_name.py', encoding='utf-8').read()); print('page ok')"
-python -c "import io,ast; ast.parse(io.open('app.py',encoding='utf-8').read()); print('app.py parses')"
+# PowerShell
+$env:DASHBOARD_TEST_CSV = "D:\WORK\ME\report-1782276044546_u984psb_Mestores _ Production Dashboard_311c5018.csv"
+python -m streamlit run app.py --server.headless true --server.port 8510
+```
 
-# 2. Existing test suite must stay green (currently 8 tests, should not decrease)
+```bash
+# Git Bash / POSIX
+DASHBOARD_TEST_CSV="D:/WORK/ME/report-1782276044546_u984psb_Mestores _ Production Dashboard_311c5018.csv" python -m streamlit run app.py --server.headless true --server.port 8510
+```
+
+This file is ~8MB, 31,604 rows, date range 2025-12-31 to 2026-06-24. Real production data — use it for all visual verification instead of the tiny synthetic smoke-test fixture (which only has 2 rows and can't catch layout/theme issues).
+
+**This env var only activates when no file is uploaded through the UI — it's inert in normal production use. Do not remove it without asking the user first**, it's a deliberate test affordance, not leftover debug code.
+
+### 4b. Screenshotting with Playwright — the pattern that worked all session
+
+Write a small throwaway Python script (not part of the app, just a scratch file), run it with plain `python`, not pytest:
+
+```python
+# save to a scratch path, e.g. C:\Users\54led\AppData\Local\Temp\claude\...\scratchpad\shot.py
+from playwright.sync_api import sync_playwright
+
+with sync_playwright() as p:
+    browser = p.chromium.launch()  # headless by default — no visible window, screenshots only
+    page = browser.new_page(viewport={"width": 1600, "height": 1000}, color_scheme="dark")  # or "light"
+    page.goto("http://localhost:8510", wait_until="networkidle", timeout=60000)
+    page.wait_for_timeout(5000)  # Streamlit + ag-Grid need real time to render client-side JS
+
+    # Navigate the sidebar like a real user:
+    page.get_by_role("link", name="Channels").click()  # NOT get_by_text — sidebar nav items appear
+                                                          # twice in the DOM (link + hidden duplicate),
+                                                          # get_by_text throws "strict mode violation"
+    page.wait_for_timeout(4000)
+
+    page.screenshot(path=r"C:\Users\54led\AppData\Local\Temp\my_check.png", full_page=True)
+    browser.close()
+```
+
+Run it, then use the Read tool on the resulting PNG to actually view it — that's how every visual bug this session was actually confirmed fixed, not just "probably fine."
+
+**Gotchas encountered this session, worth knowing up front:**
+- `color_scheme="dark"` on `new_page()` is how you force dark mode in the headless browser — the app itself doesn't control this, Streamlit follows the OS/browser preference. Without setting this explicitly, Playwright defaults to light, which can make you think something's "not themed" when it's actually fine.
+- Streamlit's sidebar nav links appear twice in the DOM (visible `<p>` + an accessibility duplicate) — always use `page.get_by_role("link", name="...")`, never `get_by_text(..., exact=True)`, or you'll get a strict-mode violation error.
+- The BaseWeb date-range calendar widget in the sidebar (`st.date_input`) is finicky to drive via Playwright — clicking month/year dropdown labels directly (`page.get_by_text("March", exact=True).click()`) worked; clicking arrow buttons by `aria-label` did not (labels didn't match `"Next month"` as expected, caused multiple timeouts this session). If you need to script a date range change, prefer the dropdown-label approach, or just ask the user to set it manually and screenshot after.
+- After any Python file edit, Streamlit auto-reloads a running dev server — you don't need to restart it, just wait ~2-3s and re-screenshot. If you do need a clean restart (e.g. changed `.streamlit/config.toml`, which is NOT hot-reloaded), kill and relaunch:
+  ```bash
+  pkill -f "streamlit run" 2>/dev/null; taskkill //F //IM streamlit.exe 2>/dev/null
+  ```
+- Always screenshot AFTER a `.streamlit/config.toml` change with a full server restart — theme config is read once at startup, not on every rerun.
+
+### 4c. What to actually check visually for this Phase 2 work
+
+- **Task 4 (nav restructure):** screenshot the sidebar — confirm 4 collapsible section headers appear with the right pages grouped underneath, confirm Executive Overview loads by default when you hit `http://localhost:PORT/` with no path.
+- **Task 6/7 (theme toggle + config.toml):** screenshot both dark and light mode (toggle it, or force via `color_scheme` in a fresh Playwright context after restarting the server so config.toml is picked up) — confirm sidebar, main background, and specifically **the ag-Grid tables** all switch consistently. This is the one place Phase 1's table work and Phase 2's theme work intersect — don't skip it.
+- **Task 8 (KPI cards):** screenshot Executive Overview page, confirm cards render with icon/value/delta/progress bar as designed, in both themes.
+- **Task 11 (CSS injection):** screenshot to confirm Inter font is actually applied (check computed font in a `page.evaluate()` call if you want to be rigorous, or just eyeball the rendering — Inter has a distinctive look vs the Streamlit default).
+- **Task 1/2 (tab merges):** screenshot Time Series page and Channels page, confirm both tabs render and both have working content (click into the second tab, screenshot again).
+
+---
+
+## 5. Verification checklist (non-visual) — run before considering any task done
+
+```bash
+# Syntax check every file you touch
+python -c "import ast; ast.parse(open('app.py', encoding='utf-8').read()); print('ok')"
+
+# Full test suite — must stay green, currently 32 passed
 python -m pytest tests/ -q
 
-# 3. REAL behavioral smoke test — actually runs the page with fake seeded data.
-#    This is the single most valuable check; it catches NameError/ImportError
-#    that ast.parse cannot. Recreate this file if it's missing from
-#    .superpowers/sdd/smoke-test-snippet.py — full contents below in section 7.
-python .superpowers/sdd/smoke-test-snippet.py pages/NN_name.py
-# Expect the LAST line of output to be: PAGE RAN OK
-# "missing ScriptRunContext" warnings are expected noise — ignore them.
-# If you see "RUNTIME ERROR: ...", read the traceback, fix the missing
-# import/name, and re-run until PAGE RAN OK.
-
-# 4. Confirm the routing chain shrank by exactly one branch
-grep -n "elif page ==" app.py | wc -l
+# Smoke test any page file you modify (executes the page with fake seeded data,
+# catches NameError/ImportError that ast.parse cannot)
+python .superpowers/sdd/smoke-test-snippet.py pages/07_channels.py
+# Expect last line: PAGE RAN OK
+# ("missing ScriptRunContext" warnings are expected noise, ignore them)
 ```
 
-## 6. Task 28 — final wiring (once all 17 pages exist)
+The smoke-test fixture at `.superpowers/sdd/smoke-test-snippet.py` seeds `comparison_result=None` — it will NOT exercise any comparison-mode code path. That's a known, accepted gap from Phase 1 — rely on the real-CSV Playwright screenshots (section 4) for anything comparison-mode or visual, and on the smoke test only for "does this page still import and run at all."
 
-Replace the old `page = st.sidebar.selectbox("Navigate to", [...])` block and the now-empty `if/elif` chain with:
+---
 
-```python
-pages = [
-    st.Page("pages/01_automated_insights.py", title="Automated Insights", icon="🎯", default=True),
-    st.Page("pages/02_overview.py", title="Overview"),
-    st.Page("pages/03_marketing_actions.py", title="Marketing Actions", icon="📈"),
-    st.Page("pages/04_campaigns.py", title="Campaigns"),
-    st.Page("pages/05_journeys.py", title="Journeys"),
-    st.Page("pages/06_advanced_bi.py", title="Advanced BI", icon="📊"),
-    st.Page("pages/07_stopped_journeys.py", title="Stopped Journeys", icon="🚨"),
-    st.Page("pages/08_segments.py", title="Segments"),
-    st.Page("pages/09_channels.py", title="Channels"),
-    st.Page("pages/10_time_series.py", title="Time Series"),
-    st.Page("pages/11_correlations.py", title="Correlations"),
-    st.Page("pages/12_ab_testing.py", title="A/B Testing"),
-    st.Page("pages/13_attribution.py", title="Attribution"),
-    st.Page("pages/14_failed_reasons.py", title="Failed Reasons"),
-    st.Page("pages/15_comparisons.py", title="Comparisons"),
-    st.Page("pages/16_ai_insights.py", title="AI Insights", icon="🤖"),
-    st.Page("pages/17_export.py", title="Export"),
-]
-st.navigation(pages).run()
-```
+## 6. Don't do this
 
-**Important:** the upload widget and sidebar filters must stay in `app.py` ABOVE `st.navigation().run()` so they render on every page (Streamlit's documented entrypoint pattern — common widgets defined in the entrypoint persist across all pages). If upload/filters currently sit entirely inside `if uploaded_file is not None:`, keep the upload widget + `st.navigation().run()` running unconditionally, with filter sidebar + `set_ctx()` populated only when a file is present. Pages already gate on missing data via `get_ctx()` (defined in `dashboard/state.py`), so this is safe.
+- Don't touch `components/table.py` unless you find a genuine bug — it's fresh, tested, working code from this session.
+- Don't reintroduce ag-Grid `format` combos that don't exist — there's no native "compact + custom currency + delta" single format string in Streamlit's `NumberColumn`; this was verified via context7 + the installed library source this session. If a new page needs that combo, follow the `comparison_df`/`total_row` pattern already built, don't invent a new one.
+- Don't remove the `DASHBOARD_TEST_CSV` env var fallback in `app.py` — it's a deliberate, safe (env-gated, inert by default) test affordance.
+- Don't assume Section 1a/1b (audit trail tooltips) exist anywhere — they don't, despite the module being present.
+- Per this project's standing convention (see `.claude`/memory notes): **always verify library/API claims via context7 (fallback: web search) before implementing**, especially anything touching Streamlit APIs, ag-Grid, or Plotly — don't rely on training-data assumptions about what a given `st.*` function supports. This caught real, load-bearing facts this session (e.g. `NumberColumn(format="compact")` being genuinely native, vs. assuming it wasn't and reaching for a workaround).
 
-After wiring: verify `grep -n "page ==" app.py` returns nothing, run the full test suite, and do ONE real `streamlit run app.py` manual walkthrough — upload a CSV, click through all 17 pages, confirm numbers match the pre-refactor baseline. Check final `wc -l app.py` (should be a few hundred lines).
+---
 
-## 7. `smoke-test-snippet.py` — recreate this file if missing
+## 7. Suggested first message to yourself in the terminal session
 
-Located at `.superpowers/sdd/smoke-test-snippet.py`. If that path doesn't exist in your environment, recreate it exactly as follows (it must be run from the repo root):
-
-```python
-import os
-import sys
-sys.path.insert(0, os.getcwd())
-
-import pandas as pd
-import streamlit as st
-from dashboard.state import DashboardState, set_ctx
-import runpy
-
-df = pd.DataFrame({
-    'Journey Name': ['J1', 'J1'], 'Campaign Name': ['C1', 'C2'],
-    'Channel': ['Email', 'SMS'], 'Type of Campaign': ['Journey', 'One-Time'],
-    'Segment Name': ['S1', 'S1'], 'Conversion Event': ['Order Completed', 'Order Completed'],
-    'Sent': [100, 200], 'Delivered': [95, 190], 'Failed': [5, 10], 'Queued': [0, 0],
-    'Reporting Period Start Date': pd.to_datetime(['2025-01-01', '2025-01-02']),
-    'Reporting Period End Date': pd.to_datetime(['2025-01-01', '2025-01-02']),
-    'Day': pd.to_datetime(['2025-01-01', '2025-01-02']),
-    'Unique Impressions': [80, 150], 'Total Impressions': [90, 160],
-    'Unique Clicks': [10, 20], 'Total Clicks': [12, 22],
-    'Unique Conversions': [2, 4], 'Total Conversions': [3, 5],
-    'Unique Opens': [40, 70],
-    'Revenue (SAR)': [50.0, 100.0], 'Impression-Through Revenue (SAR)': [10.0, 20.0],
-    'Click-Through Revenue (SAR)': [40.0, 80.0],
-    'Selected Revenue (SAR)': [50.0, 100.0], 'Selected Conversions': [2, 4],
-    'Total in Control Group': [0, 0], 'Unique Control Group Conversions': [0, 0],
-    'CTR': [0.125, 0.13], 'Conversion Rate': [0.2, 0.2], 'Delivery Rate': [0.95, 0.95],
-})
-
-set_ctx(DashboardState(
-    df=df, filtered_df=df, comparison_result=None,
-    revenue_attribution='Total', conversion_attribution='Total',
-    selected_rev_label='Revenue (SAR)', selected_conv_label='Unique Conversions',
-    date_range=None, comparison_mode='None',
-    filter_options={'channels': ['Email', 'SMS'], 'campaign_types': ['Journey', 'One-Time'],
-                     'campaigns': ['C1', 'C2'], 'segments': ['S1'], 'journeys': ['J1'],
-                     'conversion_events': ['Order Completed']},
-    channels=[], campaign_types=[], campaigns=[], segments=[], journeys=[], conversion_events=[],
-))
-
-page_path = sys.argv[1]
-try:
-    runpy.run_path(page_path, run_name='__main__')
-    print('PAGE RAN OK')
-except SystemExit:
-    print('PAGE CALLED st.stop() (check if expected)')
-except Exception as e:
-    print('RUNTIME ERROR:', type(e).__name__, e)
-    raise
-```
-
-If a later page needs a column this fake DataFrame doesn't have, add the column rather than skipping the smoke test — keep the file at this same path so it stays reusable.
-
-## 8. `dashboard/state.py` — the shared-state contract (already built, do not modify)
-
-```python
-"""Shared dashboard state passed from the entrypoint to page modules."""
-from dataclasses import dataclass, field
-from typing import Any, Optional
-
-import streamlit as st
-
-
-@dataclass
-class DashboardState:
-    df: Any
-    filtered_df: Any
-    comparison_result: Optional[dict]
-    revenue_attribution: str
-    conversion_attribution: str
-    selected_rev_label: str
-    selected_conv_label: str
-    date_range: Any
-    comparison_mode: str
-    filter_options: dict = field(default_factory=dict)
-    channels: list = field(default_factory=list)
-    campaign_types: list = field(default_factory=list)
-    campaigns: list = field(default_factory=list)
-    segments: list = field(default_factory=list)
-    journeys: list = field(default_factory=list)
-    conversion_events: list = field(default_factory=list)
-
-    def attribution_display(self, col_name: str) -> str:
-        """Map internal 'Selected Revenue/Conversions' names to the selected label."""
-        from attribution import get_attribution_display_label
-        return get_attribution_display_label(
-            col_name, self.revenue_attribution, self.conversion_attribution
-        )
-
-
-def set_ctx(ctx: DashboardState) -> None:
-    st.session_state["ctx"] = ctx
-
-
-def get_ctx() -> DashboardState:
-    """Return the current DashboardState, or gate the page if no CSV is loaded yet."""
-    ctx = st.session_state.get("ctx")
-    if ctx is None:
-        st.info("⬆️ Upload a WebEngage CSV on the main page to begin.")
-        st.stop()
-    return ctx
-```
-
-`app.py`'s prelude (lines ~280-433 as of HEAD) already builds and calls `set_ctx(DashboardState(...))` right before the `if page == "Journeys":` line — this is already wired and does not need to change for Tasks 15–27, only for Task 28's navigation swap.
-
-## 9. Lessons learned so far (avoid repeating these)
-
-1. **Don't assert unverified assumptions about a function's dependencies in a dispatch.** One task (extracting `estimate_revenue_loss_ml`) was told to expect sklearn (RandomForestRegressor etc.) based on a wrong guess; the real dependency was `prophet`+`scipy.stats`. The mistake produced dead imports that had to be fixed in a follow-up. Let whoever does the work trace names themselves and report what they find.
-2. **Trailing whitespace differences during a "verbatim" code move are not real defects.** One review flagged that a copy wasn't byte-for-byte due to stripped trailing whitespace on ~43 lines. This was correctly waived — Python ignores trailing whitespace outside string literals, and the important invariant is logic preservation, not literal byte match. Don't burn a fix-cycle on this if it recurs.
-3. **`ast.parse` cannot catch NameError/ImportError in page files** because `get_ctx()` calls `st.stop()` which needs real Streamlit context — a plain import or `ast.parse` won't exercise the actual body logic that runs after `ctx = get_ctx()`. The `runpy.run_path()` + seeded `set_ctx()` smoke test (section 5/7) actually executes the page and is the strongest available verification short of a live `streamlit run`.
-4. **`app.py`'s original page-split plan template had a wrong import path** (see section 4's erratum) — already corrected in all 4 completed pages; just don't reintroduce it.
-5. Two earlier duplicate-function reconciliation tasks (Tasks 2–3, already done) found and fixed two real behavioral divergences between app.py's local copies and the canonical `analysis.py` versions (in `top_campaigns` and `channel_analysis`) — these are already merged into `analysis.py` and don't need revisiting.
-6. Root-level `test_stopped_detection.py` has zero pytest-collected tests (no `test_*` functions, doesn't import `app`) — confirmed harmless and unaffected by this refactor; don't worry about it.
-
-## 10. Where things live (for reference, not required reading)
-
-- Full original plan (28-task breakdown, all details): `docs/superpowers/plans/2026-07-10-app-multipage-refactor.md`
-- Original design spec: `docs/superpowers/specs/2026-07-10-app-multipage-refactor-design.md`
-- Task-by-task progress ledger with every review verdict: `.superpowers/sdd/progress.md`
-- Per-task briefs/reports (verbose, one file per task so far): `.superpowers/sdd/task-*-brief.md`, `.superpowers/sdd/task-*-report.md`
-- **Note:** `.gitignore` excludes `*.md` in this repo (intentional — many local guide docs are untracked). This `HANDOFF.md` and the plan/spec docs above were force-added with `git add -f` to be tracked; keep doing that if you add more `.md` docs you want committed.
-- Project-level Claude Code permission allowlist (reduces prompts for pytest/git-add/git-commit/grep/python -c): `.claude/settings.json`
-
-## 11. Suggested first message to the next session/LLM
-
-> "Resume the app.py multipage refactor. Read `HANDOFF.md` at the repo root — it's self-contained. Current HEAD is 7c88aa5 on branch webengage-marketing-analytics-dashboard. Tasks 1-14 of 28 are done (verified, reviewed, committed). Continue with Task 15 (pages/05_journeys.py — Journey Analysis section only, see section 3 for the sub-boundaries). Follow the pattern in section 4, verify with section 5's 4-step check, and keep updating `.superpowers/sdd/progress.md` as you go if you're using the same subagent-driven-development workflow — otherwise just work through the remaining tasks directly, using the 4 completed pages/*.py files as your concrete reference."
+> "Resume the WebEngage dashboard project. Read `HANDOFF.md` at the repo root — it's self-contained. Phase 1 (data trust + unified ag-Grid tables) is done except Section 1a/1b (audit trail — not wired up anywhere, out of scope for now). Start Phase 2: execute `docs/superpowers/plans/2026-07-10-phase2-navigation-visual-design.md` task-by-task, using Playwright screenshots (pattern described in HANDOFF.md section 4) to visually verify navigation, theme toggle, and KPI cards — don't just check for Python exceptions. Use `DASHBOARD_TEST_CSV` env var with a real CSV for visual checks, not the tiny smoke-test fixture."

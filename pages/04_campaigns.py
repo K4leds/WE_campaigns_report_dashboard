@@ -5,7 +5,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
-from utils import format_metric, style_total_row
+from utils import format_metric
+from components.table import render_table
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_attribution_display_label, get_selected_revenue_display_name, get_selected_conversion_display_name
 from analysis import top_campaigns
@@ -92,23 +93,28 @@ if 'Unique Impression-Through Conversions' in filtered_df.columns:
 camp_metric = st.selectbox("Metric", camp_metric_options, key='camp_metric', format_func=_attribution_display)
 top_camp = top_campaigns(filtered_df, camp_metric)
 
-# Create display version for table
-top_camp_display = top_camp.copy()
+# Conversion Rate is stored as a 0-1 fraction; render_table's percent formatter expects
+# rate columns pre-scaled to 0-100 (matches 07_channels' convention).
+if camp_metric == 'Conversion Rate' and camp_metric in top_camp.columns:
+    top_camp = top_camp.copy()
+    top_camp[camp_metric] = top_camp[camp_metric] * 100
 
-# Store original numeric values for sorting
-original_values = top_camp_display[camp_metric].copy()
-
-# Format the metric column for display
+# Build column_config for proper numeric formatting
+top_camp_cc = {}
 if 'Revenue' in camp_metric:
-    top_camp_display[camp_metric] = top_camp_display[camp_metric].apply(lambda x: format_metric(x, "SAR"))
+    top_camp_cc[camp_metric] = st.column_config.NumberColumn(label=camp_metric, format='compact')
 elif camp_metric in ['Unique Conversions', 'Unique Clicks', 'Unique Click-Through Conversions', 'Unique Impression-Through Conversions']:
-    top_camp_display[camp_metric] = top_camp_display[camp_metric].apply(format_metric)
+    top_camp_cc[camp_metric] = st.column_config.NumberColumn(label=camp_metric, format='compact')
 elif camp_metric == 'Conversion Rate':
-    top_camp_display[camp_metric] = top_camp_display[camp_metric].apply(lambda x: f"{x:.2%}")
-# For other rates, keep as is
+    top_camp_cc[camp_metric] = st.column_config.NumberColumn(label=camp_metric, format='%.2f%%')
 
-# Display table with proper sorting
-st.dataframe(top_camp_display.rename(columns=attribution_rename))
+# Handle attribution rename for column_config keys
+renamed_display = top_camp.rename(columns=attribution_rename)
+if camp_metric in attribution_rename:
+    renamed_metric = attribution_rename[camp_metric]
+    top_camp_cc[renamed_metric] = top_camp_cc.pop(camp_metric)
+
+render_table(renamed_display, key="top_camp", column_config=top_camp_cc if top_camp_cc else None)
 
 # Create chart with original numeric values
 fig = px.bar(top_camp, x='Campaign Name', y=camp_metric, title=f"Top Campaigns by {_attribution_display(camp_metric)}",
@@ -155,15 +161,38 @@ if 'Type of Campaign' in filtered_df.columns:
             type_breakdown['Selected Revenue (SAR)'] / type_breakdown['Unique Conversions'], 0
         )
 
-    # Add total row
+    # Display table - drop Selected Revenue/Conversions since all attribution types are shown
+    type_display = type_breakdown.copy()
+    for drop_col in ['Selected Revenue (SAR)', 'Selected Conversions']:
+        if drop_col in type_display.columns:
+            type_display = type_display.drop(columns=[drop_col])
+
+    # Conversion Rate is stored as a 0-1 fraction; render_table's percent formatter
+    # expects rate columns pre-scaled to 0-100 (matching 07_channels' convention).
+    if 'Conversion Rate' in type_display.columns:
+        type_display['Conversion Rate'] = type_display['Conversion Rate'] * 100
+
+    # Build column_config for type breakdown
+    type_cc = {}
+    for col in ['Sent', 'Delivered', 'Unique Clicks', 'Unique Conversions']:
+        if col in type_display.columns:
+            type_cc[col] = st.column_config.NumberColumn(label=col, format='compact')
+    for col in [c for c in type_display.columns if 'Revenue' in c]:
+        type_cc[col] = st.column_config.NumberColumn(label=col, format='compact')
+    for col in [c for c in type_display.columns if 'AOV' in c]:
+        type_cc[col] = st.column_config.NumberColumn(label=col, format='compact')
+    if 'Conversion Rate' in type_display.columns:
+        type_cc['Conversion Rate'] = st.column_config.NumberColumn(label='Conversion Rate', format='%.2f%%')
+
+    # Compute the "Total" pinned row from raw (unrounded) values, matching type_display's columns.
     total_row = {'Type of Campaign': 'Total'}
     total_conversions = type_breakdown['Unique Conversions'].sum()
-    for col in type_breakdown.columns:
+    for col in type_display.columns:
         if col == 'Type of Campaign':
             continue
         elif col == 'Conversion Rate':
             clicks_total = type_breakdown['Unique Clicks'].sum()
-            total_row[col] = type_breakdown['Unique Conversions'].sum() / clicks_total if clicks_total > 0 else 0
+            total_row[col] = (type_breakdown['Unique Conversions'].sum() / clicks_total * 100) if clicks_total > 0 else 0
         elif 'AOV' in col:
             # Calculate total AOV from total revenue / total conversions
             if 'Click-Through' in col and 'Click-Through Revenue (SAR)' in type_breakdown.columns:
@@ -178,26 +207,12 @@ if 'Type of Campaign' in filtered_df.columns:
                 total_rev = 0
             total_row[col] = total_rev / total_conversions if total_conversions > 0 else 0
         else:
-            total_row[col] = type_breakdown[col].sum()
-    type_breakdown = pd.concat([type_breakdown, pd.DataFrame([total_row])], ignore_index=True)
+            total_row[col] = type_display[col].sum()
 
-    # Display table - drop Selected Revenue/Conversions since all attribution types are shown
-    type_display = type_breakdown.copy()
-    for drop_col in ['Selected Revenue (SAR)', 'Selected Conversions']:
-        if drop_col in type_display.columns:
-            type_display = type_display.drop(columns=[drop_col])
-    for col in ['Sent', 'Delivered', 'Unique Clicks', 'Unique Conversions']:
-        if col in type_display.columns:
-            type_display[col] = type_display[col].apply(format_metric)
-    for col in [c for c in type_display.columns if 'Revenue' in c]:
-        type_display[col] = type_display[col].apply(lambda x: format_metric(x, "SAR"))
-    for col in [c for c in type_display.columns if 'AOV' in c]:
-        type_display[col] = type_display[col].apply(lambda x: format_metric(x, "SAR"))
-    type_display['Conversion Rate'] = type_display['Conversion Rate'].apply(lambda x: f"{x:.2%}")
-    st.dataframe(style_total_row(type_display), width='stretch', hide_index=True)
+    render_table(type_display, key="type_breakdown", column_config=type_cc, total_row=total_row)
 
-    # Side-by-side charts (exclude Total row)
-    type_chart_data = type_breakdown[type_breakdown['Type of Campaign'] != 'Total']
+    # Side-by-side charts
+    type_chart_data = type_breakdown
     type_col1, type_col2 = st.columns(2)
     rev_col_for_type = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in type_chart_data.columns else 'Revenue (SAR)'
     with type_col1:
@@ -349,26 +364,38 @@ if 'Type of Campaign' in filtered_df.columns:
         display_cols = list(dict.fromkeys(display_cols))
         onetime_display = onetime_summary[display_cols].copy()
 
-        # Format columns (convert to strings for display with K/M abbreviations)
-        onetime_display['Sent'] = onetime_display['Sent'].apply(format_metric)
-        onetime_display['Delivered'] = onetime_display['Delivered'].apply(format_metric)
-        onetime_display['Unique Clicks'] = onetime_display['Unique Clicks'].apply(format_metric)
-        onetime_display[conv_col_display] = onetime_display[conv_col_display].apply(format_metric)
-        onetime_display[revenue_col] = onetime_display[revenue_col].apply(lambda x: format_metric(x, "SAR"))
+        # Delivery Rate / CTR / Conversion Rate are stored as 0-1 fractions; render_table's
+        # percent formatter expects rate columns pre-scaled to 0-100 (matches 07_channels'
+        # convention) — otherwise a 5% rate renders as "0.05%".
+        for col in ['Delivery Rate', 'CTR', 'Conversion Rate']:
+            if col in onetime_display.columns:
+                onetime_display[col] = onetime_display[col] * 100
 
-        # Format attribution revenue columns if they exist
-        if 'Impression-Through Revenue (SAR)' in onetime_display.columns:
-            onetime_display['Impression-Through Revenue (SAR)'] = onetime_display['Impression-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
-        if 'Click-Through Revenue (SAR)' in onetime_display.columns:
-            onetime_display['Click-Through Revenue (SAR)'] = onetime_display['Click-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
-
-        onetime_display['Delivery Rate'] = onetime_display['Delivery Rate'].apply(lambda x: f"{x:.1%}")
-        onetime_display['CTR'] = onetime_display['CTR'].apply(lambda x: f"{x:.2%}")
-        onetime_display['Conversion Rate'] = onetime_display['Conversion Rate'].apply(lambda x: f"{x:.2%}")
+        # Build column_config for one-time campaigns
+        onetime_cc = {}
+        for col in ['Sent', 'Delivered', 'Unique Clicks', conv_col_display]:
+            if col in onetime_display.columns:
+                onetime_cc[col] = st.column_config.NumberColumn(label=col, format='compact')
+        for col in [revenue_col]:
+            if col in onetime_display.columns:
+                onetime_cc[col] = st.column_config.NumberColumn(label=col, format='compact')
+        for col in ['Impression-Through Revenue (SAR)', 'Click-Through Revenue (SAR)']:
+            if col in onetime_display.columns:
+                onetime_cc[col] = st.column_config.NumberColumn(label=col, format='compact')
+        for col in ['Delivery Rate', 'CTR', 'Conversion Rate']:
+            if col in onetime_display.columns:
+                onetime_cc[col] = st.column_config.NumberColumn(label=col, format='%.2f%%')
 
         # Rename columns to show actual attribution model
         onetime_display = onetime_display.rename(columns=attribution_rename)
-        st.dataframe(onetime_display, width='stretch', hide_index=True)
+
+        # Map column_config keys to post-rename names
+        onetime_cc_renamed = {}
+        for col, cfg in onetime_cc.items():
+            renamed = attribution_rename.get(col, col)
+            onetime_cc_renamed[renamed] = cfg
+
+        render_table(onetime_display, key="onetime_campaigns", column_config=onetime_cc_renamed)
 
         # Optional: Channel breakdown for one-time campaigns
         if st.checkbox("Show Channel Breakdown for One-Time Campaigns", key='onetime_channel_breakdown'):
@@ -391,19 +418,35 @@ if 'Type of Campaign' in filtered_df.columns:
             channel_breakdown['Delivery Rate'] = channel_breakdown['Delivered'] / channel_breakdown['Sent']
             channel_breakdown['Conversions'] = channel_breakdown['Unique Conversions']
 
-            # Format
-            channel_display = channel_breakdown.copy()
-            channel_display['Sent'] = channel_display['Sent'].apply(format_metric)
-            channel_display['Delivered'] = channel_display['Delivered'].apply(format_metric)
-            channel_display['Conversions'] = channel_display['Conversions'].apply(format_metric)
-            channel_display[rev_col_channel] = channel_display[rev_col_channel].apply(lambda x: format_metric(x, "SAR"))
-            channel_display['Delivery Rate'] = channel_display['Delivery Rate'].apply(lambda x: f"{x:.1%}")
+            # Delivery Rate is stored as a 0-1 fraction; render_table's percent formatter
+            # expects rate columns pre-scaled to 0-100 (matches 07_channels' convention).
+            if 'Delivery Rate' in channel_breakdown.columns:
+                channel_breakdown['Delivery Rate'] = channel_breakdown['Delivery Rate'] * 100
+
+            # Build column_config for channel breakdown
+            channel_cc = {}
+            for col in ['Sent', 'Delivered', 'Conversions']:
+                if col in channel_breakdown.columns:
+                    channel_cc[col] = st.column_config.NumberColumn(label=col, format='compact')
+            if rev_col_channel in channel_breakdown.columns:
+                channel_cc[rev_col_channel] = st.column_config.NumberColumn(label=rev_col_channel, format='compact')
+            if 'Delivery Rate' in channel_breakdown.columns:
+                channel_cc['Delivery Rate'] = st.column_config.NumberColumn(label='Delivery Rate', format='%.2f%%')
 
             # Rename columns to show actual attribution model
+            channel_display = channel_breakdown.copy()
             channel_display = channel_display.rename(columns=attribution_rename)
             display_rev_col = selected_rev_label if rev_col_channel == 'Selected Revenue (SAR)' else rev_col_channel
-            st.dataframe(channel_display[['Channel', 'Sent', 'Delivered', 'Delivery Rate', 'Conversions', display_rev_col]],
-                       width='stretch', hide_index=True)
+
+            # Map column_config keys to post-rename names
+            channel_cc_renamed = {}
+            for col, cfg in channel_cc.items():
+                renamed = attribution_rename.get(col, col)
+                channel_cc_renamed[renamed] = cfg
+
+            display_cols = ['Channel', 'Sent', 'Delivered', 'Delivery Rate', 'Conversions', display_rev_col]
+            display_cols = [c for c in display_cols if c in channel_display.columns]
+            render_table(channel_display[display_cols], key="channel_breakdown", column_config=channel_cc_renamed)
     else:
         st.info("No one-time campaigns found matching the criteria.")
 
@@ -440,16 +483,25 @@ if 'Type of Campaign' in filtered_df.columns:
             monthly_campaigns = monthly_campaigns.rename(columns={'Campaign Name': 'Unique Campaigns'})
             monthly_campaigns = monthly_campaigns.sort_values('Month', ascending=False)
 
-            # Format for display
-            monthly_display = monthly_campaigns.copy()
-            monthly_display['Sent'] = monthly_display['Sent'].apply(format_metric)
-            monthly_display['Delivered'] = monthly_display['Delivered'].apply(format_metric)
-            monthly_display['Unique Conversions'] = monthly_display['Unique Conversions'].apply(format_metric)
-            monthly_display[rev_col_month] = monthly_display[rev_col_month].apply(lambda x: format_metric(x, "SAR"))
+            # Build column_config for monthly display
+            monthly_cc = {}
+            for col in ['Sent', 'Delivered', 'Unique Conversions', 'Unique Campaigns']:
+                if col in monthly_campaigns.columns:
+                    monthly_cc[col] = st.column_config.NumberColumn(label=col, format='%.0f')
+            if rev_col_month in monthly_campaigns.columns:
+                monthly_cc[rev_col_month] = st.column_config.NumberColumn(label=rev_col_month, format='%.2f')
 
             # Rename columns to show actual attribution model
+            monthly_display = monthly_campaigns.copy()
             monthly_display = monthly_display.rename(columns=attribution_rename)
-            st.dataframe(monthly_display, width='stretch', hide_index=True)
+
+            # Map column_config keys to post-rename names
+            monthly_cc_renamed = {}
+            for col, cfg in monthly_cc.items():
+                renamed = attribution_rename.get(col, col)
+                monthly_cc_renamed[renamed] = cfg
+
+            render_table(monthly_display, key="monthly_onetime", column_config=monthly_cc_renamed)
 
             # Optional chart
             if st.checkbox("Show Monthly Trend Chart", key='monthly_onetime_chart'):
@@ -522,21 +574,22 @@ if selected_campaigns:
         'Impression-Through Revenue (SAR)': 'sum',
         'Click-Through Revenue (SAR)': 'sum'
     }).reset_index()
-    # Add total row
+    # Build column_config for channel performance
+    chan_perf_cc = {}
+    for col in ['Sent', 'Delivered', 'Unique Conversions']:
+        if col in chan_perf.columns:
+            chan_perf_cc[col] = st.column_config.NumberColumn(label=col, format='compact')
+    for col in ['Revenue (SAR)', 'Impression-Through Revenue (SAR)', 'Click-Through Revenue (SAR)']:
+        if col in chan_perf.columns:
+            chan_perf_cc[col] = st.column_config.NumberColumn(label=col, format='compact')
+
+    # Compute the "Total" pinned row from raw (unrounded) values.
     total_row = {'Channel': 'Total'}
     for col in chan_perf.columns:
         if col != 'Channel':
             total_row[col] = chan_perf[col].sum()
-    chan_perf_with_total = pd.concat([chan_perf, pd.DataFrame([total_row])], ignore_index=True)
-    # Format columns for display
-    chan_perf_display = chan_perf_with_total.copy()
-    chan_perf_display['Sent'] = chan_perf_display['Sent'].apply(format_metric)
-    chan_perf_display['Delivered'] = chan_perf_display['Delivered'].apply(format_metric)
-    chan_perf_display['Unique Conversions'] = chan_perf_display['Unique Conversions'].apply(format_metric)
-    chan_perf_display['Revenue (SAR)'] = chan_perf_display['Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
-    chan_perf_display['Impression-Through Revenue (SAR)'] = chan_perf_display['Impression-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
-    chan_perf_display['Click-Through Revenue (SAR)'] = chan_perf_display['Click-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
-    st.dataframe(style_total_row(chan_perf_display), width='stretch', hide_index=True)
+
+    render_table(chan_perf, key="camp_channel_perf", column_config=chan_perf_cc, total_row=total_row)
     conv_display_name = get_selected_conversion_display_name(conversion_attribution)
     fig_chan = px.bar(chan_perf, x='Channel', y='Unique Conversions',
                       title=f"{conv_display_name} by Channel for Selected Campaigns",
@@ -563,7 +616,6 @@ if selected_campaigns:
         'Direct/Open-Through': camp_details['Unique Conversions'].sum() - camp_details['Unique Impression-Through Conversions'].sum() - camp_details['Unique Click-Through Conversions'].sum()
     }
     attr_df_camp = pd.DataFrame(list(attr_camp.items()), columns=['Source', 'Conversions'])
-    attr_df_camp['Conversions'] = attr_df_camp['Conversions'].apply(format_metric)
     fig_attr_camp = px.pie(attr_df_camp, names='Source', values='Conversions', title="Attribution for Selected Campaigns",
                             color_discrete_sequence=COLOR_SEQUENCE)
     st.plotly_chart(fig_attr_camp, width='stretch')
@@ -573,7 +625,6 @@ if selected_campaigns:
     failed_cols = [col for col in camp_details.columns if 'Failed' in col and col != 'Failed']
     if failed_cols:
         failed_camp = camp_details[failed_cols].sum().reset_index().rename(columns={'index': 'Reason', 0: 'Count'})
-        failed_camp['Count'] = failed_camp['Count'].apply(format_metric)
         fig_fail_camp = px.bar(failed_camp, x='Reason', y='Count', title="Failed Reasons for Selected Campaigns",
                                color_discrete_sequence=[COLORS['danger']])
         st.plotly_chart(fig_fail_camp, width='stretch')
@@ -752,20 +803,23 @@ if campaign_health_data:
         styled = numeric_display_df[columns_order].style.format(formatters)
         st.dataframe(styled, width='stretch', height=400)
     except Exception:
-        # Fallback: if Styler isn't supported in this environment, fall back to pre-formatted strings
+        # Fallback: use column_config for proper numeric formatting
         fallback = numeric_display_df[columns_order].copy()
-        if 'Health Score' in fallback.columns:
-            fallback['Health Score'] = fallback['Health Score'].apply(lambda x: f"{x:.1f}/100")
-        if 'Revenue (SAR)' in fallback.columns:
-            fallback['Revenue (SAR)'] = fallback['Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
-            fallback['Impression-Through Revenue (SAR)'] = fallback['Impression-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
-            fallback['Click-Through Revenue (SAR)'] = fallback['Click-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
+        fallback_cc = {}
+        num_cols = ['Health Score', 'Delivery Score', 'Engagement Score', 'Conversion Score', 'Revenue Score']
+        for col in num_cols:
+            if col in fallback.columns:
+                fallback_cc[col] = st.column_config.NumberColumn(label=col, format='%.2f')
+        rev_cols = ['Revenue (SAR)', 'Impression-Through Revenue (SAR)', 'Click-Through Revenue (SAR)']
+        for col in rev_cols:
+            if col in fallback.columns:
+                fallback_cc[col] = st.column_config.NumberColumn(label=col, format='%.2f')
         if 'Total Conversions' in fallback.columns:
-            fallback['Total Conversions'] = fallback['Total Conversions'].apply(format_metric)
+            fallback_cc['Total Conversions'] = st.column_config.NumberColumn(label='Total Conversions', format='%.0f')
         if 'Tier Display' in fallback.columns:
             fallback = fallback.rename(columns={'Tier Display': 'Tier'})
 
-        st.dataframe(fallback, width='stretch', height=400)
+        st.dataframe(fallback, width='stretch', height=400, column_config=fallback_cc)
 
     # Component Scores Radar Chart for Selected Campaign
     st.subheader("🎯 Campaign Performance Breakdown")
@@ -961,22 +1015,15 @@ if breakdown_campaign and str(breakdown_campaign) != 'nan':
 
     comparison_df = pd.DataFrame(comparison_data)
 
-    # Format for display
-    display_comparison = comparison_df.copy()
-    display_comparison['Campaign'] = display_comparison.apply(
-        lambda row: f"{row['Campaign']:.1f}%" if 'Rate' in row['Metric'] else format_metric(row['Campaign'], "SAR" if "Revenue" in row['Metric'] else ""),
-        axis=1
-    )
-    display_comparison['Portfolio Average'] = display_comparison.apply(
-        lambda row: f"{row['Portfolio Average']:.1f}%" if 'Rate' in row['Metric'] else format_metric(row['Portfolio Average'], "SAR" if "Revenue" in row['Metric'] else ""),
-        axis=1
-    )
-    display_comparison['Difference'] = display_comparison.apply(
-        lambda row: f"{row['Difference']:+.1f}%" if 'Rate' in row['Metric'] else f"{format_metric(row['Difference'], 'SAR' if 'Revenue' in row['Metric'] else '')}",
-        axis=1
-    )
+    # Build column_config — Metric column is text, rest are numeric with per-column format
+    perf_cc = {
+        'Metric': st.column_config.TextColumn(label='Metric'),
+        'Campaign': st.column_config.NumberColumn(label='Campaign', format='%.2f'),
+        'Portfolio Average': st.column_config.NumberColumn(label='Portfolio Average', format='%.2f'),
+        'Difference': st.column_config.NumberColumn(label='Difference', format='%+.2f'),
+    }
 
-    st.dataframe(display_comparison, width='stretch')
+    st.dataframe(comparison_df, width='stretch', column_config=perf_cc)
 
     # Performance Summary
     st.subheader("📋 Performance Summary")

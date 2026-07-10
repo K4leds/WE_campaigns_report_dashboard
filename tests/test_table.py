@@ -1,4 +1,4 @@
-"""Tests for the unified table component."""
+"""Tests for the unified table component (ag-Grid backed)."""
 import sys
 from pathlib import Path
 
@@ -9,56 +9,64 @@ sys.path.insert(0, str(project_root))
 import pytest
 import pandas as pd
 import numpy as np
-from components.table import render_table, _build_column_config
+import streamlit as st
+from components.table import render_table, _build_grid_options, _column_config_to_aggrid
 
 
-class TestBuildColumnConfig:
-    def test_returns_dict(self):
-        """_build_column_config returns a dict."""
+class TestColumnConfigToAggrid:
+    def test_extracts_format_and_label(self):
+        cc = st.column_config.NumberColumn(label="Revenue (SAR)", format="compact")
+        result = _column_config_to_aggrid(cc)
+        assert result["format"] == "compact"
+        assert result["label"] == "Revenue (SAR)"
+
+    def test_non_dict_input_returns_empty(self):
+        assert _column_config_to_aggrid(None) == {}
+        assert _column_config_to_aggrid("not a config") == {}
+
+
+class TestBuildGridOptions:
+    def test_returns_dataframe_and_dict(self):
         df = pd.DataFrame({"A": [1, 2], "B": [3.0, 4.0]})
-        config = _build_column_config(df)
-        assert isinstance(config, dict)
+        display_df, grid_options = _build_grid_options(df, None, None, None, 400, None, None)
+        assert isinstance(display_df, pd.DataFrame)
+        assert isinstance(grid_options, dict)
 
-    def test_numeric_columns_detected(self):
-        """Integer and float columns get a NumberColumn config entry."""
-        df = pd.DataFrame({"A": [1, 2, 3], "B": [4.0, 5.0, 6.0]})
-        config = _build_column_config(df)
-        assert "A" in config
-        assert "B" in config
+    def test_numeric_columns_get_compact_formatter_by_default(self):
+        df = pd.DataFrame({"Revenue (SAR)": [1000.0, 2000.0]})
+        _, grid_options = _build_grid_options(df, None, None, None, 400, None, None)
+        col_defs = {c["field"]: c for c in grid_options["columnDefs"]}
+        assert "valueFormatter" in col_defs["Revenue (SAR)"]
 
-    def test_non_numeric_columns_skipped(self):
-        """String columns are not included in the config."""
-        df = pd.DataFrame({"Name": ["X", "Y"], "Value": [1.0, 2.0]})
-        config = _build_column_config(df)
-        assert "Name" not in config
-        assert "Value" in config
+    def test_comparison_df_adds_hidden_shadow_column(self):
+        df = pd.DataFrame({"Channel": ["Email"], "Revenue (SAR)": [1000.0]})
+        comp_df = pd.DataFrame({"Channel": ["Email"], "Revenue (SAR)": [500.0]})
+        display_df, grid_options = _build_grid_options(
+            df, None, comp_df, "Channel", 400, None, None
+        )
+        assert "Revenue (SAR)__comp" in display_df.columns
+        col_defs = {c["field"]: c for c in grid_options["columnDefs"]}
+        assert col_defs["Revenue (SAR)__comp"]["hide"] is True
+
+    def test_total_row_becomes_pinned_bottom_row(self):
+        df = pd.DataFrame({"Channel": ["Email"], "Revenue (SAR)": [1000.0]})
+        total_row = {"Channel": "Total", "Revenue (SAR)": 1000.0}
+        _, grid_options = _build_grid_options(df, None, None, None, 400, None, total_row)
+        assert grid_options["pinnedBottomRowData"] == [total_row]
+
+    def test_total_row_with_numpy_types_is_json_safe(self):
+        """numpy int64/float64 in the total row must be cast to plain Python types."""
+        df = pd.DataFrame({"Channel": ["Email", "SMS"], "Sent": [10, 20]})
+        total_row = {"Channel": "Total", "Sent": df["Sent"].sum()}  # numpy.int64
+        _, grid_options = _build_grid_options(df, None, None, None, 400, None, total_row)
+        pinned = grid_options["pinnedBottomRowData"][0]
+        assert type(pinned["Sent"]) is float
 
     def test_empty_dataframe_does_not_crash(self):
-        """An empty DataFrame returns an empty config dict."""
         df = pd.DataFrame()
-        config = _build_column_config(df)
-        assert isinstance(config, dict)
-        assert len(config) == 0
-
-    def test_datetime_columns_detected(self):
-        """Datetime columns get a DatetimeColumn config entry."""
-        df = pd.DataFrame({
-            "Date": pd.to_datetime(["2024-01-01", "2024-06-15"]),
-            "Value": [100, 200],
-        })
-        config = _build_column_config(df)
-        assert "Date" in config
-        assert "Value" in config
-
-    def test_format_config_applied(self):
-        """Custom format config is reflected in the NumberColumn."""
-        df = pd.DataFrame({"Revenue (SAR)": [1000.0, 2000.0], "CTR": [0.05, 0.08]})
-        config = _build_column_config(
-            df,
-            format_config={"Revenue (SAR)": {"format": "%.2f", "unit": "SAR"}},
-        )
-        assert "Revenue (SAR)" in config
-        assert "CTR" in config
+        display_df, grid_options = _build_grid_options(df, None, None, None, 400, None, None)
+        assert isinstance(display_df, pd.DataFrame)
+        assert isinstance(grid_options, dict)
 
 
 class TestRenderTable:

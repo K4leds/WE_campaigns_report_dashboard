@@ -1,7 +1,7 @@
 # Production-Ready Dashboard: 2026 AI-Era Enhancements
 
-**Date:** 2026-07-10
-**Status:** Draft
+**Date:** 2026-07-10 (Sections 1–2 status updated same day after implementation)
+**Status:** Section 1 & 2 (Data Accuracy + Unified Table System) — **DONE**. Section 3 & 4 (Phase 2: Navigation + Visual Design) — **NOT STARTED, next up**. Sections 5–6 — not started.
 **Branch:** `webengage-marketing-analytics-dashboard`
 
 ## Overview
@@ -20,7 +20,15 @@ Transform the existing WebEngage campaigns dashboard from a "metrics display" in
 
 ## Section 1: Data Accuracy & Verification Layer
 
-### Problem
+### STATUS: PARTIAL
+
+- **1c (Unified Numeric Display / sort-safe K/M formatting) — DONE.** All pages migrated to `render_table()` (see Section 2). `format_metric()` in `utils.py` is confirmed render-layer-only (does not write back into DataFrame columns).
+- **1a (Calculation Audit Trail) — module exists, NOT wired up.** `dashboard/verification.py` has `create_audit_trail()`, `get_audit_tooltip()`, `validate_metric()`, `DERIVED_METRICS` — but a grep across all 15 page files for `get_audit_tooltip`/`compute_and_track_metric` returns **zero** matches. No page currently shows a formula tooltip on any `st.metric()`. This is real remaining work, not done.
+- **1b (Inline Validation Checks) — NOT implemented anywhere.** Same status as 1a: the module has the primitive (`validate_metric()`), no page calls it.
+
+If prioritizing after Phase 2, 1a/1b are the next honest "Section 1 completion" work — don't assume they're done because the module file exists.
+
+### Problem (original, for context)
 
 - Past bugs (channel revenue summing across channels instead of per-channel) eroded trust
 - K/M formatting (`11.5K SAR`) stores display strings in DataFrames, breaking column sorting
@@ -55,7 +63,28 @@ Validation runs in `dashboard/verification.py` (new module), called from the dat
 
 ## Section 2: Unified Table & Comparison System
 
-### Problem
+### STATUS: DONE (implemented, verified against real production CSV data)
+
+`components/table.py` implements `render_table()` exactly as designed below, on `streamlit-aggrid` v1.2.1.post2. Actual signature (differs slightly from the original sketch — this is the real, working one):
+
+```python
+def render_table(
+    df, key=None, column_config=None,
+    comparison_df=None, compare_on=None,
+    height=400, use_container_width=True, hide_index=True,
+    column_order=None, total_row=None,
+) -> None
+```
+
+Key implementation notes for anyone extending this:
+- `column_config={"Col": st.column_config.NumberColumn(format="compact")}` gives sortable `125.23K`-style cells — `format="compact"` is a genuine native Streamlit 1.56 NumberColumn option, verified against the installed library source.
+- `comparison_df` + `compare_on` (e.g. `compare_on="Channel"`) is how the `45.2K ▲12.3%`-in-one-cell design in 2a is actually achieved: pass a **raw, unformatted** prior-period DataFrame with matching columns and key column. The component builds hidden `f"{col}__comp"` shadow columns internally and a JS `valueFormatter`/`cellStyle` pair that renders the compact value + colored delta in the same cell, sorting on the real current-period number underneath.
+- `total_row={col: value, ...}` renders a pinned, highlighted bottom row via ag-Grid's `pinnedBottomRowData` — excluded from sort/filter. Include `f"{col}__total_comp"` keys to give the pinned row its own delta when a comparison is active. **Never** `pd.concat()` a manual total row into the DataFrame itself — found and fixed 6 instances of that anti-pattern across the codebase; it makes the row sortable into the middle of the table.
+- Theme (`theme='streamlit'`, the ag-Grid default) auto-tracks Streamlit's dark/light mode — no manual dark-mode CSS needed for tables specifically. Verified via Playwright with `color_scheme="dark"` browser context.
+- All ~15 page files have been migrated off raw `st.dataframe()`/hand-built `to_html()` HTML-string tables onto this component. No known remaining legacy comparison-table code as of this writing.
+- Known pre-existing gap, unrelated to this section: `pages/05_journeys.py` has a `KeyError: 'Column not found: Delivered Rate'` that reproduces even on `git stash` (i.e. predates all table work) — flagged for a future fix, out of scope here.
+
+### Problem (original, for context)
 - Comparison mode generates a completely different table structure with extra delta columns
 - Columns are already numerous; adding `vs Prev` per metric makes tables unreadable
 - Two divergent table code paths (normal vs comparison) increase bugs and maintenance

@@ -5,7 +5,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
-from utils import format_metric, style_total_row
+from utils import format_metric
+from components.table import render_table
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_attribution_display_label, get_selected_conversion_display_name
 from dashboard.health import calculate_journey_health_score
@@ -435,20 +436,28 @@ if journey_health_data:
         styled = numeric_display_df[columns_order].style.format(formatters)
         st.dataframe(styled, width='stretch', height=400)
     except Exception:
-        # Fallback: if Styler isn't supported in this environment, fall back to pre-formatted strings
-        fallback = numeric_display_df[columns_order].copy()
-        if 'Health Score' in fallback.columns:
-            fallback['Health Score'] = fallback['Health Score'].apply(lambda x: f"{x:.1f}/100")
-        if 'Revenue (SAR)' in fallback.columns:
-            fallback['Revenue (SAR)'] = fallback['Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
-            fallback['Impression-Through Revenue (SAR)'] = fallback['Impression-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
-            fallback['Click-Through Revenue (SAR)'] = fallback['Click-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
-        if 'Total Conversions' in fallback.columns:
-            fallback['Total Conversions'] = fallback['Total Conversions'].apply(format_metric)
-        if 'Tier Display' in fallback.columns:
-            fallback = fallback.rename(columns={'Tier Display': 'Tier'})
+        # Fallback: use render_table with NumberColumn for proper numeric display
+        fallback_df = numeric_display_df[columns_order].copy()
+        # Ensure Tier Display exists (may use 'Tier' column if renamed)
+        if 'Tier Display' not in fallback_df.columns and 'Tier' in fallback_df.columns:
+            tier_emoji_map = {'Excellent': '🟢 Excellent', 'Good': '🟡 Good', 'Fair': '🟠 Fair', 'Poor': '🔴 Poor'}
+            fallback_df['Tier Display'] = fallback_df['Tier'].apply(lambda x: tier_emoji_map.get(x, f'⚪ {x}'))
+            # Drop 'Tier' if we added Tier Display to avoid duplicate columns
+            if 'Tier' in fallback_df.columns:
+                fallback_df = fallback_df.drop(columns=['Tier'])
 
-        st.dataframe(fallback, width='stretch', height=400)
+        fallback_cc = {}
+        if 'Health Score' in fallback_df.columns:
+            fallback_cc['Health Score'] = st.column_config.NumberColumn(label='Health Score', format='%.1f')
+        for rev_col in ['Revenue (SAR)', 'Impression-Through Revenue (SAR)', 'Click-Through Revenue (SAR)']:
+            if rev_col in fallback_df.columns:
+                fallback_cc[rev_col] = st.column_config.NumberColumn(label=rev_col, format='%.2f')
+        if 'Total Conversions' in fallback_df.columns:
+            fallback_cc['Total Conversions'] = st.column_config.NumberColumn(label='Total Conversions', format='%.0f')
+        for score_col in ['Delivery Score', 'Engagement Score', 'Conversion Score', 'Revenue Score']:
+            if score_col in fallback_df.columns:
+                fallback_cc[score_col] = st.column_config.NumberColumn(label=score_col, format='%.1f')
+        render_table(fallback_df, key="journeys_fallback", column_config=fallback_cc)
 
     # Component Scores Radar Chart for Selected Journey
     st.subheader("🎯 Journey Performance Breakdown")
@@ -1119,15 +1128,20 @@ if run_comparison:
             for metric_name, metric_data in comparison_result['metrics'].items():
                 metrics_data.append({
                     'Metric': metric_name,
-                    'Period 1 (Daily Avg)': format_metric(metric_data['period1_daily_avg'], "SAR" if "Revenue" in metric_name else ""),
-                    'Period 2 (Daily Avg)': format_metric(metric_data['period2_daily_avg'], "SAR" if "Revenue" in metric_name else ""),
-                    'Change %': f"{metric_data['pct_change']:+.1f}%",
+                    'Period 1 (Daily Avg)': metric_data['period1_daily_avg'],
+                    'Period 2 (Daily Avg)': metric_data['period2_daily_avg'],
+                    'Change %': metric_data['pct_change'],
                     'Trend': metric_data['trend'],
                     'Statistical Significance': metric_data['significance']
                 })
-            
+
             metrics_df = pd.DataFrame(metrics_data)
-            st.dataframe(metrics_df, width='stretch')
+            metrics_cc = {
+                'Period 1 (Daily Avg)': st.column_config.NumberColumn(label='Period 1 (Daily Avg)', format='%.2f'),
+                'Period 2 (Daily Avg)': st.column_config.NumberColumn(label='Period 2 (Daily Avg)', format='%.2f'),
+                'Change %': st.column_config.NumberColumn(label='Change %', format='%+.1f%%'),
+            }
+            render_table(metrics_df, key="custom_date_range_metrics", column_config=metrics_cc)
             
             # Visual Comparison Charts
             st.subheader("📈 Visual Performance Comparison")
@@ -1273,11 +1287,11 @@ if st.button("📊 Generate Cohort Analysis", key='run_cohort'):
             st.subheader(f"📈 {cohort_period.title()}ly Cohort Performance")
             
             # Display cohort data
-            cohort_display = cohort_result.copy()
-            cohort_display['Revenue (SAR)'] = cohort_display['Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
-            cohort_display['Unique Conversions'] = cohort_display['Unique Conversions'].apply(format_metric)
-            
-            st.dataframe(cohort_display.head(20), width='stretch')
+            cohort_cc = {
+                'Revenue (SAR)': st.column_config.NumberColumn(label='Revenue (SAR)', format='%.2f'),
+                'Unique Conversions': st.column_config.NumberColumn(label='Unique Conversions', format='%.0f'),
+            }
+            render_table(cohort_result.head(20), key="cohort_analysis", column_config=cohort_cc)
             
             # Growth rate visualization
             if 'Revenue (SAR)_growth' in cohort_result.columns:
@@ -1306,23 +1320,19 @@ if 'Unique Impression-Through Conversions' in filtered_df.columns:
 jour_metric = st.selectbox("Metric", jour_metric_options, key='jour_metric', format_func=_attribution_display)
 top_jour = get_top_journeys(filtered_df, jour_metric)
 
-# Create display version for table
-top_jour_display = top_jour.copy()
+# Build column config based on metric type for clean numeric display
+if 'Rate' in jour_metric:
+    # Convert rate to percentage
+    top_jour[jour_metric] = top_jour[jour_metric] * 100
 
-# Store original numeric values for sorting
-original_values = top_jour_display[jour_metric].copy()
-
-# Format the metric column for display
-if 'Revenue' in jour_metric:
-    top_jour_display[jour_metric] = top_jour_display[jour_metric].apply(lambda x: format_metric(x, "SAR"))
-elif jour_metric in ['Unique Clicks', 'Unique Conversions', 'Unique Click-Through Conversions', 'Unique Impression-Through Conversions']:
-    top_jour_display[jour_metric] = top_jour_display[jour_metric].apply(format_metric)
-elif 'Rate' in jour_metric:
-    # For rates, convert to percentage
-    top_jour_display[jour_metric] = top_jour_display[jour_metric].apply(lambda x: f"{x*100:.1f}%")
-
-# Display table with proper sorting
-st.dataframe(top_jour_display.rename(columns=attribution_rename))
+metric_fmt = '%.1f' if 'Rate' in jour_metric else ('%.2f' if 'Revenue' in jour_metric else '%.0f')
+top_jour_cc = {
+    attribution_rename.get(jour_metric, jour_metric): st.column_config.NumberColumn(
+        label=_attribution_display(jour_metric),
+        format=metric_fmt
+    ),
+}
+render_table(top_jour.rename(columns=attribution_rename), key="top_journeys", column_config=top_jour_cc)
 
 # Create chart with original numeric values
 fig2 = px.bar(top_jour, x='Journey Name', y=jour_metric, title=f"Top Journeys by {_attribution_display(jour_metric)}",
@@ -1360,23 +1370,21 @@ if selected_journeys:
         'Impression-Through Revenue (SAR)': 'sum',
         'Click-Through Revenue (SAR)': 'sum'
     }).reset_index()
-    # Add total row
+    # Display table with column_config for clean numeric display
+    chan_perf_cc = {
+        'Sent': st.column_config.NumberColumn(label='Sent', format='compact'),
+        'Delivered': st.column_config.NumberColumn(label='Delivered', format='compact'),
+        'Unique Conversions': st.column_config.NumberColumn(label='Unique Conversions', format='compact'),
+        'Revenue (SAR)': st.column_config.NumberColumn(label='Revenue (SAR)', format='compact'),
+        'Impression-Through Revenue (SAR)': st.column_config.NumberColumn(label='Impression-Through Revenue (SAR)', format='compact'),
+        'Click-Through Revenue (SAR)': st.column_config.NumberColumn(label='Click-Through Revenue (SAR)', format='compact'),
+    }
+    # Compute the "Total" pinned row from raw (unrounded) values.
     total_row_jour = {'Channel': 'Total'}
     for col in chan_perf_jour.columns:
         if col != 'Channel':
             total_row_jour[col] = chan_perf_jour[col].sum()
-    chan_perf_jour_with_total = pd.concat([chan_perf_jour, pd.DataFrame([total_row_jour])], ignore_index=True)
-    # Format columns for display
-    chan_perf_jour_display = chan_perf_jour_with_total.copy()
-    chan_perf_jour_display['Sent'] = chan_perf_jour_display['Sent'].apply(format_metric)
-    chan_perf_jour_display['Delivered'] = chan_perf_jour_display['Delivered'].apply(format_metric)
-    chan_perf_jour_display['Unique Conversions'] = chan_perf_jour_display['Unique Conversions'].apply(format_metric)
-    chan_perf_jour_display['Revenue (SAR)'] = chan_perf_jour_display['Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
-    chan_perf_jour_display['Impression-Through Revenue (SAR)'] = chan_perf_jour_display['Impression-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
-    chan_perf_jour_display['Click-Through Revenue (SAR)'] = chan_perf_jour_display['Click-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
-
-    # Display table with formatted values
-    st.dataframe(style_total_row(chan_perf_jour_display), width='stretch', hide_index=True)
+    render_table(chan_perf_jour, key="jour_channel_perf", column_config=chan_perf_cc, total_row=total_row_jour)
     
     # Chart data - chan_perf_jour is already numeric, no parsing needed
     conv_display_name = get_selected_conversion_display_name(conversion_attribution)
@@ -1588,7 +1596,6 @@ if selected_journeys:
         'Direct/Open-Through': jour_details['Unique Conversions'].sum() - jour_details['Unique Impression-Through Conversions'].sum() - jour_details['Unique Click-Through Conversions'].sum()
     }
     attr_df_jour = pd.DataFrame(list(attr_jour.items()), columns=['Source', 'Conversions'])
-    attr_df_jour['Conversions'] = attr_df_jour['Conversions'].apply(format_metric)
     fig_attr_jour = px.pie(attr_df_jour, names='Source', values='Conversions', title="Attribution for Selected Journeys",
                             color_discrete_sequence=COLOR_SEQUENCE)
     st.plotly_chart(fig_attr_jour, width='stretch')
@@ -1598,7 +1605,6 @@ if selected_journeys:
     failed_cols = [col for col in jour_details.columns if 'Failed' in col and col != 'Failed']
     if failed_cols:
         failed_jour = jour_details[failed_cols].sum().reset_index().rename(columns={'index': 'Reason', 0: 'Count'})
-        failed_jour['Count'] = failed_jour['Count'].apply(format_metric)
         fig_fail_jour = px.bar(failed_jour, x='Reason', y='Count', title="Failed Reasons for Selected Journeys",
                                color_discrete_sequence=[COLORS['danger']])
         st.plotly_chart(fig_fail_jour, width='stretch')
@@ -1793,31 +1799,31 @@ if st.button("🔍 Analyze Stopped Journeys", key='analyze_stopped'):
                                 axis=1
                             )
                             
-                            periods_display['days_stopped'] = periods_display['days_stopped'].apply(format_metric)
-                            periods_display['calculated_days'] = periods_display['calculated_days'].apply(format_metric)
-                            
-                            # Add activity information
+                            # Store raw numeric values - no format_metric on DataFrame columns
+                            # Add activity information (string column, keep as-is)
                             if 'was_active_before' in periods_display.columns:
                                 periods_display['Status'] = periods_display.apply(
-                                    lambda row: f"✅ Was Active ({format_metric(row['active_days_before_stop'])} days, avg: {format_metric(row['avg_delivery_before_stop'])} delivered)" 
-                                    if row.get('was_active_before', False) 
-                                    else "⚠️ Never Active", 
+                                    lambda row: f"✅ Was Active ({format_metric(row['active_days_before_stop'])} days, avg: {format_metric(row['avg_delivery_before_stop'])} delivered)"
+                                    if row.get('was_active_before', False)
+                                    else "⚠️ Never Active",
                                     axis=1
                                 )
                                 display_cols = ['start_date', 'end_date', 'days_stopped', 'calculated_days', 'days_match', 'Status']
                             else:
                                 display_cols = ['start_date', 'end_date', 'days_stopped', 'calculated_days', 'days_match']
-                            
-                            # Add estimated_daily_loss if available
-                            if 'estimated_daily_loss' in periods_display.columns:
-                                periods_display['estimated_daily_loss'] = periods_display['estimated_daily_loss'].apply(lambda x: format_metric(x, "SAR"))
-                                display_cols.append('estimated_daily_loss')
-                            else:
-                                # Add placeholder if missing
-                                periods_display['estimated_daily_loss'] = 'N/A'
-                                display_cols.append('estimated_daily_loss')
-                            
-                            st.dataframe(periods_display[display_cols], width='stretch')
+
+                            # Add estimated_daily_loss if available; use NaN for missing
+                            if 'estimated_daily_loss' not in periods_display.columns:
+                                periods_display['estimated_daily_loss'] = np.nan
+                            display_cols.append('estimated_daily_loss')
+
+                            # Use column_config for clean numeric display
+                            periods_cc = {
+                                'days_stopped': st.column_config.NumberColumn(label='Days Stopped', format='%.0f'),
+                                'calculated_days': st.column_config.NumberColumn(label='Calculated Days', format='%.0f'),
+                                'estimated_daily_loss': st.column_config.NumberColumn(label='Est. Daily Loss (SAR)', format='%.2f'),
+                            }
+                            render_table(periods_display[display_cols], key="stopped_periods", column_config=periods_cc)
 
                         # Recommendations
                         st.subheader("💡 Recommendations & Actions")

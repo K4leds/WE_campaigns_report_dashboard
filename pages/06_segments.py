@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
-from utils import format_metric, style_total_row
+from components.table import render_table
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_attribution_display_label, get_selected_revenue_display_name, get_selected_conversion_display_name
 from analysis import top_segments
@@ -54,12 +54,13 @@ top_seg = top_segments(filtered_df, seg_metric)
 # Create display version for table
 top_seg_display = top_seg.copy().rename(columns=attribution_rename)
 seg_metric_display = _attribution_display(seg_metric)
-# Format the metric column for display
+
+# Determine format based on metric type
 if 'Revenue' in seg_metric:
-    top_seg_display[seg_metric_display] = top_seg_display[seg_metric_display].apply(lambda x: format_metric(x, "SAR"))
-elif seg_metric in ['Unique Conversions', 'Total Conversions', 'Unique Clicks', 'Unique Click-Through Conversions', 'Unique Impression-Through Conversions']:
-    top_seg_display[seg_metric_display] = top_seg_display[seg_metric_display].apply(format_metric)
-st.dataframe(top_seg_display)
+    cc = {seg_metric_display: st.column_config.NumberColumn(label=seg_metric_display, format="%.2f SAR")}
+else:
+    cc = {seg_metric_display: st.column_config.NumberColumn(label=seg_metric_display, format="%.0f")}
+render_table(top_seg_display, key="top_segments", column_config=cc)
 
 # Create chart with original numeric values
 fig3 = px.bar(top_seg, x='Segment Name', y=seg_metric, title=f"Top Segments by {seg_metric_display}",

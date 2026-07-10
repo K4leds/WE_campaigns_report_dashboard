@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
-from utils import format_metric, style_total_row
+from components.table import render_table
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_attribution_display_label, get_selected_revenue_display_name, get_selected_conversion_display_name
 from analysis import attribution_analysis
@@ -28,10 +28,9 @@ def _attribution_display(col_name):
 
 st.header("Attribution Analysis")
 attr_df = attribution_analysis(filtered_df)
-# Create display version for table
-attr_df_display = attr_df.copy()
-attr_df_display['Conversions'] = attr_df_display['Conversions'].apply(format_metric)
-st.dataframe(attr_df_display)
+attr_df_display = attr_df.copy().rename(columns=attribution_rename)
+col_config = {"Conversions": st.column_config.NumberColumn(label="Conversions", format="%.0f")}
+render_table(attr_df_display, key="attribution", column_config=col_config)
 
 # Create chart with original numeric values
 fig_attr = px.pie(attr_df, names='Source', values='Conversions', title="Conversions by Attribution Source",

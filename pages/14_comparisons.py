@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
-from utils import format_metric, style_total_row
+from components.table import render_table
 from config import COLORS, COLOR_SEQUENCE
 from attribution import get_attribution_display_label
 from dashboard.comparisons_logic import calculate_period_metrics, calculate_metric_changes
@@ -405,20 +405,20 @@ else:
 
     if not monthly_agg.empty and len(monthly_agg) > 1:
         st.subheader("Monthly Summary")
-        # Add total row
+        # Format columns for display via column_config
+        monthly_cc = {
+            'Revenue (SAR)': st.column_config.NumberColumn(label='Revenue (SAR)', format='compact'),
+            'Unique Conversions': st.column_config.NumberColumn(label='Unique Conversions', format='compact'),
+            'Unique Clicks': st.column_config.NumberColumn(label='Unique Clicks', format='compact'),
+            'Sent': st.column_config.NumberColumn(label='Sent', format='compact'),
+            'Delivered': st.column_config.NumberColumn(label='Delivered', format='compact'),
+        }
+        # Compute the "Total" pinned row from raw (unrounded) values.
         total_row_monthly = {'Month': 'Total'}
         for col in monthly_agg.columns:
             if col != 'Month':
                 total_row_monthly[col] = monthly_agg[col].sum()
-        monthly_agg_with_total = pd.concat([monthly_agg, pd.DataFrame([total_row_monthly])], ignore_index=True)
-        # Format columns for display
-        monthly_agg_display = monthly_agg_with_total.copy()
-        monthly_agg_display['Revenue (SAR)'] = monthly_agg_display['Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
-        monthly_agg_display['Unique Conversions'] = monthly_agg_display['Unique Conversions'].apply(format_metric)
-        monthly_agg_display['Unique Clicks'] = monthly_agg_display['Unique Clicks'].apply(format_metric)
-        monthly_agg_display['Sent'] = monthly_agg_display['Sent'].apply(format_metric)
-        monthly_agg_display['Delivered'] = monthly_agg_display['Delivered'].apply(format_metric)
-        st.dataframe(style_total_row(monthly_agg_display), width='stretch', hide_index=True)
+        render_table(monthly_agg, key="monthly_summary_comparisons", column_config=monthly_cc, total_row=total_row_monthly)
 
         # Chart
         fig_comp = px.line(monthly_agg, x='Month', y='Revenue (SAR)', title="Revenue Over Months", markers=True)
