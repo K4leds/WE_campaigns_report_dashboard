@@ -44,7 +44,8 @@ from dashboard.data_pipeline import (
     load_and_clean_data, apply_filters_and_attribution, cached_executive_summary,
     cached_journey_health_scores, cached_journey_lifecycle, cached_comparison,
 )
-from dashboard.charts import attribution_display, format_metric, style_total_row, export_chart_image
+from dashboard.charts import attribution_display
+from dashboard.state import DashboardState, set_ctx
 
 # Register a global Plotly template for consistent styling
 import plotly.io as pio
@@ -417,6 +418,17 @@ if uploaded_file is not None:
     st.write(f"Filtered data: {len(filtered_df)} rows")
     if comparison_result:
         st.info(f"📊 Comparing **{comparison_result['current_label']}** vs **{comparison_result['comparison_label']}**")
+
+    set_ctx(DashboardState(
+        df=df, filtered_df=filtered_df, comparison_result=comparison_result,
+        revenue_attribution=revenue_attribution,
+        conversion_attribution=conversion_attribution,
+        selected_rev_label=selected_rev_label, selected_conv_label=selected_conv_label,
+        date_range=date_range, comparison_mode=comparison_mode,
+        filter_options=_opts,
+        channels=channels, campaign_types=campaign_types, campaigns=campaigns,
+        segments=segments, journeys=journeys, conversion_events=conversion_events,
+    ))
 
     # Page content based on selection
     if page == "🎯 Automated Insights":
