@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
-from utils import format_metric, style_total_row, export_chart_image
+from utils import format_metric, style_total_row
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_attribution_display_label, get_selected_revenue_display_name, get_selected_conversion_display_name
 from analysis import top_campaigns
@@ -113,7 +113,7 @@ st.dataframe(top_camp_display.rename(columns=attribution_rename))
 # Create chart with original numeric values
 fig = px.bar(top_camp, x='Campaign Name', y=camp_metric, title=f"Top Campaigns by {_attribution_display(camp_metric)}",
              color_discrete_sequence=COLOR_SEQUENCE)
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width='stretch')
 
 # Campaign Type Breakdown (Journey vs One-Time)
 if 'Type of Campaign' in filtered_df.columns:
@@ -194,7 +194,7 @@ if 'Type of Campaign' in filtered_df.columns:
     for col in [c for c in type_display.columns if 'AOV' in c]:
         type_display[col] = type_display[col].apply(lambda x: format_metric(x, "SAR"))
     type_display['Conversion Rate'] = type_display['Conversion Rate'].apply(lambda x: f"{x:.2%}")
-    st.dataframe(style_total_row(type_display), use_container_width=True, hide_index=True)
+    st.dataframe(style_total_row(type_display), width='stretch', hide_index=True)
 
     # Side-by-side charts (exclude Total row)
     type_chart_data = type_breakdown[type_breakdown['Type of Campaign'] != 'Total']
@@ -208,7 +208,7 @@ if 'Type of Campaign' in filtered_df.columns:
                                   color_discrete_sequence=COLOR_SEQUENCE,
                                   labels={rev_col_for_type: rev_display_name})
             fig_type_rev.update_layout(showlegend=False)
-            st.plotly_chart(fig_type_rev, use_container_width=True)
+            st.plotly_chart(fig_type_rev, width='stretch')
     with type_col2:
         conv_display_name = get_selected_conversion_display_name(conversion_attribution)
         fig_type_conv = px.bar(type_chart_data, x='Type of Campaign', y='Unique Conversions',
@@ -216,7 +216,7 @@ if 'Type of Campaign' in filtered_df.columns:
                                color_discrete_sequence=COLOR_SEQUENCE,
                                labels={'Unique Conversions': conv_display_name})
         fig_type_conv.update_layout(showlegend=False)
-        st.plotly_chart(fig_type_conv, use_container_width=True)
+        st.plotly_chart(fig_type_conv, width='stretch')
 
 # One-Time Campaigns Overview
 if 'Type of Campaign' in filtered_df.columns:
@@ -293,11 +293,11 @@ if 'Type of Campaign' in filtered_df.columns:
                 sample_data = onetime_df[onetime_df['Campaign Name'] == sample_campaign][['Campaign Name', 'Day', 'Sent', 'Delivered', 'Revenue (SAR)'] +
                                                                                            ([col for col in ['Impression-Through Revenue (SAR)', 'Click-Through Revenue (SAR)', 'Selected Revenue (SAR)'] if col in onetime_df.columns])]
                 st.write(f"Sample campaign: **{sample_campaign}**")
-                st.dataframe(sample_data, use_container_width=True)
+                st.dataframe(sample_data, width='stretch')
 
                 st.write("**After aggregation:**")
                 sample_agg = onetime_summary[onetime_summary['Campaign Name'] == sample_campaign]
-                st.dataframe(sample_agg, use_container_width=True)
+                st.dataframe(sample_agg, width='stretch')
 
                 st.write(f"**Number of days in raw data:** {len(sample_data)}")
                 st.write(f"**Total campaigns in dataset:** {onetime_df['Campaign Name'].nunique()}")
@@ -368,7 +368,7 @@ if 'Type of Campaign' in filtered_df.columns:
 
         # Rename columns to show actual attribution model
         onetime_display = onetime_display.rename(columns=attribution_rename)
-        st.dataframe(onetime_display, use_container_width=True, hide_index=True)
+        st.dataframe(onetime_display, width='stretch', hide_index=True)
 
         # Optional: Channel breakdown for one-time campaigns
         if st.checkbox("Show Channel Breakdown for One-Time Campaigns", key='onetime_channel_breakdown'):
@@ -403,7 +403,7 @@ if 'Type of Campaign' in filtered_df.columns:
             channel_display = channel_display.rename(columns=attribution_rename)
             display_rev_col = selected_rev_label if rev_col_channel == 'Selected Revenue (SAR)' else rev_col_channel
             st.dataframe(channel_display[['Channel', 'Sent', 'Delivered', 'Delivery Rate', 'Conversions', display_rev_col]],
-                       use_container_width=True, hide_index=True)
+                       width='stretch', hide_index=True)
     else:
         st.info("No one-time campaigns found matching the criteria.")
 
@@ -449,7 +449,7 @@ if 'Type of Campaign' in filtered_df.columns:
 
             # Rename columns to show actual attribution model
             monthly_display = monthly_display.rename(columns=attribution_rename)
-            st.dataframe(monthly_display, use_container_width=True, hide_index=True)
+            st.dataframe(monthly_display, width='stretch', hide_index=True)
 
             # Optional chart
             if st.checkbox("Show Monthly Trend Chart", key='monthly_onetime_chart'):
@@ -462,7 +462,7 @@ if 'Type of Campaign' in filtered_df.columns:
                     yaxis_title="Number of Campaigns",
                     xaxis=dict(type='category')
                 )
-                st.plotly_chart(fig_monthly, use_container_width=True)
+                st.plotly_chart(fig_monthly, width='stretch')
 
 # Campaign Drill-Down
 st.subheader("Campaign Drill-Down")
@@ -536,14 +536,14 @@ if selected_campaigns:
     chan_perf_display['Revenue (SAR)'] = chan_perf_display['Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
     chan_perf_display['Impression-Through Revenue (SAR)'] = chan_perf_display['Impression-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
     chan_perf_display['Click-Through Revenue (SAR)'] = chan_perf_display['Click-Through Revenue (SAR)'].apply(lambda x: format_metric(x, "SAR"))
-    st.dataframe(style_total_row(chan_perf_display), use_container_width=True, hide_index=True)
+    st.dataframe(style_total_row(chan_perf_display), width='stretch', hide_index=True)
     conv_display_name = get_selected_conversion_display_name(conversion_attribution)
     fig_chan = px.bar(chan_perf, x='Channel', y='Unique Conversions',
                       title=f"{conv_display_name} by Channel for Selected Campaigns",
                       color='Channel', color_discrete_map=CHANNEL_COLORS,
                       labels={'Unique Conversions': conv_display_name})
     fig_chan.update_layout(showlegend=False)
-    st.plotly_chart(fig_chan, use_container_width=True)
+    st.plotly_chart(fig_chan, width='stretch')
 
     # Time Series for Selected Campaigns
     st.subheader("Time Series Performance")
@@ -553,7 +553,7 @@ if selected_campaigns:
                               title=f"{camp_metric} Over Time for Selected Campaigns",
                               color_discrete_sequence=COLOR_SEQUENCE)
         fig_ts_camp.update_traces(line_width=2.5)
-        st.plotly_chart(fig_ts_camp, use_container_width=True)
+        st.plotly_chart(fig_ts_camp, width='stretch')
 
     # Conversion Attribution
     st.subheader("Conversion Attribution")
@@ -566,7 +566,7 @@ if selected_campaigns:
     attr_df_camp['Conversions'] = attr_df_camp['Conversions'].apply(format_metric)
     fig_attr_camp = px.pie(attr_df_camp, names='Source', values='Conversions', title="Attribution for Selected Campaigns",
                             color_discrete_sequence=COLOR_SEQUENCE)
-    st.plotly_chart(fig_attr_camp, use_container_width=True)
+    st.plotly_chart(fig_attr_camp, width='stretch')
 
     # Failed Reasons for Selected Campaigns
     st.subheader("Failed Reasons")
@@ -576,7 +576,7 @@ if selected_campaigns:
         failed_camp['Count'] = failed_camp['Count'].apply(format_metric)
         fig_fail_camp = px.bar(failed_camp, x='Reason', y='Count', title="Failed Reasons for Selected Campaigns",
                                color_discrete_sequence=[COLORS['danger']])
-        st.plotly_chart(fig_fail_camp, use_container_width=True)
+        st.plotly_chart(fig_fail_camp, width='stretch')
 
 # Campaign Health Score Analysis
 st.subheader("🏥 Campaign Health Dashboard")
@@ -680,7 +680,7 @@ if campaign_health_data:
     fig_health_dist.add_vline(x=health_df['Health Score'].mean(),
                             line_dash="dash", line_color=COLORS['danger'],
                             annotation_text=f"Average: {health_df['Health Score'].mean():.1f}")
-    st.plotly_chart(fig_health_dist, use_container_width=True)
+    st.plotly_chart(fig_health_dist, width='stretch')
 
     # Complete Health Dashboard Table
     st.subheader("📋 Complete Campaign Health Report")
@@ -850,10 +850,7 @@ if campaign_health_data:
             height=500,
             margin=dict(l=80, r=80, t=80, b=80)
         )
-        st.plotly_chart(fig_radar, use_container_width=True)
-        radar_img = export_chart_image(fig_radar, 'campaign_radar')
-        if radar_img:
-            st.download_button("Download Radar Chart", radar_img, "campaign_radar.png", "image/png", key='dl_camp_radar')
+        st.plotly_chart(fig_radar, width='stretch')
 
         # Show recommendations
         campaign_data_for_rec = filtered_df[filtered_df['Campaign Name'] == selected_campaign_health]
@@ -896,7 +893,7 @@ if breakdown_campaign and str(breakdown_campaign) != 'nan':
     # Display as a nice table
     if contribution_data:
         contrib_df = pd.DataFrame(contribution_data)
-        st.dataframe(contrib_df, use_container_width=True)
+        st.dataframe(contrib_df, width='stretch')
 
         # Show final calculation
         st.markdown(f"**🎯 Total Weighted Score: {total_contribution:.1f}/100**")
@@ -979,7 +976,7 @@ if breakdown_campaign and str(breakdown_campaign) != 'nan':
         axis=1
     )
 
-    st.dataframe(display_comparison, use_container_width=True)
+    st.dataframe(display_comparison, width='stretch')
 
     # Performance Summary
     st.subheader("📋 Performance Summary")

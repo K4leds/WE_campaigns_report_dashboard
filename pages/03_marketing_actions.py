@@ -64,7 +64,7 @@ if 'Channel' in filtered_df.columns and not filtered_df.empty:
     )
     fig_rps.update_traces(textposition='outside')
     fig_rps.update_layout(showlegend=False)
-    st.plotly_chart(fig_rps, use_container_width=True)
+    st.plotly_chart(fig_rps, width='stretch')
 
     # Detailed table
     chan_eff_display = chan_eff[['Channel', 'Total_Sent', 'Total_Conversions', 'Total_Revenue', 'Revenue Per Send', 'Revenue Per Click', 'CTR (%)', 'CVR (%)', 'AOV (SAR)']].copy()
@@ -82,7 +82,7 @@ if 'Channel' in filtered_df.columns and not filtered_df.empty:
         'AOV (SAR)': chan_eff_display[selected_rev_label].sum() / chan_eff_display['Conversions'].sum() if chan_eff_display['Conversions'].sum() > 0 else 0,
     }])
     chan_eff_display = pd.concat([chan_eff_display, total_row], ignore_index=True)
-    st.dataframe(style_total_row(chan_eff_display), use_container_width=True, hide_index=True)
+    st.dataframe(style_total_row(chan_eff_display), width='stretch', hide_index=True)
 else:
     st.info("No channel data available with current filters.")
 
@@ -125,7 +125,7 @@ if 'Type of Campaign' in filtered_df.columns and not filtered_df.empty:
         barmode='group', title="Revenue & Conversions: Journey vs One-Time",
         color_discrete_sequence=[COLORS['primary'], COLORS['success']]
     )
-    st.plotly_chart(fig_type, use_container_width=True)
+    st.plotly_chart(fig_type, width='stretch')
 
     # Insight callout
     if len(type_comparison) >= 2:
@@ -247,7 +247,7 @@ if date_col in filtered_df.columns and not filtered_df.empty:
         yaxis2=dict(title="CVR %", overlaying='y', side='right', rangemode='tozero'),
         barmode='group'
     )
-    st.plotly_chart(fig_dow, use_container_width=True)
+    st.plotly_chart(fig_dow, width='stretch')
 
     # Highlight best/worst days
     best_day = dow_agg.loc[dow_agg['Avg Revenue/Day'].idxmax()]
@@ -262,7 +262,7 @@ if date_col in filtered_df.columns and not filtered_df.empty:
     with st.expander("View Day-of-Week Details"):
         dow_display = dow_agg[['DayOfWeek', 'Sends', 'Clicks', 'Conversions', 'Revenue', 'Avg Revenue/Day', 'Avg Conversions/Day', 'CVR (%)']].copy()
         dow_display.columns = ['Day', 'Total Sends', 'Total Clicks', 'Total Conversions', 'Total Revenue', 'Avg Rev/Day', 'Avg Conv/Day', 'CVR %']
-        st.dataframe(dow_display, use_container_width=True, hide_index=True)
+        st.dataframe(dow_display, width='stretch', hide_index=True)
 else:
     st.info("No date data available for day-of-week analysis.")
 
@@ -309,10 +309,10 @@ if 'Campaign Tags' in filtered_df.columns and not filtered_df.empty:
             text=tag_perf.head(15)['Revenue'].apply(lambda v: f"{v:,.0f}")
         )
         fig_tags.update_traces(textposition='outside')
-        st.plotly_chart(fig_tags, use_container_width=True)
+        st.plotly_chart(fig_tags, width='stretch')
 
         # Table
-        st.dataframe(tag_perf.head(20), use_container_width=True, hide_index=True)
+        st.dataframe(tag_perf.head(20), width='stretch', hide_index=True)
     else:
         st.info("No campaign tags found in the data. Tags are optional in WebEngage campaigns.")
 else:
@@ -357,7 +357,7 @@ if not filtered_df.empty:
         display_cols = ['Campaign Name', 'Channel'] + ([c for c in ['Type', 'Status'] if c in underperformers.columns]) + ['Sends', 'Delivered', 'Clicks', 'Conversions', 'Revenue']
         st.dataframe(
             underperformers[display_cols].head(20),
-            use_container_width=True, hide_index=True
+            width='stretch', hide_index=True
         )
 
         # Also show low-revenue campaigns (have conversions but very low ROI)
@@ -372,7 +372,7 @@ if not filtered_df.empty:
             st.markdown("**Low-efficiency campaigns** (have conversions but very low revenue per send):")
             st.dataframe(
                 low_roi[['Campaign Name', 'Channel', 'Sends', 'Conversions', 'Revenue', 'Rev/Send']].head(10),
-                use_container_width=True, hide_index=True
+                width='stretch', hide_index=True
             )
     else:
         st.success("No zero-performance campaigns found at this send threshold. All active campaigns are generating some conversions.")
@@ -411,7 +411,7 @@ if 'Segment Name' in filtered_df.columns and not filtered_df.empty:
         )
         fig_seg.update_traces(textposition='outside')
         fig_seg.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig_seg, use_container_width=True)
+        st.plotly_chart(fig_seg, width='stretch')
 
         # Summary insight
         if len(seg_perf) >= 2:
@@ -421,7 +421,7 @@ if 'Segment Name' in filtered_df.columns and not filtered_df.empty:
 
         # Full table
         with st.expander("View All Segments"):
-            st.dataframe(seg_perf, use_container_width=True, hide_index=True)
+            st.dataframe(seg_perf, width='stretch', hide_index=True)
     else:
         st.info("No segment data available after filtering.")
 else:
@@ -504,7 +504,7 @@ if date_col_m in filtered_df.columns and not filtered_df.empty:
         yaxis2=dict(title="Conversions", overlaying='y', side='right', rangemode='tozero'),
         barmode='group'
     )
-    st.plotly_chart(fig_monthly, use_container_width=True)
+    st.plotly_chart(fig_monthly, width='stretch')
 
     # --- Efficiency metrics trend ---
     fig_eff = go.Figure()
@@ -528,7 +528,7 @@ if date_col_m in filtered_df.columns and not filtered_df.empty:
         yaxis=dict(title="Rev/Send (SAR)"),
         yaxis2=dict(title="Rate (%)", overlaying='y', side='right', rangemode='tozero'),
     )
-    st.plotly_chart(fig_eff, use_container_width=True)
+    st.plotly_chart(fig_eff, width='stretch')
 
     # --- Channel breakdown by month ---
     if 'Channel' in df_monthly.columns:
@@ -545,7 +545,7 @@ if date_col_m in filtered_df.columns and not filtered_df.empty:
             barmode='stack'
         )
         fig_chan_monthly.update_layout(xaxis_title="Month", yaxis_title="Revenue (SAR)")
-        st.plotly_chart(fig_chan_monthly, use_container_width=True)
+        st.plotly_chart(fig_chan_monthly, width='stretch')
 
     # --- MoM growth table ---
     with st.expander("View Monthly Details Table"):
@@ -558,7 +558,7 @@ if date_col_m in filtered_df.columns and not filtered_df.empty:
         # Format MoM columns
         monthly_display['Rev MoM %'] = monthly_display['Rev MoM %'].apply(lambda v: f"{v:+.1f}%" if not pd.isna(v) else "—")
         monthly_display['Conv MoM %'] = monthly_display['Conv MoM %'].apply(lambda v: f"{v:+.1f}%" if not pd.isna(v) else "—")
-        st.dataframe(monthly_display, use_container_width=True, hide_index=True)
+        st.dataframe(monthly_display, width='stretch', hide_index=True)
 
     # --- Growth insight ---
     if len(monthly_agg) >= 3:

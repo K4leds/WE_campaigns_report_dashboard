@@ -7,7 +7,12 @@
       "Bash(python -m py_compile *)",
       "Bash(git add *)",
       "Bash(git commit -m *)",
-      "Bash(grep -n *)"
+      "Bash(grep -n *)",
+      "mcp__firecrawl__firecrawl_search",
+      "mcp__Claude_Preview__preview_screenshot",
+      "mcp__Claude_Preview__preview_eval",
+      "mcp__firecrawl__firecrawl_scrape",
+      "Bash(curl -s *)"
     ]
   }
 }

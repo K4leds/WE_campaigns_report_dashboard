@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
-from utils import format_metric, export_chart_image
+from utils import format_metric
 from config import CHANNEL_COSTS, COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_selected_revenue_display_name, get_selected_conversion_display_name
 from analysis import failed_reasons_analysis
@@ -379,10 +379,7 @@ if active_stages:
             margin=dict(l=120, r=20, t=50, b=20),
             height=350,
         )
-        st.plotly_chart(fig_funnel, use_container_width=True)
-        img_funnel = export_chart_image(fig_funnel)
-        if img_funnel:
-            st.download_button("Download Funnel Chart", img_funnel, "conversion_funnel.png", "image/png", key='dl_funnel')
+        st.plotly_chart(fig_funnel, width='stretch')
 
     with funnel_col2:
         st.markdown("**Stage-to-Stage Conversion Rates**")
@@ -692,7 +689,7 @@ if 'Channel' in filtered_df.columns:
         # Rename columns to show actual attribution model
         channel_display = channel_display.rename(columns=attribution_rename)
         
-        st.dataframe(channel_display, use_container_width=True, hide_index=True)
+        st.dataframe(channel_display, width='stretch', hide_index=True)
         
         # Channel performance charts
         col1, col2 = st.columns(2)
@@ -710,7 +707,7 @@ if 'Channel' in filtered_df.columns:
                 labels={revenue_col: rev_display_name}
             )
             fig_channel_revenue.update_layout(showlegend=False)
-            st.plotly_chart(fig_channel_revenue, use_container_width=True)
+            st.plotly_chart(fig_channel_revenue, width='stretch')
 
         with col2:
             # Conversions by channel - use consistent channel colors
@@ -725,7 +722,7 @@ if 'Channel' in filtered_df.columns:
                 labels={'Unique Conversions': conv_display_name}
             )
             fig_channel_conv.update_layout(showlegend=False)
-            st.plotly_chart(fig_channel_conv, use_container_width=True)
+            st.plotly_chart(fig_channel_conv, width='stretch')
         
         # Channel insights
         st.markdown("#### 💡 Channel Insights")
@@ -813,12 +810,7 @@ if 'Channel' in filtered_df.columns and 'Revenue (SAR)' in filtered_df.columns:
             hovertemplate='<b>%{label}</b><br>' + rev_display_name + ': %{value:,.0f} SAR<br>%{percentParent:.1%} of parent<extra></extra>',
         )
         fig_treemap.update_layout(margin=dict(l=10, r=10, t=50, b=10))
-        st.plotly_chart(fig_treemap, use_container_width=True)
-
-        # Chart export button
-        img_buf = export_chart_image(fig_treemap, 'revenue_treemap')
-        if img_buf:
-            st.download_button("📥 Download Treemap (PNG)", img_buf, file_name="revenue_treemap.png", mime="image/png")
+        st.plotly_chart(fig_treemap, width='stretch')
 
 # === CHANNEL MIX OVER TIME: Stacked area ===
 st.markdown("---")
@@ -842,38 +834,14 @@ if 'Channel' in filtered_df.columns and 'Reporting Period Start Date' in filtere
             labels={'Revenue': f'{rev_display_name} (SAR)', 'Week': ''},
         )
         fig_area.update_layout(hovermode='x unified')
-        st.plotly_chart(fig_area, use_container_width=True)
-
-        img_buf = export_chart_image(fig_area, 'channel_mix')
-        if img_buf:
-            st.download_button("📥 Download Channel Mix (PNG)", img_buf, file_name="channel_mix.png", mime="image/png")
-
-# Conversion Funnel
-st.markdown("---")
-st.subheader("Conversion Funnel")
-funnel_data = {
-    'Stage': ['Sent', 'Impressions', 'Clicks', 'Conversions'],
-    'Count': [filtered_df['Sent'].sum(), filtered_df['Unique Impressions'].sum(), filtered_df['Unique Clicks'].sum(), filtered_df['Unique Conversions'].sum()]
-}
-fig_funnel = go.Figure(go.Funnel(
-    y=funnel_data['Stage'],
-    x=funnel_data['Count'],
-    textinfo="value+percent initial",
-    marker=dict(color=[COLORS['primary'], COLORS['info'], COLORS['warning'], COLORS['success']]),
-))
-fig_funnel.update_layout(title='Conversion Funnel')
-st.plotly_chart(fig_funnel, use_container_width=True)
-
-img_buf = export_chart_image(fig_funnel, 'conversion_funnel')
-if img_buf:
-    st.download_button("📥 Download Funnel (PNG)", img_buf, file_name="conversion_funnel.png", mime="image/png")
+        st.plotly_chart(fig_area, width='stretch')
 
 # Failed reasons
 failed_df = failed_reasons_analysis(filtered_df)
 if not failed_df.empty:
     st.subheader("Failed Reasons Breakdown")
     fig_fail = px.pie(failed_df, names='Reason', values='Count', color_discrete_sequence=COLOR_SEQUENCE)
-    st.plotly_chart(fig_fail, use_container_width=True)
+    st.plotly_chart(fig_fail, width='stretch')
 
 # Data Preview
 with st.expander("View Filtered Data"):

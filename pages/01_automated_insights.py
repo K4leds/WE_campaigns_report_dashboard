@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
 from dashboard.charts import attribution_display
-from utils import format_metric, style_total_row, export_chart_image
+from utils import format_metric, style_total_row
 from config import CHANNEL_COSTS, REQUIRED_COLUMNS, COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import (
     apply_attribution, apply_dimension_filters, get_attribution_display_label,
@@ -255,10 +255,7 @@ with forecast_col2:
                 hovermode='x unified'
             )
 
-            st.plotly_chart(fig_forecast, use_container_width=True)
-            forecast_img = export_chart_image(fig_forecast, 'revenue_forecast')
-            if forecast_img:
-                st.download_button("Download Forecast Chart", forecast_img, "revenue_forecast.png", "image/png", key='dl_forecast')
+            st.plotly_chart(fig_forecast, width='stretch')
 
             # Show confidence interval info
             st.caption(f"📊 95% Confidence Interval: {format_metric(forecast.get('confidence_lower', 0), 'SAR')} - {format_metric(forecast.get('confidence_upper', 0), 'SAR')}")
