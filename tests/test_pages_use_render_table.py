@@ -53,7 +53,7 @@ FILES_EXPECTING_RENDER_TABLE = {
     "11_attribution.py",
     "12_failed_reasons.py",
     "14_comparisons.py",
-    "15_ai_insights.py",
+    "01_automated_insights.py",
 }
 
 
@@ -183,7 +183,7 @@ def test_render_table_import_present():
         if _count_st_dataframe_calls(source) == 0 and _count_render_table_calls(source) == 0:
             continue
 
-        if name == "01_automated_insights.py" or name == "13_export.py":
+        if name == "13_export.py":
             continue  # No table rendering
 
         # Accept either render_table() OR st.dataframe(column_config=...) as valid
@@ -212,7 +212,7 @@ def test_st_dataframe_has_column_config():
     for fpath in _get_page_files():
         source = _read_file(fpath)
         name = fpath.name
-        if name in ("01_automated_insights.py", "13_export.py"):
+        if name == "13_export.py":
             continue
 
         # Count st.dataframe calls that also mention column_config

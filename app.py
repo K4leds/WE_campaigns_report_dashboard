@@ -132,7 +132,6 @@ def _month_range_options(start_date, end_date):
 
 # Define grouped multipage navigation using st.Page + st.navigation
 _overview_pages = [
-    st.Page("pages/01_automated_insights.py", title="Automated Insights", icon=":material/insights:"),
     st.Page("pages/02_overview.py", title="Executive Overview", icon=":material/dashboard:", default=True),
     st.Page("pages/03_marketing_actions.py", title="Marketing Actions", icon=":material/campaign:"),
 ]
@@ -148,9 +147,8 @@ _analysis_pages = [
 ]
 
 _ai_pages = [
-    st.Page("pages/15_ai_insights.py", title="AI Insights", icon=":material/psychology:"),
+    st.Page("pages/01_automated_insights.py", title="AI Insights & Recommendations", icon=":material/psychology:"),
     st.Page("pages/14_comparisons.py", title="Comparisons", icon=":material/compare_arrows:"),
-    st.Page("pages/01_automated_insights.py", title="Automated Insights", icon=":material/insights:", url_path="ai_automated_insights"),
 ]
 
 _export_pages = [
