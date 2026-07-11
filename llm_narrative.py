@@ -27,7 +27,9 @@ _SYSTEM_PROMPT = (
     "from pre-computed facts about a WebEngage marketing campaign report. "
     "Use ONLY the numbers, channel names, journey names, and campaign names given below "
     "-- never invent, estimate, or round differently than what's provided. "
-    "Write 3-5 sentences of flowing prose, no bullet points, no headers, no markdown."
+    "Write 3-4 sentences of flowing prose, no bullet points, no headers, no markdown. "
+    "Keep the entire response under 100 words and always end on a complete sentence -- "
+    "prioritize finishing your thought over including every fact."
 )
 
 
@@ -115,7 +117,7 @@ def generate_ai_summary(summary_facts: dict) -> str | None:
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=400,
+            max_tokens=700,
         )
         return resp.choices[0].message.content
     except Exception:
