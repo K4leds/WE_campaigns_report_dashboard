@@ -1,3 +1,5 @@
+import json
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -5,10 +7,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
-from components.table import render_table
+from components.table import render_table, render_chart
 from config import COLORS, COLOR_SEQUENCE
 from attribution import get_attribution_display_label
 from dashboard.comparisons_logic import calculate_period_metrics, calculate_metric_changes
+from utils import format_metric, read_cached_json
 
 ctx = get_ctx()
 df = ctx.df
@@ -24,6 +27,50 @@ comparison_mode = ctx.comparison_mode
 attribution_rename = {'Selected Revenue (SAR)': selected_rev_label, 'Selected Conversions': selected_conv_label}
 
 
+@st.cache_data
+def _cached_metric_changes(current_json, comp_json, current_days, comp_days, conversion_attribution):
+    current_df = read_cached_json(current_json)
+    comp_df = read_cached_json(comp_json)
+    current_metrics = calculate_period_metrics(current_df, current_days, conversion_attribution)
+    comp_metrics = calculate_period_metrics(comp_df, comp_days, conversion_attribution)
+    return calculate_metric_changes(current_metrics, comp_metrics)
+
+
+@st.cache_data
+def _cached_comparison_channel_data(current_df_json, comparison_df_json):
+    current_df = read_cached_json(current_df_json)
+    comparison_df = read_cached_json(comparison_df_json)
+    current_by_channel = current_df.groupby('Channel').agg({
+        'Selected Revenue (SAR)': 'sum',
+        'Selected Conversions': 'sum',
+        'Unique Clicks': 'sum'
+    }).reset_index()
+    comp_by_channel = comparison_df.groupby('Channel').agg({
+        'Selected Revenue (SAR)': 'sum',
+        'Selected Conversions': 'sum',
+        'Unique Clicks': 'sum'
+    }).reset_index()
+    return current_by_channel, comp_by_channel
+
+
+@st.cache_data
+def _cached_monthly_trend(df_json):
+    df = read_cached_json(df_json)
+    monthly_df = df.copy()
+    monthly_df['Month'] = pd.to_datetime(monthly_df['Reporting Period Start Date']).dt.to_period('M').astype(str)
+    monthly_agg = monthly_df.groupby('Month').agg({
+        'Revenue (SAR)': 'sum',
+        'Unique Conversions': 'sum',
+        'Unique Clicks': 'sum',
+        'Sent': 'sum',
+        'Delivered': 'sum'
+    }).reset_index()
+    monthly_agg['Month'] = pd.to_datetime(monthly_agg['Month'] + '-01')
+    monthly_agg = monthly_agg.sort_values('Month')
+    monthly_agg['Month'] = monthly_agg['Month'].dt.strftime('%Y-%m')
+    return monthly_agg
+
+
 st.header("📊 Period-over-Period Comparisons")
 st.markdown("*Analyze performance trends across different time periods with detailed metrics*")
 
@@ -31,10 +78,14 @@ st.markdown("*Analyze performance trends across different time periods with deta
 if comparison_result:
     st.success(f"✅ Comparison Mode Active: **{comparison_result['current_label']}** vs **{comparison_result['comparison_label']}**")
 
-    # Calculate comprehensive metrics
-    current_metrics = calculate_period_metrics(comparison_result['current_data'], comparison_result['current_days'], conversion_attribution)
-    comp_metrics = calculate_period_metrics(comparison_result['comparison_data'], comparison_result['comparison_days'], conversion_attribution)
-    metric_changes = calculate_metric_changes(current_metrics, comp_metrics)
+    # Calculate comprehensive metrics (cached)
+    metric_changes = _cached_metric_changes(
+        comparison_result['current_data'].to_json(),
+        comparison_result['comparison_data'].to_json(),
+        comparison_result['current_days'],
+        comparison_result['comparison_days'],
+        conversion_attribution
+    )
 
     # === EXECUTIVE SUMMARY ===
     st.markdown("---")
@@ -287,25 +338,22 @@ if comparison_result:
         height=400
     )
 
-    st.plotly_chart(fig_comparison, width='stretch')
+    comparison_chart_df = pd.DataFrame({
+        'Period': [comparison_result['comparison_label'], comparison_result['current_label']],
+        viz_metric: [change_data['comparison'], change_data['current']],
+        'Change %': [None, change_data['pct_change']],
+    })
+    render_chart(fig_comparison, comparison_chart_df, key="period_comparison_chart", ai_label=f"{viz_metric} Comparison", width='stretch')
 
     # === CHANNEL-LEVEL COMPARISON ===
     if 'Channel' in comparison_result['current_data'].columns:
         st.markdown("---")
         st.subheader("📡 Channel-Level Comparison")
 
-        # Aggregate by channel for both periods
-        current_by_channel = comparison_result['current_data'].groupby('Channel').agg({
-            'Selected Revenue (SAR)': 'sum',
-            'Selected Conversions': 'sum',
-            'Unique Clicks': 'sum'
-        }).reset_index()
-
-        comp_by_channel = comparison_result['comparison_data'].groupby('Channel').agg({
-            'Selected Revenue (SAR)': 'sum',
-            'Selected Conversions': 'sum',
-            'Unique Clicks': 'sum'
-        }).reset_index()
+        # Aggregate by channel for both periods (cached)
+        current_by_channel, comp_by_channel = _cached_comparison_channel_data(
+            comparison_result['current_data'].to_json(), comparison_result['comparison_data'].to_json()
+        )
 
         # Merge and calculate changes
         channel_comparison = current_by_channel.merge(
@@ -342,7 +390,7 @@ if comparison_result:
             height=400
         )
 
-        st.plotly_chart(fig_channel, width='stretch')
+        render_chart(fig_channel, channel_comparison, key="channel_comparison_chart", ai_label="Revenue Change % by Channel", width='stretch')
 
     # === INSIGHTS & RECOMMENDATIONS ===
     st.markdown("---")
@@ -386,22 +434,8 @@ else:
     # Show month-over-month trend analysis as fallback
     st.subheader("📅 Monthly Trend Analysis")
 
-    # Group by month
-    monthly_df = filtered_df.copy()
-    monthly_df['Month'] = monthly_df['Reporting Period Start Date'].dt.to_period('M').astype(str)
-
-    monthly_agg = monthly_df.groupby('Month').agg({
-        'Revenue (SAR)': 'sum',
-        'Unique Conversions': 'sum',
-        'Unique Clicks': 'sum',
-        'Sent': 'sum',
-        'Delivered': 'sum'
-    }).reset_index()
-
-    # Sort by month
-    monthly_agg['Month'] = pd.to_datetime(monthly_agg['Month'] + '-01')
-    monthly_agg = monthly_agg.sort_values('Month')
-    monthly_agg['Month'] = monthly_agg['Month'].dt.strftime('%Y-%m')
+    # Group by month (cached)
+    monthly_agg = _cached_monthly_trend(filtered_df.to_json())
 
     if not monthly_agg.empty and len(monthly_agg) > 1:
         st.subheader("Monthly Summary")
@@ -422,6 +456,6 @@ else:
 
         # Chart
         fig_comp = px.line(monthly_agg, x='Month', y='Revenue (SAR)', title="Revenue Over Months", markers=True)
-        st.plotly_chart(fig_comp, width='stretch')
+        render_chart(fig_comp, monthly_agg, key="comparisons_monthly_trend", ai_label="Revenue Over Months", width='stretch')
     else:
         st.write("Not enough monthly data for trend analysis.")

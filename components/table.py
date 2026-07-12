@@ -33,8 +33,9 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from st_aggrid import AgGrid, GridOptionsBuilder
-from st_aggrid.shared import JsCode
+from st_aggrid.shared import GridUpdateMode, JsCode, StAggridTheme
 
+from config import PALETTE
 from utils import format_metric
 
 # Mirrors utils.format_metric's K/M thresholds so the client-rendered value
@@ -174,11 +175,37 @@ def _column_config_to_aggrid(col_cfg: Any) -> dict:
 _TOTAL_ROW_STYLE_JS = JsCode("""
 function(params) {
     if (params.node.rowPinned) {
-        return {fontWeight: '700', backgroundColor: 'rgba(14, 165, 233, 0.15)', borderTop: '2px solid #0EA5E9'};
+        return {
+            fontWeight: '700',
+            backgroundColor: 'rgba(14, 165, 233, 0.22)',
+            color: '#0EA5E9',
+            borderTop: '2px solid #0EA5E9',
+        };
     }
     return null;
 }
 """)
+
+
+def _get_aggrid_theme() -> StAggridTheme:
+    """Builds an ag-Grid theme from the dashboard's own light/dark palette
+    (config.PALETTE) so tables read as part of the same design system instead
+    of ag-Grid's default green-accented "streamlit" theme.
+    """
+    is_dark = getattr(getattr(st.context, "theme", None), "type", "dark") == "dark"
+    p = PALETTE["dark" if is_dark else "light"]
+    return StAggridTheme(base="balham").withParams(
+        backgroundColor=p["surface"],
+        foregroundColor=p["text"],
+        headerBackgroundColor=p["background"],
+        headerTextColor=p["text_muted"],
+        borderColor=p["border"],
+        oddRowBackgroundColor=p["background"],
+        accentColor=p["primary"],
+        rowHoverColor="rgba(14, 165, 233, 0.10)",
+        selectedRowBackgroundColor="rgba(14, 165, 233, 0.18)",
+        fontFamily="Inter, Segoe UI, Roboto, sans-serif",
+    )
 
 
 def _build_grid_options(
@@ -258,6 +285,10 @@ def _build_grid_options(
 
     grid_options_kwargs = {"domLayout": "normal" if len(display_df) > 8 else "autoHeight"}
     grid_options_kwargs["getRowStyle"] = _TOTAL_ROW_STYLE_JS
+    # Lets users click-drag to select and copy cell text like a normal table
+    # (ag-Grid's own cell selection otherwise intercepts the mouse instead).
+    grid_options_kwargs["enableCellTextSelection"] = True
+    grid_options_kwargs["ensureDomOrder"] = True
 
     if total_row is not None:
         pinned_row = {
@@ -275,6 +306,53 @@ def _build_grid_options(
     return display_df, gb.build()
 
 
+def render_ai_explain(df: pd.DataFrame, key: str, ai_label: str | None = None, help_text: str = "Explain this with AI") -> None:
+    """Small, tertiary "explain" popover, lazily evaluated: the DeepSeek call only
+    fires once the popover is actually opened (on_change="rerun" + .open), so it
+    costs nothing until a user deliberately asks for it, and is cached per
+    table/chart content afterward. Renders nothing if no DEEPSEEK_API_KEY is
+    configured.
+
+    Reused both internally by render_table() and directly by pages that want the
+    same affordance next to a chart -- always pass the chart's *source* DataFrame
+    (e.g. the per-channel data feeding a bar chart), never a rendered image.
+    """
+    import llm_narrative
+
+    if not llm_narrative.is_configured():
+        return
+
+    label = ai_label or key
+    pop = st.popover(
+        "✨",
+        help=help_text,
+        type="tertiary",
+        on_change="rerun",
+        key=f"{key}__ai_explain_popover",
+    )
+    if pop.open:
+        with pop:
+            with st.spinner("Thinking through the numbers..."):
+                fact_sheet = llm_narrative.build_table_fact_sheet(df, label)
+                insights = llm_narrative.explain_table_data(fact_sheet, label)
+            if insights:
+                st.markdown(insights)
+            else:
+                st.caption("AI insights aren't available right now.")
+
+
+def render_chart(fig, df: pd.DataFrame, key: str, ai_label: str | None = None, **plotly_kwargs) -> None:
+    """st.plotly_chart() plus the same "✨ Explain" popover used by render_table(),
+    positioned above the chart. `df` must be the chart's *source* data (whatever
+    DataFrame was passed to px.bar/px.line/etc.), never the figure itself --
+    explain_table_data() reasons over those already-computed numbers, not pixels.
+    """
+    _, explain_col = st.columns([8, 1])
+    with explain_col:
+        render_ai_explain(df, key, ai_label, help_text="Explain this chart with AI")
+    st.plotly_chart(fig, **plotly_kwargs)
+
+
 def render_table(
     df: pd.DataFrame,
     key: str | None = None,
@@ -286,6 +364,8 @@ def render_table(
     hide_index: bool = True,
     column_order: list[str] | None = None,
     total_row: dict | None = None,
+    enable_ai_explain: bool = True,
+    ai_label: str | None = None,
 ) -> None:
     """Render a unified, sort-safe table with consistent styling via ag-Grid.
 
@@ -310,7 +390,17 @@ def render_table(
             bottom row (via ag-Grid pinnedBottomRowData) — excluded from sort/filter.
             For comparison columns, also include f"{col}__total_comp" with the prior-period
             total so the pinned row shows a delta too.
+        enable_ai_explain: Show a small "✨ Explain" popover that generates on-demand
+            AI insights for this table (only when DEEPSEEK_API_KEY is configured —
+            otherwise the control doesn't render at all). Set False to opt a table out.
+        ai_label: Human-readable name for this table, used in the AI prompt and to
+            key the popover. Defaults to `key`.
     """
+    if enable_ai_explain:
+        _, explain_col = st.columns([8, 1])
+        with explain_col:
+            render_ai_explain(df, key or ai_label or "this table", ai_label, help_text="Explain this table with AI")
+
     display_df, grid_options = _build_grid_options(
         df, column_config, comparison_df, compare_on, height, column_order, total_row,
     )
@@ -325,4 +415,12 @@ def render_table(
         height=height,
         allow_unsafe_jscode=True,
         key=key,
+        # update_mode=NO_UPDATE alone does nothing: st_aggrid's update_on defaults to
+        # ["cellValueChanged", "selectionChanged", "filterChanged", "sortChanged"] and the
+        # library only *adds* to that list for other update_mode values, never clears it for
+        # NO_UPDATE. Without update_on=[] here, every client-side sort/filter click still
+        # reports back to Streamlit and triggers a full script rerun.
+        update_mode=GridUpdateMode.NO_UPDATE,
+        update_on=[],
+        theme=_get_aggrid_theme(),
     )

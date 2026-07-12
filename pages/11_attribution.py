@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
-from components.table import render_table
+from components.table import render_table, render_chart
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_attribution_display_label, get_selected_revenue_display_name, get_selected_conversion_display_name
 from analysis import attribution_analysis
@@ -35,4 +35,4 @@ render_table(attr_df_display, key="attribution", column_config=col_config)
 # Create chart with original numeric values
 fig_attr = px.pie(attr_df, names='Source', values='Conversions', title="Conversions by Attribution Source",
                   color_discrete_sequence=COLOR_SEQUENCE)
-st.plotly_chart(fig_attr, width='stretch')
+render_chart(fig_attr, attr_df, key="attribution_chart", ai_label="Conversions by Attribution Source", width='stretch')

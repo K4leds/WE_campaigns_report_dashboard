@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
-from components.table import render_table
+from components.table import render_table, render_chart
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_attribution_display_label, get_selected_revenue_display_name, get_selected_conversion_display_name
 from analysis import ab_testing_analysis
@@ -38,6 +38,6 @@ if not ab_df.empty:
     render_table(ab_df, key="ab_testing_results", column_config=cc)
     fig_ab = px.bar(ab_df, x='Campaign Name', y='Lift', title="Conversion Lift by Campaign",
                     color='Lift', color_continuous_scale=[[0, COLORS['danger']], [0.5, COLORS['warning']], [1, COLORS['success']]])
-    st.plotly_chart(fig_ab, width='stretch')
+    render_chart(fig_ab, ab_df, key="ab_testing_chart", ai_label="Conversion Lift by Campaign", width='stretch')
 else:
     st.write("No A/B testing data available (no control groups).")

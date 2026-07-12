@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
-from components.table import render_table
+from components.table import render_table, render_chart
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_attribution_display_label, get_selected_revenue_display_name, get_selected_conversion_display_name
 from analysis import top_segments
@@ -65,4 +65,4 @@ render_table(top_seg_display, key="top_segments", column_config=cc)
 # Create chart with original numeric values
 fig3 = px.bar(top_seg, x='Segment Name', y=seg_metric, title=f"Top Segments by {seg_metric_display}",
                color_discrete_sequence=COLOR_SEQUENCE)
-st.plotly_chart(fig3, width='stretch')
+render_chart(fig3, top_seg, key="top_segments_chart", ai_label=f"Top Segments by {seg_metric_display}", width='stretch')

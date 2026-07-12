@@ -7,6 +7,16 @@ import pandas as pd
 import numpy as np
 from config import CHANNEL_COSTS
 
+# Maps variant/non-canonical channel names from CSV data to the canonical key
+# used in CHANNEL_COSTS and CHANNEL_COLORS. Add new mappings here as they
+# appear in client data rather than bloating the config dicts.
+CHANNEL_NORMALIZE = {
+    'Onsite': 'On-Site',
+    'On-site': 'On-Site',
+    'On-site Notification': 'On-Site',
+    'In-app Notification': 'In-App',
+}
+
 
 def clean_data(df, channel_costs=None):
     """
@@ -22,7 +32,7 @@ def clean_data(df, channel_costs=None):
 
     Args:
         df: Raw DataFrame from CSV
-        channel_costs: Optional dict of {channel: cost per 1000 sends (SAR)},
+        channel_costs: Optional dict of {channel: cost per send (SAR)},
             overriding config.CHANNEL_COSTS. Lets callers use client-specific
             negotiated rates instead of the hardcoded defaults.
 
@@ -31,6 +41,12 @@ def clean_data(df, channel_costs=None):
     """
     if channel_costs is None:
         channel_costs = CHANNEL_COSTS
+
+    # Normalize channel names to canonical keys so variant spellings from CSV
+    # (e.g. "Onsite", "On-site") map correctly to costs and chart colors.
+    if 'Channel' in df.columns:
+        df['Channel'] = df['Channel'].replace(CHANNEL_NORMALIZE)
+
     # Convert date columns to datetime - try multiple possible column names
     date_cols = []
     possible_date_cols = ['Reporting Period Start Date', 'Reporting Period End Date', 'Campaign Start Date', 'Campaign End Date', 'Day', 'Start Date']
@@ -137,10 +153,11 @@ def clean_data(df, channel_costs=None):
         df['Engagement Rate'] = 0
     
     # === COST-BASED METRICS ===
-    # Calculate campaign cost based on channel and sends (uses centralized CHANNEL_COSTS)
+    # Calculate campaign cost (uses centralized CHANNEL_COSTS).
+    # WhatsApp is billed per delivered message; other channels per sent message.
     if 'Channel' in df.columns and 'Sent' in df.columns:
         df['Campaign Cost'] = df.apply(
-            lambda row: (row['Sent'] / 1000) * channel_costs.get(row['Channel'], 0),
+            lambda row: (row['Delivered'] if row['Channel'] == 'WhatsApp' else row['Sent']) * channel_costs.get(row['Channel'], 0),
             axis=1
         )
     else:

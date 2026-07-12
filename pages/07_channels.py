@@ -1,12 +1,13 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import json
 import plotly.express as px
 import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
-from utils import format_metric
-from components.table import render_table
+from utils import format_metric, read_cached_json
+from components.table import render_table, render_chart, render_ai_explain
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_attribution_display_label, get_selected_revenue_display_name, get_selected_conversion_display_name
 from analysis import channel_analysis, esp_analysis, failed_reasons_analysis
@@ -31,12 +32,50 @@ def _attribution_display(col_name):
     return get_attribution_display_label(col_name, revenue_attribution, conversion_attribution)
 
 
+@st.cache_data
+def _cached_channel_analysis(filtered_df_json):
+    """Cache wrapper for channel_analysis() to avoid dark-screen rerenders."""
+    _df = read_cached_json(filtered_df_json)
+    return channel_analysis(_df)
+
+
+@st.cache_data
+def _cached_channel_type_breakdown(filtered_df_json):
+    """Cache the Channel + Campaign Type groupby aggregation."""
+    _df = read_cached_json(filtered_df_json)
+    rev_col_type = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in _df.columns else 'Revenue (SAR)'
+    conv_col_type = 'Selected Conversions' if 'Selected Conversions' in _df.columns else 'Unique Conversions'
+    type_chan_agg = {'Sent': 'sum', 'Delivered': 'sum'}
+    if conv_col_type in _df.columns:
+        type_chan_agg[conv_col_type] = 'sum'
+    if rev_col_type in _df.columns:
+        type_chan_agg[rev_col_type] = 'sum'
+    extra_rev_cols = [c for c in ['Revenue (SAR)', 'Click-Through Revenue (SAR)', 'Impression-Through Revenue (SAR)']
+                      if c in _df.columns and c != rev_col_type]
+    extra_conv_cols = [c for c in ['Unique Conversions', 'Unique Click-Through Conversions', 'Unique Impression-Through Conversions']
+                       if c in _df.columns and c != conv_col_type]
+    for c in extra_rev_cols + extra_conv_cols:
+        type_chan_agg[c] = 'sum'
+    type_chan_df = _df.groupby(['Channel', 'Type of Campaign']).agg(type_chan_agg).reset_index()
+    return type_chan_df, rev_col_type, conv_col_type, extra_rev_cols, extra_conv_cols
+
+
+@st.cache_data
+def _cached_failed_by_channel(filtered_df_json):
+    """Cache the groupby Channel for failed delivery reasons."""
+    _df = read_cached_json(filtered_df_json)
+    failed_cols = [col for col in _df.columns if 'Failed' in col and col != 'Failed']
+    if failed_cols:
+        return _df.groupby('Channel')[failed_cols].sum().reset_index()
+    return pd.DataFrame()
+
+
 st.header("Channels & Delivery Analysis")
 
 tab1, tab2 = st.tabs(["📡 Channels", "❌ Failed Reasons"])
 
 with tab1:
-    chan_df = channel_analysis(filtered_df)
+    chan_df = _cached_channel_analysis(filtered_df.to_json())
 
     # Channel conversion rate based on selected conversion attribution
     conv_rate_source_col = 'Selected Conversions' if 'Selected Conversions' in chan_df.columns else 'Unique Conversions'
@@ -128,7 +167,7 @@ with tab1:
     # render_table can compute deltas itself, rather than pre-formatting HTML strings.
     chan_df_comparison_display = None
     if comparison_result:
-        chan_df_comparison = channel_analysis(comparison_result['comparison_data'])
+        chan_df_comparison = _cached_channel_analysis(comparison_result['comparison_data'].to_json())
         if conv_rate_source_col in chan_df_comparison.columns and 'Unique Clicks' in chan_df_comparison.columns:
             chan_df_comparison['Conversion Rate'] = np.where(
                 chan_df_comparison['Unique Clicks'] > 0,
@@ -195,10 +234,14 @@ with tab1:
                 showarrow=False
             )]
         )
-        st.plotly_chart(fig_donut, width='stretch')
+        render_chart(fig_donut, chan_df, key="channel_revenue_donut", ai_label="Channel Revenue Share", width='stretch')
 
     # Revenue + Conversions by Channel (using selected attribution)
     st.subheader("Revenue & Conversions Comparison")
+    _, rev_conv_explain_col = st.columns([8, 1])
+    with rev_conv_explain_col:
+        render_ai_explain(chan_df, key="channel_rev_conv_charts", ai_label="Revenue & Conversions Comparison",
+                           help_text="Explain these charts with AI")
     rev_conv_col1, rev_conv_col2 = st.columns(2)
     with rev_conv_col1:
         if 'Selected Revenue (SAR)' in chan_df.columns:
@@ -241,6 +284,10 @@ with tab1:
 
     # Charts: Delivery Rate + CTR + Conversion Rate
     st.subheader("Engagement & Delivery Rates")
+    _, rates_explain_col = st.columns([8, 1])
+    with rates_explain_col:
+        render_ai_explain(chan_rates, key="channel_rates_charts", ai_label="Engagement & Delivery Rates",
+                           help_text="Explain these charts with AI")
     ch_col1, ch_col2, ch_col3 = st.columns(3)
     with ch_col1:
         fig_dr = px.bar(
@@ -279,7 +326,7 @@ with tab1:
         barmode='group', title="Sent vs Delivered by Channel",
         color_discrete_map={'Sent': COLORS['primary'], 'Delivered': COLORS['success']},
     )
-    st.plotly_chart(fig_vol, width='stretch')
+    render_chart(fig_vol, volume_melt, key="channel_volume", ai_label="Sent vs Delivered by Channel", width='stretch')
 
     # Revenue Attribution Comparison (all three side-by-side)
     rev_compare_cols = [c for c in ['Revenue (SAR)', 'Click-Through Revenue (SAR)', 'Impression-Through Revenue (SAR)'] if c in chan_df.columns]
@@ -295,29 +342,14 @@ with tab1:
             barmode='group', title="Revenue by Channel & Attribution Model",
             color_discrete_sequence=COLOR_SEQUENCE,
         )
-        st.plotly_chart(fig_rev_compare, width='stretch')
+        render_chart(fig_rev_compare, rev_melt, key="channel_rev_compare", ai_label="Revenue by Channel & Attribution Model", width='stretch')
 
     # Campaign Type Performance by Channel (One-Time vs Journey)
     if 'Type of Campaign' in filtered_df.columns and 'Channel' in filtered_df.columns:
         type_vals = filtered_df['Type of Campaign'].dropna().unique()
         if len(type_vals) > 0:
             st.subheader("One-Time vs Journey Performance by Channel")
-            rev_col_type = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in filtered_df.columns else 'Revenue (SAR)'
-            conv_col_type = 'Selected Conversions' if 'Selected Conversions' in filtered_df.columns else 'Unique Conversions'
-
-            # Aggregate all available revenue and conversion columns
-            type_chan_agg = {'Sent': 'sum', 'Delivered': 'sum'}
-            # Always include selected attribution columns
-            if conv_col_type in filtered_df.columns:
-                type_chan_agg[conv_col_type] = 'sum'
-            if rev_col_type in filtered_df.columns:
-                type_chan_agg[rev_col_type] = 'sum'
-            # Also aggregate all other revenue/conversion columns for detail view
-            extra_rev_cols = [c for c in ['Revenue (SAR)', 'Click-Through Revenue (SAR)', 'Impression-Through Revenue (SAR)'] if c in filtered_df.columns and c != rev_col_type]
-            extra_conv_cols = [c for c in ['Unique Conversions', 'Unique Click-Through Conversions', 'Unique Impression-Through Conversions'] if c in filtered_df.columns and c != conv_col_type]
-            for c in extra_rev_cols + extra_conv_cols:
-                type_chan_agg[c] = 'sum'
-            type_chan_df = filtered_df.groupby(['Channel', 'Type of Campaign']).agg(type_chan_agg).reset_index()
+            type_chan_df, rev_col_type, conv_col_type, extra_rev_cols, extra_conv_cols = _cached_channel_type_breakdown(filtered_df.to_json())
 
             # Toggle for showing all revenue/conversion types
             show_all_attrs = st.checkbox("Show all revenue & conversion types", value=False, key='chan_type_show_all')
@@ -348,6 +380,10 @@ with tab1:
             render_table(type_chan_display, key="chan_type", column_config=type_chan_cc)
 
             # Stacked bar: Revenue by Channel, stacked by Campaign Type
+            _, type_chan_explain_col = st.columns([8, 1])
+            with type_chan_explain_col:
+                render_ai_explain(type_chan_df, key="channel_type_charts", ai_label="Revenue & Conversions by Channel & Campaign Type",
+                                   help_text="Explain these charts with AI")
             type_chan_col1, type_chan_col2 = st.columns(2)
             with type_chan_col1:
                 if rev_col_type in type_chan_df.columns:
@@ -396,7 +432,7 @@ with tab1:
                     yaxis_title="Revenue Share (%)", yaxis_range=[0, 100],
                     legend=dict(orientation='h', y=-0.2)
                 )
-                st.plotly_chart(fig_share, width='stretch')
+                render_chart(fig_share, type_share, key="channel_type_share", ai_label="Revenue Share by Campaign Type per Channel", width='stretch')
 
     # ESP Analysis
     esp_df = esp_analysis(filtered_df)
@@ -413,6 +449,9 @@ with tab1:
                 esp_cc[col] = st.column_config.NumberColumn(label=col, format='compact')
         render_table(esp_df_display, key="esp", column_config=esp_cc)
 
+        _, esp_explain_col = st.columns([8, 1])
+        with esp_explain_col:
+            render_ai_explain(esp_df, key="esp_charts", ai_label="ESP/SSP Analysis", help_text="Explain these charts with AI")
         esp_col1, esp_col2 = st.columns(2)
         with esp_col1:
             fig_esp = px.bar(esp_df, x='ESP/SSP/WSP/RSP name', y='Delivered',
@@ -435,13 +474,13 @@ with tab2:
         # Create chart with original numeric values
         fig_fail = px.bar(failed_df, x='Reason', y='Count', title="Failed Reasons Breakdown",
                           color_discrete_sequence=[COLORS['danger']])
-        st.plotly_chart(fig_fail, width='stretch')
+        render_chart(fig_fail, failed_df, key="channels_failed_reasons", ai_label="Failed Reasons Breakdown", width='stretch')
 
         # Drill-down: Failed reasons by channel
         st.subheader("Failed Reasons by Channel")
         failed_cols = [col for col in filtered_df.columns if 'Failed' in col and col != 'Failed']
         if failed_cols:
-            failed_by_channel = filtered_df.groupby('Channel')[failed_cols].sum().reset_index()
+            failed_by_channel = _cached_failed_by_channel(filtered_df.to_json())
             # Build column config for failed count columns (all are integer counts)
             channel_cc = {col: st.column_config.NumberColumn(label=col, format="%.0f") for col in failed_cols}
             render_table(failed_by_channel, key="failed_by_channel", column_config=channel_cc)
@@ -451,6 +490,6 @@ with tab2:
             fig_fail_chan = px.bar(failed_melt, x='Channel', y='Count', color='Reason',
                                   title="Failed Reasons by Channel",
                                   color_discrete_sequence=COLOR_SEQUENCE)
-            st.plotly_chart(fig_fail_chan, width='stretch')
+            render_chart(fig_fail_chan, failed_melt, key="channels_failed_by_channel", ai_label="Failed Reasons by Channel", width='stretch')
     else:
         st.write("No failed reasons data available.")

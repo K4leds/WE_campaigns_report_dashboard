@@ -12,6 +12,9 @@ from dashboard.comparisons_logic import calculate_comparison_periods
 
 @st.cache_data
 def load_and_clean_data(uploaded_file, channel_costs=None):
+    # Accept tuple (sorted items) for hashable cache key; convert back to dict
+    if isinstance(channel_costs, tuple):
+        channel_costs = dict(channel_costs)
     df = pd.read_csv(uploaded_file)
     df = clean_data(df, channel_costs=channel_costs)
     return df

@@ -5,13 +5,177 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
-from utils import format_metric
+from utils import format_metric, read_cached_json
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_selected_revenue_display_name, get_selected_conversion_display_name
 from analysis import failed_reasons_analysis
 from dashboard.comparisons_logic import (
     calculate_period_metrics, calculate_metric_changes, calculate_uplift_significance,
 )
+from components.table import render_ai_explain, render_chart
+
+# ---------------------------------------------------------------------------
+# Cached data-computation helpers
+# Each function receives filtered_df as JSON so it is hashable by @st.cache_data.
+# Only heavy Pandas aggregations are cached; Plotly figure construction is not.
+# ---------------------------------------------------------------------------
+
+@st.cache_data
+def _cached_channel_performance(filtered_df_json, channel_costs):
+    """Cached channel performance aggregation (groupby Channel + derived metrics)."""
+    filtered_df = read_cached_json(filtered_df_json)
+
+    revenue_col_to_use = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in filtered_df.columns else 'Revenue (SAR)'
+    conv_col_to_use = 'Selected Conversions' if 'Selected Conversions' in filtered_df.columns else 'Unique Conversions'
+
+    agg_dict = {
+        'Sent': 'sum',
+        'Delivered': 'sum',
+        'Unique Impressions': 'sum',
+        'Unique Clicks': 'sum',
+    }
+
+    # Always aggregate the conversion column being used
+    agg_dict[conv_col_to_use] = 'sum'
+
+    # Also aggregate Unique Conversions if it's different (needed for fallback calculations)
+    if conv_col_to_use != 'Unique Conversions' and 'Unique Conversions' in filtered_df.columns:
+        agg_dict['Unique Conversions'] = 'sum'
+
+    # Add Click-Through Conversions if available (for accurate conversion rate)
+    if 'Unique Click-Through Conversions' in filtered_df.columns:
+        agg_dict['Unique Click-Through Conversions'] = 'sum'
+
+    if revenue_col_to_use in filtered_df.columns:
+        agg_dict[revenue_col_to_use] = 'sum'
+
+    channel_data = filtered_df.groupby('Channel').agg(agg_dict).reset_index()
+
+    # Calculate rates for each channel from raw counts (not pre-calculated rates)
+    # Using raw metrics ensures correct calculation at channel level
+    channel_data['Delivery Rate'] = np.where(
+        channel_data['Sent'] > 0,
+        (channel_data['Delivered'] / channel_data['Sent'] * 100),
+        0
+    ).round(1)
+
+    channel_data['CTR'] = np.where(
+        channel_data['Unique Impressions'] > 0,
+        (channel_data['Unique Clicks'] / channel_data['Unique Impressions'] * 100),
+        0
+    ).round(2)
+
+    # Conversion Rate - Use Click-Through Conversions for accurate rate
+    # (Total conversions includes impression-through which didn't click)
+    if 'Unique Click-Through Conversions' in channel_data.columns:
+        channel_data['Conversion Rate'] = np.where(
+            channel_data['Unique Clicks'] > 0,
+            (channel_data['Unique Click-Through Conversions'] / channel_data['Unique Clicks'] * 100),
+            0
+        ).round(2)
+    else:
+        # Fallback to total conversions if click-through not available
+        channel_data['Conversion Rate'] = np.where(
+            channel_data['Unique Clicks'] > 0,
+            (channel_data['Unique Conversions'] / channel_data['Unique Clicks'] * 100),
+            0
+        ).round(2)
+
+    # Calculate business metrics for channels
+    revenue_col = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in channel_data.columns else 'Revenue (SAR)'
+    # Use the selected conversion column for calculations
+    conv_col_for_calc = conv_col_to_use if conv_col_to_use in channel_data.columns else 'Unique Conversions'
+
+    # AOV - Average Order Value (Revenue per Conversion) - uses selected attribution
+    channel_data['AOV'] = np.where(
+        channel_data[conv_col_for_calc] > 0,
+        channel_data[revenue_col] / channel_data[conv_col_for_calc],
+        0
+    ).round(2)
+
+    # RPC - Revenue Per Click
+    channel_data['RPC'] = np.where(
+        channel_data['Unique Clicks'] > 0,
+        channel_data[revenue_col] / channel_data['Unique Clicks'],
+        0
+    ).round(2)
+
+    # Calculate cost-based metrics for channels (uses this session's channel_costs, defaulting to config.CHANNEL_COSTS)
+    # WhatsApp is billed per delivered message; other channels per sent message.
+    channel_data['Cost'] = channel_data.apply(
+        lambda row: (row['Delivered'] if row['Channel'] == 'WhatsApp' else row['Sent']) * channel_costs.get(row['Channel'], 0),
+        axis=1
+    ).round(2)
+
+    # ROAS - Return on Ad Spend
+    channel_data['ROAS'] = np.where(
+        channel_data['Cost'] > 0,
+        channel_data[revenue_col] / channel_data['Cost'],
+        0
+    ).round(2)
+
+    # Revenue Per Send (RPS)
+    channel_data['RPS'] = np.where(
+        channel_data['Sent'] > 0,
+        channel_data[revenue_col] / channel_data['Sent'],
+        0
+    ).round(4)
+
+    # Cost Per Conversion (CPC) - uses selected attribution
+    channel_data['CPC'] = np.where(
+        channel_data[conv_col_for_calc] > 0,
+        channel_data['Cost'] / channel_data[conv_col_for_calc],
+        0
+    ).round(2)
+
+    # Sort by revenue
+    channel_data = channel_data.sort_values(revenue_col, ascending=False)
+    return channel_data
+
+
+@st.cache_data
+def _cached_revenue_treemap_data(filtered_df_json):
+    """Cached revenue treemap aggregation (Channel x Campaign Name)."""
+    filtered_df = read_cached_json(filtered_df_json)
+    rev_col = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in filtered_df.columns else 'Revenue (SAR)'
+    treemap_df = filtered_df.groupby(['Channel', 'Campaign Name'], dropna=False).agg({
+        rev_col: 'sum', 'Unique Conversions': 'sum'
+    }).reset_index()
+    treemap_df = treemap_df[treemap_df[rev_col] > 0]
+    return treemap_df
+
+
+@st.cache_data
+def _cached_channel_mix_data(filtered_df_json):
+    """Cached channel mix over time aggregation (Week x Channel)."""
+    filtered_df = read_cached_json(filtered_df_json)
+    rev_col = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in filtered_df.columns else 'Revenue (SAR)'
+    time_channel = filtered_df.groupby(
+        [pd.Grouper(key='Reporting Period Start Date', freq='W'), 'Channel']
+    )[rev_col].sum().reset_index()
+    time_channel.columns = ['Week', 'Channel', 'Revenue']
+    return time_channel
+
+
+@st.cache_data
+def _cached_funnel_data(filtered_df_json):
+    """Cached conversion funnel aggregation (Sent/Delivered/Impressions/Clicks/Conversions sums)."""
+    filtered_df = read_cached_json(filtered_df_json)
+    return {
+        'sent': int(filtered_df['Sent'].sum()) if 'Sent' in filtered_df.columns else 0,
+        'delivered': int(filtered_df['Delivered'].sum()) if 'Delivered' in filtered_df.columns else 0,
+        'impressions': int(filtered_df['Unique Impressions'].sum()) if 'Unique Impressions' in filtered_df.columns else 0,
+        'clicks': int(filtered_df['Unique Clicks'].sum()) if 'Unique Clicks' in filtered_df.columns else 0,
+        'conversions': int(filtered_df['Unique Conversions'].sum()) if 'Unique Conversions' in filtered_df.columns else 0,
+    }
+
+
+@st.cache_data
+def _cached_failed_reasons(filtered_df_json):
+    """Cached failed reasons analysis."""
+    filtered_df = read_cached_json(filtered_df_json)
+    return failed_reasons_analysis(filtered_df)
+
 
 ctx = get_ctx()
 df = ctx.df
@@ -159,7 +323,7 @@ if comparison_result:
     # NEW: ROI & Cost Efficiency Metrics
     st.markdown("---")
     st.subheader("💵 ROI & Cost Efficiency")
-    cost_display = ", ".join(f"{ch} ({c} SAR/1k)" for ch, c in channel_costs.items() if c > 0)
+    cost_display = ", ".join(f"{ch} ({c} SAR/msg)" for ch, c in channel_costs.items() if c > 0)
     st.caption(f"*Based on channel costs: {cost_display}*")
     
     roi_col1, roi_col2, roi_col3, roi_col4 = st.columns(4)
@@ -350,11 +514,12 @@ else:
 # Conversion Funnel - aggregate pipeline view
 st.markdown("---")
 st.subheader("Conversion Pipeline")
-funnel_sent = filtered_df['Sent'].sum() if 'Sent' in filtered_df.columns else 0
-funnel_delivered = filtered_df['Delivered'].sum() if 'Delivered' in filtered_df.columns else 0
-funnel_impressions = filtered_df['Unique Impressions'].sum() if 'Unique Impressions' in filtered_df.columns else 0
-funnel_clicks = filtered_df['Unique Clicks'].sum() if 'Unique Clicks' in filtered_df.columns else 0
-funnel_conversions = filtered_df['Unique Conversions'].sum() if 'Unique Conversions' in filtered_df.columns else 0
+funnel_data = _cached_funnel_data(filtered_df.to_json())
+funnel_sent = funnel_data['sent']
+funnel_delivered = funnel_data['delivered']
+funnel_impressions = funnel_data['impressions']
+funnel_clicks = funnel_data['clicks']
+funnel_conversions = funnel_data['conversions']
 
 funnel_stages = ['Sent', 'Delivered', 'Impressions', 'Clicks', 'Conversions']
 funnel_values = [funnel_sent, funnel_delivered, funnel_impressions, funnel_clicks, funnel_conversions]
@@ -380,7 +545,8 @@ if active_stages:
             margin=dict(l=120, r=20, t=50, b=20),
             height=350,
         )
-        st.plotly_chart(fig_funnel, width='stretch')
+        funnel_df = pd.DataFrame({'Stage': list(stages), 'Value': list(values)})
+        render_chart(fig_funnel, funnel_df, key="overview_funnel", ai_label="Aggregate Conversion Funnel", width='stretch')
 
     with funnel_col2:
         st.markdown("**Stage-to-Stage Conversion Rates**")
@@ -406,112 +572,13 @@ st.subheader("📡 Channels Overview")
 st.markdown("*Performance breakdown by marketing channel*")
 
 if 'Channel' in filtered_df.columns:
-    # Get channel data - determine revenue and conversion columns
-    revenue_col_to_use = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in filtered_df.columns else 'Revenue (SAR)'
-    conv_col_to_use = 'Selected Conversions' if 'Selected Conversions' in filtered_df.columns else 'Unique Conversions'
-    
-    agg_dict = {
-        'Sent': 'sum',
-        'Delivered': 'sum',
-        'Unique Impressions': 'sum',
-        'Unique Clicks': 'sum',
-    }
-    
-    # Always aggregate the conversion column being used
-    agg_dict[conv_col_to_use] = 'sum'
-    
-    # Also aggregate Unique Conversions if it's different (needed for fallback calculations)
-    if conv_col_to_use != 'Unique Conversions' and 'Unique Conversions' in filtered_df.columns:
-        agg_dict['Unique Conversions'] = 'sum'
-    
-    # Add Click-Through Conversions if available (for accurate conversion rate)
-    if 'Unique Click-Through Conversions' in filtered_df.columns:
-        agg_dict['Unique Click-Through Conversions'] = 'sum'
-    
-    if revenue_col_to_use in filtered_df.columns:
-        agg_dict[revenue_col_to_use] = 'sum'
-    
-    channel_data = filtered_df.groupby('Channel').agg(agg_dict).reset_index()
-    
-    # Calculate rates for each channel from raw counts (not pre-calculated rates)
-    # Using raw metrics ensures correct calculation at channel level
-    channel_data['Delivery Rate'] = np.where(
-        channel_data['Sent'] > 0,
-        (channel_data['Delivered'] / channel_data['Sent'] * 100),
-        0
-    ).round(1)
-    
-    channel_data['CTR'] = np.where(
-        channel_data['Unique Impressions'] > 0,
-        (channel_data['Unique Clicks'] / channel_data['Unique Impressions'] * 100),
-        0
-    ).round(2)
-    
-    # Conversion Rate - Use Click-Through Conversions for accurate rate
-    # (Total conversions includes impression-through which didn't click)
-    if 'Unique Click-Through Conversions' in channel_data.columns:
-        channel_data['Conversion Rate'] = np.where(
-            channel_data['Unique Clicks'] > 0,
-            (channel_data['Unique Click-Through Conversions'] / channel_data['Unique Clicks'] * 100),
-            0
-        ).round(2)
-    else:
-        # Fallback to total conversions if click-through not available
-        channel_data['Conversion Rate'] = np.where(
-            channel_data['Unique Clicks'] > 0,
-            (channel_data['Unique Conversions'] / channel_data['Unique Clicks'] * 100),
-            0
-        ).round(2)
-    
-    # Calculate business metrics for channels
+    channel_data = _cached_channel_performance(filtered_df.to_json(), channel_costs)
+
+    # Resolve the column names used for display (cheap; derived from the cached DataFrame)
     revenue_col = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in channel_data.columns else 'Revenue (SAR)'
-    # Use the selected conversion column for calculations
+    conv_col_to_use = 'Selected Conversions' if 'Selected Conversions' in channel_data.columns else 'Unique Conversions'
     conv_col_for_calc = conv_col_to_use if conv_col_to_use in channel_data.columns else 'Unique Conversions'
-    
-    # AOV - Average Order Value (Revenue per Conversion) - uses selected attribution
-    channel_data['AOV'] = np.where(
-        channel_data[conv_col_for_calc] > 0,
-        channel_data[revenue_col] / channel_data[conv_col_for_calc],
-        0
-    ).round(2)
-    
-    # RPC - Revenue Per Click
-    channel_data['RPC'] = np.where(
-        channel_data['Unique Clicks'] > 0,
-        channel_data[revenue_col] / channel_data['Unique Clicks'],
-        0
-    ).round(2)
-    
-    # Calculate cost-based metrics for channels (uses this session's channel_costs, defaulting to config.CHANNEL_COSTS)
-    channel_data['Cost'] = channel_data.apply(
-        lambda row: (row['Sent'] / 1000) * channel_costs.get(row['Channel'], 0),
-        axis=1
-    ).round(2)
-    
-    # ROAS - Return on Ad Spend
-    channel_data['ROAS'] = np.where(
-        channel_data['Cost'] > 0,
-        channel_data[revenue_col] / channel_data['Cost'],
-        0
-    ).round(2)
-    
-    # Revenue Per Send (RPS)
-    channel_data['RPS'] = np.where(
-        channel_data['Sent'] > 0,
-        channel_data[revenue_col] / channel_data['Sent'],
-        0
-    ).round(4)
-    
-    # Cost Per Conversion (CPC) - uses selected attribution
-    channel_data['CPC'] = np.where(
-        channel_data[conv_col_for_calc] > 0,
-        channel_data['Cost'] / channel_data[conv_col_for_calc],
-        0
-    ).round(2)
-    
-    # Sort by revenue
-    channel_data = channel_data.sort_values(revenue_col, ascending=False)
-    
+
     # Define channel icons and status
     channel_icons = {
         'Email': '📧',
@@ -523,8 +590,6 @@ if 'Channel' in filtered_df.columns:
         'WhatsApp': '💚',
         'In-App': '📲',
         'On-Site': '🖥️',
-        'Onsite': '🖥️',
-        'On-site': '🖥️',
         'Facebook': '👤',
         'Google': '🔍'
     }
@@ -696,8 +761,12 @@ if 'Channel' in filtered_df.columns:
             overview_cc_renamed[renamed] = cfg
 
         st.dataframe(channel_display, column_config=overview_cc_renamed, width='stretch', hide_index=True)
-        
+
         # Channel performance charts
+        _, explain_col = st.columns([8, 1])
+        with explain_col:
+            render_ai_explain(channel_display, key="overview_channel_charts", ai_label="Channel Performance",
+                               help_text="Explain these channel charts with AI")
         col1, col2 = st.columns(2)
         
         with col1:
@@ -796,10 +865,7 @@ st.caption("*Hierarchical view: Channel → Journey/Campaign (size = revenue)*")
 if 'Channel' in filtered_df.columns and 'Revenue (SAR)' in filtered_df.columns:
     rev_col = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in filtered_df.columns else 'Revenue (SAR)'
     # Build hierarchy: Channel > Campaign Name
-    treemap_df = filtered_df.groupby(['Channel', 'Campaign Name'], dropna=False).agg({
-        rev_col: 'sum', 'Unique Conversions': 'sum'
-    }).reset_index()
-    treemap_df = treemap_df[treemap_df[rev_col] > 0]
+    treemap_df = _cached_revenue_treemap_data(filtered_df.to_json())
 
     if not treemap_df.empty:
         rev_display_name = get_selected_revenue_display_name(revenue_attribution)
@@ -816,7 +882,7 @@ if 'Channel' in filtered_df.columns and 'Revenue (SAR)' in filtered_df.columns:
             hovertemplate='<b>%{label}</b><br>' + rev_display_name + ': %{value:,.0f} SAR<br>%{percentParent:.1%} of parent<extra></extra>',
         )
         fig_treemap.update_layout(margin=dict(l=10, r=10, t=50, b=10))
-        st.plotly_chart(fig_treemap, width='stretch')
+        render_chart(fig_treemap, treemap_df, key="revenue_treemap", ai_label="Revenue by Channel & Campaign", width='stretch')
 
 # === CHANNEL MIX OVER TIME: Stacked area ===
 st.markdown("---")
@@ -825,10 +891,7 @@ st.caption("*How your channel revenue distribution evolves*")
 
 if 'Channel' in filtered_df.columns and 'Reporting Period Start Date' in filtered_df.columns:
     rev_col = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in filtered_df.columns else 'Revenue (SAR)'
-    time_channel = filtered_df.groupby(
-        [pd.Grouper(key='Reporting Period Start Date', freq='W'), 'Channel']
-    )[rev_col].sum().reset_index()
-    time_channel.columns = ['Week', 'Channel', 'Revenue']
+    time_channel = _cached_channel_mix_data(filtered_df.to_json())
 
     if not time_channel.empty:
         rev_display_name = get_selected_revenue_display_name(revenue_attribution)
@@ -840,14 +903,14 @@ if 'Channel' in filtered_df.columns and 'Reporting Period Start Date' in filtere
             labels={'Revenue': f'{rev_display_name} (SAR)', 'Week': ''},
         )
         fig_area.update_layout(hovermode='x unified')
-        st.plotly_chart(fig_area, width='stretch')
+        render_chart(fig_area, time_channel, key="channel_mix_over_time", ai_label="Weekly Channel Mix", width='stretch')
 
 # Failed reasons
-failed_df = failed_reasons_analysis(filtered_df)
+failed_df = _cached_failed_reasons(filtered_df.to_json())
 if not failed_df.empty:
     st.subheader("Failed Reasons Breakdown")
     fig_fail = px.pie(failed_df, names='Reason', values='Count', color_discrete_sequence=COLOR_SEQUENCE)
-    st.plotly_chart(fig_fail, width='stretch')
+    render_chart(fig_fail, failed_df, key="overview_failed_reasons", ai_label="Failed Reasons Breakdown", width='stretch')
 
 # Data Preview
 with st.expander("View Filtered Data"):

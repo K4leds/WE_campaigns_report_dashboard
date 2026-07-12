@@ -1,4 +1,5 @@
 import streamlit as st
+import json
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -8,13 +9,13 @@ from sklearn.cluster import KMeans
 
 from dashboard.state import get_ctx
 from dashboard.charts import attribution_display
-from utils import format_metric
+from utils import format_metric, read_cached_json
 from config import REQUIRED_COLUMNS, COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import (
     apply_attribution, apply_dimension_filters, get_attribution_display_label,
     get_selected_revenue_display_name, get_selected_conversion_display_name, resolve_source_column,
 )
-from components.table import render_table
+from components.table import render_table, render_chart
 from analysis import top_campaigns
 from dashboard.data_pipeline import cached_executive_summary
 from insights_engine import (
@@ -34,6 +35,80 @@ selected_rev_label = ctx.selected_rev_label
 selected_conv_label = ctx.selected_conv_label
 date_range = ctx.date_range
 comparison_mode = ctx.comparison_mode
+
+# ---------------------------------------------------------------------------
+# Cached heavy-computation helpers (avoids dark-screen rerender UX)
+# ---------------------------------------------------------------------------
+
+@st.cache_data
+def _cached_customer_segmentation(filtered_df_json):
+    """Groupby + KMeans clustering on Segment Name."""
+    filtered_df = read_cached_json(filtered_df_json)
+    seg_agg = filtered_df.groupby('Segment Name').agg({
+        'Revenue (SAR)': 'sum',
+        'Unique Conversions': 'sum',
+        'Unique Clicks': 'sum',
+        'Sent': 'sum'
+    }).reset_index()
+    if len(seg_agg) > 3:
+        features = seg_agg[['Revenue (SAR)', 'Unique Conversions', 'Unique Clicks', 'Sent']]
+        try:
+            kmeans = KMeans(n_clusters=3, random_state=42)
+            seg_agg['Cluster'] = kmeans.fit_predict(features)
+        except Exception:
+            pass
+    return seg_agg
+
+
+@st.cache_data
+def _cached_roi_analysis(filtered_df_json):
+    """Groupby Channel + cost/profit/ROAS/Revenue Per Send calculations."""
+    filtered_df = read_cached_json(filtered_df_json)
+    rev_col_roi = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in filtered_df.columns else 'Revenue (SAR)'
+    roi_df = filtered_df.groupby('Channel').agg({
+        rev_col_roi: 'sum',
+        'Sent': 'sum',
+        'Campaign Cost': 'sum',
+    }).reset_index()
+    roi_df = roi_df.rename(columns={'Campaign Cost': 'Cost (SAR)', rev_col_roi: 'Revenue (SAR)'})
+    roi_df['Profit (SAR)'] = roi_df['Revenue (SAR)'] - roi_df['Cost (SAR)']
+    roi_df['ROAS'] = np.where(roi_df['Cost (SAR)'] > 0, roi_df['Revenue (SAR)'] / roi_df['Cost (SAR)'], 0)
+    roi_df['Revenue Per Send'] = np.where(roi_df['Sent'] > 0, roi_df['Revenue (SAR)'] / roi_df['Sent'], 0)
+    return roi_df
+
+
+@st.cache_data
+def _cached_narrative_insights(filtered_df_json, selected_journey):
+    """Journey-specific narrative insights from insights_engine."""
+    filtered_df = read_cached_json(filtered_df_json)
+    return generate_narrative_insights(
+        filtered_df,
+        journey_name=selected_journey,
+        lookback_days=30
+    )
+
+
+@st.cache_data
+def _cached_revenue_forecast(filtered_df_json, selected_journey):
+    """Journey-specific revenue forecast from insights_engine."""
+    filtered_df = read_cached_json(filtered_df_json)
+    return predict_revenue_forecast(
+        filtered_df,
+        journey_name=selected_journey,
+        forecast_days=14
+    )
+
+
+@st.cache_data
+def _cached_top_actions(filtered_df_json, selected_journey):
+    """Journey-specific top actions from insights_engine."""
+    filtered_df = read_cached_json(filtered_df_json)
+    return generate_top_actions(
+        filtered_df,
+        journey_name=selected_journey,
+        max_actions=3
+    )
+
 
 def _attribution_display(col_name):
     return attribution_display(ctx, col_name)
@@ -238,10 +313,8 @@ with tab_narrative:
 
         if selected_journey_insights:
             with st.spinner(f"Generating insights for {selected_journey_insights}..."):
-                journey_insights = generate_narrative_insights(
-                    filtered_df,
-                    journey_name=selected_journey_insights,
-                    lookback_days=30
+                journey_insights = _cached_narrative_insights(
+                    filtered_df.to_json(), selected_journey_insights
                 )
 
                 # Display journey-specific insights
@@ -257,10 +330,8 @@ with tab_narrative:
 
                 # Generate journey-specific forecast
                 st.markdown("### 📈 Journey Revenue Forecast")
-                journey_forecast = predict_revenue_forecast(
-                    filtered_df,
-                    journey_name=selected_journey_insights,
-                    forecast_days=14
+                journey_forecast = _cached_revenue_forecast(
+                    filtered_df.to_json(), selected_journey_insights
                 )
 
                 if journey_forecast:
@@ -276,10 +347,8 @@ with tab_narrative:
 
                 # Generate journey-specific actions
                 st.markdown("### 🎯 Recommended Actions for This Journey")
-                journey_actions = generate_top_actions(
-                    filtered_df,
-                    journey_name=selected_journey_insights,
-                    max_actions=3
+                journey_actions = _cached_top_actions(
+                    filtered_df.to_json(), selected_journey_insights
                 )
 
                 if journey_actions:
@@ -385,7 +454,7 @@ with tab_forecast:
                     hovermode='x unified'
                 )
 
-                st.plotly_chart(fig_forecast, width='stretch')
+                render_chart(fig_forecast, forecast_df, key="revenue_forecast", ai_label="Revenue Forecast", width='stretch')
 
                 # Show confidence interval info
                 st.caption(f"📊 95% Confidence Interval: {format_metric(forecast.get('confidence_lower', 0), 'SAR')} - {format_metric(forecast.get('confidence_upper', 0), 'SAR')}")
@@ -393,22 +462,11 @@ with tab_forecast:
 with tab_segmentation:
     st.subheader("👥 Advanced Customer Segmentation")
     if not filtered_df.empty:
-        seg_agg = filtered_df.groupby('Segment Name').agg({
-            'Revenue (SAR)': 'sum',
-            'Unique Conversions': 'sum',
-            'Unique Clicks': 'sum',
-            'Sent': 'sum'
-        }).reset_index()
-        if len(seg_agg) > 3:
-            features = seg_agg[['Revenue (SAR)', 'Unique Conversions', 'Unique Clicks', 'Sent']]
-            try:
-                kmeans = KMeans(n_clusters=3, random_state=42)
-                seg_agg['Cluster'] = kmeans.fit_predict(features)
-                fig_seg = px.scatter(seg_agg, x='Revenue (SAR)', y='Unique Conversions', color='Cluster', hover_data=['Segment Name'])
-                st.plotly_chart(fig_seg)
-                st.write("**Segmentation Insights:** Segments grouped by behavior. High-value clusters should be prioritized.")
-            except Exception as e:
-                st.write(f"Segmentation error: {e}")
+        seg_agg = _cached_customer_segmentation(filtered_df.to_json())
+        if 'Cluster' in seg_agg.columns:
+            fig_seg = px.scatter(seg_agg, x='Revenue (SAR)', y='Unique Conversions', color='Cluster', hover_data=['Segment Name'])
+            render_chart(fig_seg, seg_agg, key="segmentation_scatter", ai_label="Customer Segmentation")
+            st.write("**Segmentation Insights:** Segments grouped by behavior. High-value clusters should be prioritized.")
         else:
             st.write("Not enough segments for clustering.")
 
@@ -422,16 +480,7 @@ with tab_roi:
         st.warning(f"⚠️ **Underperformers:** {', '.join(underperformers)} - Consider pausing or optimizing.")
 
     st.subheader("💰 ROI Analysis")
-    rev_col_roi = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in filtered_df.columns else 'Revenue (SAR)'
-    roi_df = filtered_df.groupby('Channel').agg({
-        rev_col_roi: 'sum',
-        'Sent': 'sum',
-        'Campaign Cost': 'sum',
-    }).reset_index()
-    roi_df = roi_df.rename(columns={'Campaign Cost': 'Cost (SAR)', rev_col_roi: 'Revenue (SAR)'})
-    roi_df['Profit (SAR)'] = roi_df['Revenue (SAR)'] - roi_df['Cost (SAR)']
-    roi_df['ROAS'] = np.where(roi_df['Cost (SAR)'] > 0, roi_df['Revenue (SAR)'] / roi_df['Cost (SAR)'], 0)
-    roi_df['Revenue Per Send'] = np.where(roi_df['Sent'] > 0, roi_df['Revenue (SAR)'] / roi_df['Sent'], 0)
+    roi_df = _cached_roi_analysis(filtered_df.to_json())
 
     # Use column_config for proper numeric formatting
     roi_cc = {
@@ -447,7 +496,7 @@ with tab_roi:
     # ROI chart
     fig_roi = px.bar(roi_df, x='Channel', y=['Revenue (SAR)', 'Cost (SAR)'], barmode='group',
                      title="Revenue vs Cost by Channel", color_discrete_sequence=[COLORS['success'], COLORS['danger']])
-    st.plotly_chart(fig_roi, width='stretch')
+    render_chart(fig_roi, roi_df, key="roi_chart", ai_label="Revenue vs Cost by Channel", width='stretch')
 
     # Dynamic Actionable Recommendations
     st.subheader("📋 Actionable Recommendations")

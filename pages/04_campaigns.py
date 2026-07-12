@@ -1,3 +1,5 @@
+import json
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -5,8 +7,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
-from utils import format_metric
-from components.table import render_table
+from utils import format_metric, read_cached_json
+from components.table import render_table, render_chart, render_ai_explain
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_attribution_display_label, get_selected_revenue_display_name, get_selected_conversion_display_name
 from analysis import top_campaigns
@@ -16,9 +18,214 @@ from dashboard.anomalies import detect_campaign_anomalies
 from dashboard.comparisons_logic import calculate_period_metrics, calculate_metric_changes
 from dashboard.charts import render_health_dashboard
 
+
+# ---------------------------------------------------------------------------
+# Cached data-computation helpers (heavy Pandas ops only; no Plotly figures)
+# ---------------------------------------------------------------------------
+
+@st.cache_data
+def _cached_top_campaigns(filtered_df_json, camp_metric):
+    """Cached top_campaigns() call + Conversion Rate scaling."""
+    filtered_df = read_cached_json(filtered_df_json)
+    top_camp = top_campaigns(filtered_df, camp_metric)
+    if camp_metric == 'Conversion Rate' and camp_metric in top_camp.columns:
+        top_camp = top_camp.copy()
+        top_camp[camp_metric] = top_camp[camp_metric] * 100
+    return top_camp
+
+
+@st.cache_data
+def _cached_campaign_type_breakdown(filtered_df_json):
+    """Cached campaign-type groupby aggregation with calculated columns."""
+    filtered_df = read_cached_json(filtered_df_json)
+    if 'Type of Campaign' not in filtered_df.columns:
+        return None
+
+    type_agg_cols = {'Sent': 'sum', 'Delivered': 'sum', 'Unique Clicks': 'sum', 'Unique Conversions': 'sum'}
+    for col in ['Revenue (SAR)', 'Click-Through Revenue (SAR)', 'Impression-Through Revenue (SAR)', 'Selected Revenue (SAR)']:
+        if col in filtered_df.columns:
+            type_agg_cols[col] = 'sum'
+
+    type_breakdown = filtered_df.groupby('Type of Campaign').agg(type_agg_cols).reset_index()
+    type_breakdown['Conversion Rate'] = np.where(
+        type_breakdown['Unique Clicks'] > 0,
+        type_breakdown['Unique Conversions'] / type_breakdown['Unique Clicks'], 0
+    )
+
+    # AOV for each revenue type
+    conv_mask = type_breakdown['Unique Conversions'] > 0
+    if 'Revenue (SAR)' in type_breakdown.columns:
+        type_breakdown['AOV (SAR)'] = np.where(conv_mask, type_breakdown['Revenue (SAR)'] / type_breakdown['Unique Conversions'], 0)
+    if 'Click-Through Revenue (SAR)' in type_breakdown.columns:
+        type_breakdown['AOV Click-Through (SAR)'] = np.where(conv_mask, type_breakdown['Click-Through Revenue (SAR)'] / type_breakdown['Unique Conversions'], 0)
+    if 'Impression-Through Revenue (SAR)' in type_breakdown.columns:
+        type_breakdown['AOV Impression-Through (SAR)'] = np.where(conv_mask, type_breakdown['Impression-Through Revenue (SAR)'] / type_breakdown['Unique Conversions'], 0)
+    if 'Selected Revenue (SAR)' in type_breakdown.columns:
+        type_breakdown['AOV Selected (SAR)'] = np.where(conv_mask, type_breakdown['Selected Revenue (SAR)'] / type_breakdown['Unique Conversions'], 0)
+
+    return type_breakdown
+
+
+@st.cache_data
+def _cached_one_time_campaigns(filtered_df_json, min_sent_threshold):
+    """Cached one-time campaign aggregation: groupby + calculated columns + sort."""
+    filtered_df = read_cached_json(filtered_df_json)
+    if 'Type of Campaign' not in filtered_df.columns:
+        return None
+    onetime_df = filtered_df[filtered_df['Type of Campaign'].str.lower().str.contains('one-time', na=False)].copy()
+    if onetime_df.empty:
+        return None
+
+    # Build aggregation dict dynamically based on available columns
+    agg_dict = {
+        'Sent': 'sum',
+        'Delivered': 'sum',
+        'Failed': 'sum',
+        'Unique Clicks': 'sum',
+        'Unique Conversions': 'sum',
+        'Day': 'min'
+    }
+    for col in ['Selected Revenue (SAR)', 'Revenue (SAR)', 'Selected Conversions',
+                'Unique Click-Through Conversions', 'Unique Impressions',
+                'Impression-Through Revenue (SAR)', 'Click-Through Revenue (SAR)']:
+        if col in onetime_df.columns:
+            agg_dict[col] = 'sum'
+
+    groupby_cols = ['Campaign Name', 'Channel'] if 'Channel' in onetime_df.columns else ['Campaign Name']
+    onetime_summary = onetime_df.groupby(groupby_cols).agg(agg_dict).reset_index()
+    onetime_summary = onetime_summary[onetime_summary['Sent'] >= min_sent_threshold]
+
+    # Calculated columns
+    onetime_summary['Delivery Rate'] = onetime_summary['Delivered'] / onetime_summary['Sent']
+    onetime_summary['CTR'] = np.where(onetime_summary['Delivered'] > 0,
+                                      onetime_summary['Unique Clicks'] / onetime_summary['Delivered'], 0)
+
+    # Conversion rate with correct numerator/denominator pairing
+    if 'Unique Click-Through Conversions' in onetime_summary.columns and 'Unique Clicks' in onetime_summary.columns:
+        conv_numer = onetime_summary['Unique Click-Through Conversions']
+        conv_denom = onetime_summary['Unique Clicks']
+    elif 'Unique Impressions' in onetime_summary.columns and 'Unique Conversions' in onetime_summary.columns:
+        conv_numer = onetime_summary['Unique Conversions']
+        conv_denom = onetime_summary['Unique Impressions']
+    else:
+        conv_col_for_rate = 'Selected Conversions' if 'Selected Conversions' in onetime_summary.columns else 'Unique Conversions'
+        conv_numer = onetime_summary[conv_col_for_rate]
+        conv_denom = onetime_summary['Unique Clicks'] if 'Unique Clicks' in onetime_summary.columns else 1
+
+    onetime_summary['Conversion Rate'] = np.where(conv_denom > 0,
+                                                  conv_numer / conv_denom, 0)
+    onetime_summary = onetime_summary.sort_values('Sent', ascending=False)
+    return onetime_summary
+
+
+@st.cache_data
+def _cached_monthly_one_time(filtered_df_json, min_sent_threshold):
+    """Cached monthly aggregation of one-time campaigns."""
+    filtered_df = read_cached_json(filtered_df_json)
+    if 'Type of Campaign' not in filtered_df.columns:
+        return None
+    onetime_df = filtered_df[filtered_df['Type of Campaign'].str.lower().str.contains('one-time', na=False)].copy()
+    if onetime_df.empty:
+        return None
+
+    # Extract month column (read_cached_json already restores Day/Reporting Period
+    # Start Date to real datetimes)
+    if 'Day' in onetime_df.columns:
+        onetime_df['Month'] = onetime_df['Day'].dt.to_period('M').dt.strftime('%Y-%m')
+    elif 'Reporting Period Start Date' in onetime_df.columns:
+        onetime_df['Month'] = onetime_df['Reporting Period Start Date'].dt.to_period('M').dt.strftime('%Y-%m')
+    else:
+        return None
+
+    monthly_agg = {
+        'Campaign Name': 'nunique',
+        'Sent': 'sum',
+        'Delivered': 'sum',
+        'Unique Conversions': 'sum'
+    }
+    if 'Selected Revenue (SAR)' in onetime_df.columns:
+        monthly_agg['Selected Revenue (SAR)'] = 'sum'
+        rev_col_month = 'Selected Revenue (SAR)'
+    elif 'Revenue (SAR)' in onetime_df.columns:
+        monthly_agg['Revenue (SAR)'] = 'sum'
+        rev_col_month = 'Revenue (SAR)'
+    else:
+        rev_col_month = 'Revenue (SAR)'
+
+    monthly_campaigns = onetime_df.groupby('Month').agg(monthly_agg).reset_index()
+    monthly_campaigns = monthly_campaigns.rename(columns={'Campaign Name': 'Unique Campaigns'})
+    monthly_campaigns = monthly_campaigns.sort_values('Month', ascending=False)
+    return monthly_campaigns, rev_col_month
+
+
+@st.cache_data
+def _cached_campaign_drilldown_kpis(filtered_df_json, selected_campaigns):
+    """Cached KPI column-sums for the selected campaigns."""
+    filtered_df = read_cached_json(filtered_df_json)
+    camp_details = filtered_df[filtered_df['Campaign Name'].isin(selected_campaigns)]
+
+    total_sent = camp_details['Sent'].sum()
+    total_delivered = camp_details['Delivered'].sum()
+    total_clicks = camp_details['Unique Clicks'].sum()
+    conv_total = camp_details['Selected Conversions'].sum() if 'Selected Conversions' in camp_details.columns else camp_details['Unique Conversions'].sum()
+    rev_total = camp_details['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in camp_details.columns else camp_details['Revenue (SAR)'].sum()
+    ct_rev = camp_details['Click-Through Revenue (SAR)'].sum()
+    total_revenue = rev_total
+    total_conversions = conv_total
+
+    return {
+        'total_sent': total_sent,
+        'total_delivered': total_delivered,
+        'total_clicks': total_clicks,
+        'conv_total': conv_total,
+        'rev_total': rev_total,
+        'ct_rev': ct_rev,
+        'total_revenue': total_revenue,
+        'total_conversions': total_conversions,
+    }
+
+
+@st.cache_data
+def _cached_channel_perf_for_campaigns(filtered_df_json, selected_campaigns):
+    """Cached Channel groupby for the selected campaigns."""
+    filtered_df = read_cached_json(filtered_df_json)
+    camp_details = filtered_df[filtered_df['Campaign Name'].isin(selected_campaigns)]
+    chan_perf = _cached_channel_perf_for_campaigns(filtered_df.to_json(), tuple(selected_campaigns))
+    return chan_perf
+
+
+@st.cache_data
+def _cached_campaign_health_scores(filtered_df_json):
+    """Cached campaign health scores loop — heaviest computation on the page."""
+    filtered_df = read_cached_json(filtered_df_json)
+    campaign_health_data = []
+    unique_campaigns = filtered_df['Campaign Name'].dropna().unique()
+
+    for campaign in unique_campaigns:
+        if str(campaign) != 'nan' and campaign:
+            campaign_data = filtered_df[filtered_df['Campaign Name'] == campaign]
+            health_info = calculate_campaign_health_score(campaign_data, filtered_df)
+            campaign_health_data.append({
+                'Campaign Name': campaign,
+                'Status': campaign_data['Status'].iloc[-1] if 'Status' in campaign_data.columns else None,
+                'Health Score': health_info['health_score'],
+                'Tier': health_info['tier'],
+                'Revenue (SAR)': campaign_data['Revenue (SAR)'].sum(),
+                'Impression-Through Revenue (SAR)': campaign_data['Impression-Through Revenue (SAR)'].sum(),
+                'Click-Through Revenue (SAR)': campaign_data['Click-Through Revenue (SAR)'].sum(),
+                'Total Conversions': campaign_data['Unique Conversions'].sum(),
+                'Delivery Score': health_info['component_scores'].get('delivery', 0),
+                'Engagement Score': health_info['component_scores'].get('engagement', 0),
+                'Conversion Score': health_info['component_scores'].get('conversion', 0),
+                'Revenue Score': health_info['component_scores'].get('revenue', 0)
+            })
+    return campaign_health_data
+
+
 ctx = get_ctx()
 df = ctx.df
 filtered_df = ctx.filtered_df
+unique_campaigns = filtered_df['Campaign Name'].dropna().unique()
 comparison_result = ctx.comparison_result
 revenue_attribution = ctx.revenue_attribution
 conversion_attribution = ctx.conversion_attribution
@@ -92,13 +299,7 @@ if 'Unique Click-Through Conversions' in filtered_df.columns:
 if 'Unique Impression-Through Conversions' in filtered_df.columns:
     camp_metric_options.insert(1, 'Unique Impression-Through Conversions')
 camp_metric = st.selectbox("Metric", camp_metric_options, key='camp_metric', format_func=_attribution_display)
-top_camp = top_campaigns(filtered_df, camp_metric)
-
-# Conversion Rate is stored as a 0-1 fraction; render_table's percent formatter expects
-# rate columns pre-scaled to 0-100 (matches 07_channels' convention).
-if camp_metric == 'Conversion Rate' and camp_metric in top_camp.columns:
-    top_camp = top_camp.copy()
-    top_camp[camp_metric] = top_camp[camp_metric] * 100
+top_camp = _cached_top_campaigns(filtered_df.to_json(), camp_metric)
 
 # Build column_config for proper numeric formatting
 top_camp_cc = {}
@@ -120,47 +321,12 @@ render_table(renamed_display, key="top_camp", column_config=top_camp_cc if top_c
 # Create chart with original numeric values
 fig = px.bar(top_camp, x='Campaign Name', y=camp_metric, title=f"Top Campaigns by {_attribution_display(camp_metric)}",
              color_discrete_sequence=COLOR_SEQUENCE)
-st.plotly_chart(fig, width='stretch')
+render_chart(fig, top_camp, key="top_campaigns_chart", ai_label=f"Top Campaigns by {_attribution_display(camp_metric)}", width='stretch')
 
 # Campaign Type Breakdown (Journey vs One-Time)
 if 'Type of Campaign' in filtered_df.columns:
     st.subheader("Performance by Campaign Type")
-    type_agg_cols = {'Sent': 'sum', 'Delivered': 'sum', 'Unique Clicks': 'sum', 'Unique Conversions': 'sum'}
-    if 'Revenue (SAR)' in filtered_df.columns:
-        type_agg_cols['Revenue (SAR)'] = 'sum'
-    if 'Click-Through Revenue (SAR)' in filtered_df.columns:
-        type_agg_cols['Click-Through Revenue (SAR)'] = 'sum'
-    if 'Impression-Through Revenue (SAR)' in filtered_df.columns:
-        type_agg_cols['Impression-Through Revenue (SAR)'] = 'sum'
-    if 'Selected Revenue (SAR)' in filtered_df.columns:
-        type_agg_cols['Selected Revenue (SAR)'] = 'sum'
-    type_breakdown = filtered_df.groupby('Type of Campaign').agg(type_agg_cols).reset_index()
-    type_breakdown['Conversion Rate'] = np.where(
-        type_breakdown['Unique Clicks'] > 0,
-        type_breakdown['Unique Conversions'] / type_breakdown['Unique Clicks'], 0
-    )
-
-    # Calculate AOV for each revenue type
-    if 'Revenue (SAR)' in type_breakdown.columns:
-        type_breakdown['AOV (SAR)'] = np.where(
-            type_breakdown['Unique Conversions'] > 0,
-            type_breakdown['Revenue (SAR)'] / type_breakdown['Unique Conversions'], 0
-        )
-    if 'Click-Through Revenue (SAR)' in type_breakdown.columns:
-        type_breakdown['AOV Click-Through (SAR)'] = np.where(
-            type_breakdown['Unique Conversions'] > 0,
-            type_breakdown['Click-Through Revenue (SAR)'] / type_breakdown['Unique Conversions'], 0
-        )
-    if 'Impression-Through Revenue (SAR)' in type_breakdown.columns:
-        type_breakdown['AOV Impression-Through (SAR)'] = np.where(
-            type_breakdown['Unique Conversions'] > 0,
-            type_breakdown['Impression-Through Revenue (SAR)'] / type_breakdown['Unique Conversions'], 0
-        )
-    if 'Selected Revenue (SAR)' in type_breakdown.columns:
-        type_breakdown['AOV Selected (SAR)'] = np.where(
-            type_breakdown['Unique Conversions'] > 0,
-            type_breakdown['Selected Revenue (SAR)'] / type_breakdown['Unique Conversions'], 0
-        )
+    type_breakdown = _cached_campaign_type_breakdown(filtered_df.to_json())
 
     # Display table - drop Selected Revenue/Conversions since all attribution types are shown
     type_display = type_breakdown.copy()
@@ -214,6 +380,10 @@ if 'Type of Campaign' in filtered_df.columns:
 
     # Side-by-side charts
     type_chart_data = type_breakdown
+    _, type_explain_col = st.columns([8, 1])
+    with type_explain_col:
+        render_ai_explain(type_chart_data, key="campaign_type_charts", ai_label="Performance by Campaign Type",
+                           help_text="Explain these campaign type charts with AI")
     type_col1, type_col2 = st.columns(2)
     rev_col_for_type = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in type_chart_data.columns else 'Revenue (SAR)'
     with type_col1:
@@ -249,40 +419,7 @@ if 'Type of Campaign' in filtered_df.columns:
         # Campaign details table
         st.markdown("#### Campaign Details")
         # Respect selected attribution if present
-        agg_dict = {
-            'Sent': 'sum',
-            'Delivered': 'sum',
-            'Failed': 'sum',
-            'Unique Clicks': 'sum',
-            'Unique Conversions': 'sum',
-            'Day': 'min'  # Launch date
-        }
-        if 'Selected Revenue (SAR)' in onetime_df.columns:
-            agg_dict['Selected Revenue (SAR)'] = 'sum'
-        elif 'Revenue (SAR)' in onetime_df.columns:
-            agg_dict['Revenue (SAR)'] = 'sum'
-
-        # Add selected conversions if available
-        if 'Selected Conversions' in onetime_df.columns:
-            agg_dict['Selected Conversions'] = 'sum'
-        # Add click-through conversion counts if available; these should drive the campaign-level conversion rate
-        if 'Unique Click-Through Conversions' in onetime_df.columns:
-            agg_dict['Unique Click-Through Conversions'] = 'sum'
-        # Add impression counts if available, so we can fall back to impression-based rate when clicks-only metrics are unavailable
-        if 'Unique Impressions' in onetime_df.columns:
-            agg_dict['Unique Impressions'] = 'sum'
-
-        # Add all revenue attribution types (summed totals across all dates)
-        if 'Impression-Through Revenue (SAR)' in onetime_df.columns:
-            agg_dict['Impression-Through Revenue (SAR)'] = 'sum'
-        if 'Click-Through Revenue (SAR)' in onetime_df.columns:
-            agg_dict['Click-Through Revenue (SAR)'] = 'sum'
-
-        groupby_cols = ['Campaign Name', 'Channel'] if 'Channel' in onetime_df.columns else ['Campaign Name']
-        onetime_summary = onetime_df.groupby(groupby_cols).agg(agg_dict).reset_index()
-
-        # Apply sent threshold AFTER aggregation so attribution-window rows (Sent=0) aren't lost
-        onetime_summary = onetime_summary[onetime_summary['Sent'] >= min_sent_threshold]
+        onetime_summary = _cached_one_time_campaigns(filtered_df.to_json(), min_sent_threshold)
 
         # Summary metrics (computed after aggregation so they reflect true totals)
         total_onetime_campaigns = onetime_summary['Campaign Name'].nunique()
@@ -320,28 +457,6 @@ if 'Type of Campaign' in filtered_df.columns:
                 st.write(f"**Total rows before aggregation:** {len(onetime_df)}")
                 st.write(f"**Total rows after aggregation:** {len(onetime_summary)}")
 
-        # Add calculated columns
-        onetime_summary['Delivery Rate'] = onetime_summary['Delivered'] / onetime_summary['Sent']
-        onetime_summary['CTR'] = np.where(onetime_summary['Delivered'] > 0,
-                                        onetime_summary['Unique Clicks'] / onetime_summary['Delivered'], 0)
-
-        # Compute campaign conversion rate using the correct numerator/denominator pairing
-        if 'Unique Click-Through Conversions' in onetime_summary.columns and 'Unique Clicks' in onetime_summary.columns:
-            conv_numer = onetime_summary['Unique Click-Through Conversions']
-            conv_denom = onetime_summary['Unique Clicks']
-        elif 'Unique Impressions' in onetime_summary.columns and 'Unique Conversions' in onetime_summary.columns:
-            conv_numer = onetime_summary['Unique Conversions']
-            conv_denom = onetime_summary['Unique Impressions']
-        else:
-            conv_col_for_rate = 'Selected Conversions' if 'Selected Conversions' in onetime_summary.columns else 'Unique Conversions'
-            conv_numer = onetime_summary[conv_col_for_rate]
-            conv_denom = onetime_summary['Unique Clicks'] if 'Unique Clicks' in onetime_summary.columns else 1
-
-        onetime_summary['Conversion Rate'] = np.where(conv_denom > 0,
-                                                    conv_numer / conv_denom, 0)
-
-        # Sort by sent volume descending
-        onetime_summary = onetime_summary.sort_values('Sent', ascending=False)
 
         # Format for display
         # Use selected revenue column if available
@@ -466,23 +581,7 @@ if 'Type of Campaign' in filtered_df.columns:
         if 'Month' in onetime_df.columns:
             # Group by month and count unique campaigns
             # Use selected revenue if present
-            monthly_agg = {
-                'Campaign Name': 'nunique',  # Count unique campaigns
-                'Sent': 'sum',
-                'Delivered': 'sum',
-                'Unique Conversions': 'sum'
-            }
-            if 'Selected Revenue (SAR)' in onetime_df.columns:
-                monthly_agg['Selected Revenue (SAR)'] = 'sum'
-                rev_col_month = 'Selected Revenue (SAR)'
-            else:
-                monthly_agg['Revenue (SAR)'] = 'sum'
-                rev_col_month = 'Revenue (SAR)'
-
-            monthly_campaigns = onetime_df.groupby('Month').agg(monthly_agg).reset_index()
-
-            monthly_campaigns = monthly_campaigns.rename(columns={'Campaign Name': 'Unique Campaigns'})
-            monthly_campaigns = monthly_campaigns.sort_values('Month', ascending=False)
+            monthly_campaigns, rev_col_month = _cached_monthly_one_time(filtered_df.to_json(), min_sent_threshold)
 
             # Build column_config for monthly display
             monthly_cc = {}
@@ -515,66 +614,56 @@ if 'Type of Campaign' in filtered_df.columns:
                     yaxis_title="Number of Campaigns",
                     xaxis=dict(type='category')
                 )
-                st.plotly_chart(fig_monthly, width='stretch')
+                render_chart(fig_monthly, chart_data, key="onetime_monthly_trend", ai_label="One-Time Campaigns per Month", width='stretch')
 
 # Campaign Drill-Down
 st.subheader("Campaign Drill-Down")
 selected_campaigns = st.multiselect("Select Campaigns for Details", filtered_df['Campaign Name'].unique(), key='drill_camp')
 if selected_campaigns:
     camp_details = filtered_df[filtered_df['Campaign Name'].isin(selected_campaigns)]
+    kpis = _cached_campaign_drilldown_kpis(filtered_df.to_json(), tuple(selected_campaigns))
 
     # Summary KPIs - Row 1: Volume Metrics
     col1, col2, col3, col4, col5, col6 = st.columns(6)
     with col1:
-        st.metric("Total Sent", format_metric(camp_details['Sent'].sum()))
+        st.metric('Total Sent', format_metric(kpis['total_sent']))
     with col2:
-        st.metric("Total Delivered", format_metric(camp_details['Delivered'].sum()))
+        st.metric('Total Delivered', format_metric(kpis['total_delivered']))
     with col3:
-        st.metric("Total Clicks", format_metric(camp_details['Unique Clicks'].sum()))
+        st.metric('Total Clicks', format_metric(kpis['total_clicks']))
     with col4:
-        conv_total = camp_details['Selected Conversions'].sum() if 'Selected Conversions' in camp_details.columns else camp_details['Unique Conversions'].sum()
-        st.metric(selected_conv_label, format_metric(conv_total))
+        st.metric(selected_conv_label, format_metric(kpis['conv_total']))
     with col5:
-        rev_total = camp_details['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in camp_details.columns else camp_details['Revenue (SAR)'].sum()
-        st.metric(selected_rev_label, format_metric(rev_total, "SAR"))
+        st.metric(selected_rev_label, format_metric(kpis['rev_total'], 'SAR'))
     with col6:
-        st.metric("Click-Through Revenue", format_metric(camp_details['Click-Through Revenue (SAR)'].sum(), "SAR"))
+        st.metric('Click-Through Revenue', format_metric(kpis['ct_rev'], 'SAR'))
 
     # Row 2: Business Metrics
     st.markdown("#### 💰 Business Intelligence")
     biz_col1, biz_col2, biz_col3, biz_col4 = st.columns(4)
 
-    total_revenue = camp_details['Selected Revenue (SAR)'].sum() if 'Selected Revenue (SAR)' in camp_details.columns else camp_details['Revenue (SAR)'].sum()
-    total_conversions = camp_details['Selected Conversions'].sum() if 'Selected Conversions' in camp_details.columns else camp_details['Unique Conversions'].sum()
-    total_clicks = camp_details['Unique Clicks'].sum()
+    total_revenue = kpis['total_revenue']
+    total_conversions = kpis['total_conversions']
+    total_clicks = kpis['total_clicks']
 
     with biz_col1:
         aov = (total_revenue / total_conversions) if total_conversions > 0 else 0
-        st.metric("Average Order Value", format_metric(aov, "SAR"), help="Revenue per conversion")
+        st.metric('Average Order Value', format_metric(aov, 'SAR'), help='Revenue per conversion')
     with biz_col2:
         rpc = (total_revenue / total_clicks) if total_clicks > 0 else 0
-        st.metric("Revenue Per Click", format_metric(rpc, "SAR"), help="Revenue generated per click")
+        st.metric('Revenue Per Click', format_metric(rpc, 'SAR'), help='Revenue generated per click')
     with biz_col3:
         avg_ctr = camp_details['CTR'].mean()
-        st.metric("Avg CTR", f"{avg_ctr:.2%}", help="Average click-through rate")
+        st.metric('Avg CTR', f'{avg_ctr:.2%}', help='Average click-through rate')
     with biz_col4:
-        # Calculate conversion rate from raw data
-        total_clicks_metric = camp_details['Unique Clicks'].sum()
-        conv_col_metric = 'Selected Conversions' if 'Selected Conversions' in camp_details.columns else 'Unique Conversions'
-        total_conversions_metric = camp_details[conv_col_metric].sum()
+        total_clicks_metric = kpis['total_clicks']
+        total_conversions_metric = kpis['conv_total']
         avg_conv_rate = (total_conversions_metric / total_clicks_metric) if total_clicks_metric > 0 else 0
-        st.metric("Avg Conversion Rate", f"{avg_conv_rate:.2%}", help="Average conversion rate")
+        st.metric('Avg Conversion Rate', f'{avg_conv_rate:.2%}', help='Average conversion rate')
 
     # Performance by Channel
     st.subheader("Performance by Channel")
-    chan_perf = camp_details.groupby('Channel').agg({
-        'Sent': 'sum',
-        'Delivered': 'sum',
-        'Unique Conversions': 'sum',
-        'Revenue (SAR)': 'sum',
-        'Impression-Through Revenue (SAR)': 'sum',
-        'Click-Through Revenue (SAR)': 'sum'
-    }).reset_index()
+    chan_perf = _cached_channel_perf_for_campaigns(filtered_df.to_json(), tuple(selected_campaigns))
     # Build column_config for channel performance
     chan_perf_cc = {}
     for col in ['Sent', 'Delivered', 'Unique Conversions']:
@@ -597,7 +686,7 @@ if selected_campaigns:
                       color='Channel', color_discrete_map=CHANNEL_COLORS,
                       labels={'Unique Conversions': conv_display_name})
     fig_chan.update_layout(showlegend=False)
-    st.plotly_chart(fig_chan, width='stretch')
+    render_chart(fig_chan, chan_perf, key="camp_drilldown_channel", ai_label="Channel Performance for Selected Campaigns", width='stretch')
 
     # Time Series for Selected Campaigns
     st.subheader("Time Series Performance")
@@ -607,7 +696,7 @@ if selected_campaigns:
                               title=f"{camp_metric} Over Time for Selected Campaigns",
                               color_discrete_sequence=COLOR_SEQUENCE)
         fig_ts_camp.update_traces(line_width=2.5)
-        st.plotly_chart(fig_ts_camp, width='stretch')
+        render_chart(fig_ts_camp, ts_camp, key="camp_drilldown_ts", ai_label=f"{camp_metric} Over Time for Selected Campaigns", width='stretch')
 
     # Conversion Attribution
     st.subheader("Conversion Attribution")
@@ -619,7 +708,7 @@ if selected_campaigns:
     attr_df_camp = pd.DataFrame(list(attr_camp.items()), columns=['Source', 'Conversions'])
     fig_attr_camp = px.pie(attr_df_camp, names='Source', values='Conversions', title="Attribution for Selected Campaigns",
                             color_discrete_sequence=COLOR_SEQUENCE)
-    st.plotly_chart(fig_attr_camp, width='stretch')
+    render_chart(fig_attr_camp, attr_df_camp, key="camp_drilldown_attr", ai_label="Attribution for Selected Campaigns", width='stretch')
 
     # Failed Reasons for Selected Campaigns
     st.subheader("Failed Reasons")
@@ -628,7 +717,7 @@ if selected_campaigns:
         failed_camp = camp_details[failed_cols].sum().reset_index().rename(columns={'index': 'Reason', 0: 'Count'})
         fig_fail_camp = px.bar(failed_camp, x='Reason', y='Count', title="Failed Reasons for Selected Campaigns",
                                color_discrete_sequence=[COLORS['danger']])
-        st.plotly_chart(fig_fail_camp, width='stretch')
+        render_chart(fig_fail_camp, failed_camp, key="camp_drilldown_failed", ai_label="Failed Reasons for Selected Campaigns", width='stretch')
 
 # Campaign Health Score Analysis
 st.subheader("🏥 Campaign Health Dashboard")
@@ -663,27 +752,7 @@ with st.expander("📊 Scoring Methodology (Click to View)", expanded=False):
 
 
 # Calculate health scores for all campaigns
-campaign_health_data = []
-unique_campaigns = filtered_df['Campaign Name'].dropna().unique()
-
-for campaign in unique_campaigns:
-    if str(campaign) != 'nan' and campaign:
-        campaign_data = filtered_df[filtered_df['Campaign Name'] == campaign]
-        health_info = calculate_campaign_health_score(campaign_data, filtered_df)
-        campaign_health_data.append({
-            'Campaign Name': campaign,
-            'Status': campaign_data['Status'].iloc[-1] if 'Status' in campaign_data.columns else None,
-            'Health Score': health_info['health_score'],
-            'Tier': health_info['tier'],
-            'Revenue (SAR)': campaign_data['Revenue (SAR)'].sum(),
-            'Impression-Through Revenue (SAR)': campaign_data['Impression-Through Revenue (SAR)'].sum(),
-            'Click-Through Revenue (SAR)': campaign_data['Click-Through Revenue (SAR)'].sum(),
-            'Total Conversions': campaign_data['Unique Conversions'].sum(),
-            'Delivery Score': health_info['component_scores'].get('delivery', 0),
-            'Engagement Score': health_info['component_scores'].get('engagement', 0),
-            'Conversion Score': health_info['component_scores'].get('conversion', 0),
-            'Revenue Score': health_info['component_scores'].get('revenue', 0)
-        })
+campaign_health_data = _cached_campaign_health_scores(filtered_df.to_json())
 
 if campaign_health_data:
     health_df = pd.DataFrame(campaign_health_data)
@@ -908,7 +977,8 @@ if funnel_campaign and str(funnel_campaign) != 'nan':
                 connector={"line": {"color": "royalblue", "dash": "dot", "width": 3}}
             ))
             fig_funnel.update_layout(title=f"Conversion Funnel: {funnel_campaign}")
-            st.plotly_chart(fig_funnel)
+            funnel_df = pd.DataFrame({'Stage': funnel_stages, 'Value': funnel_values})
+            render_chart(fig_funnel, funnel_df, key="campaign_funnel", ai_label=f"Conversion Funnel: {funnel_campaign}")
 
     # Display conversion rates
     if funnel_analysis['conversion_rates']:

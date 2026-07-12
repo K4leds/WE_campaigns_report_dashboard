@@ -1,3 +1,4 @@
+import json
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -5,8 +6,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
-from utils import format_metric
-from components.table import render_table
+from utils import format_metric, read_cached_json
+from components.table import render_table, render_chart
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_attribution_display_label, get_selected_conversion_display_name
 from dashboard.health import calculate_journey_health_score
@@ -528,7 +529,8 @@ if funnel_journey and str(funnel_journey) != 'nan':
                 connector={"line": {"color": "royalblue", "dash": "dot", "width": 3}}
             ))
             fig_funnel.update_layout(title=f"Conversion Funnel: {funnel_journey}")
-            st.plotly_chart(fig_funnel)
+            funnel_df = pd.DataFrame({'Stage': funnel_stages, 'Value': funnel_values})
+            render_chart(fig_funnel, funnel_df, key="journey_funnel", ai_label=f"Conversion Funnel: {funnel_journey}")
 
     # Display conversion rates
     if funnel_analysis['conversion_rates']:
@@ -638,7 +640,8 @@ if waterfall_journey and str(waterfall_journey) != 'nan':
             yaxis_title="Revenue (SAR)",
             showlegend=False,
         )
-        st.plotly_chart(fig_waterfall, width='stretch')
+        wf_df = pd.DataFrame({'Step': wf_labels, 'Value (SAR)': wf_values, 'Measure': wf_measures})
+        render_chart(fig_waterfall, wf_df, key="journey_waterfall", ai_label=f"Revenue Attribution Breakdown: {waterfall_journey}", width='stretch')
 
         # Attribution breakdown table
         st.subheader("📊 Attribution Breakdown")
@@ -655,7 +658,11 @@ if waterfall_journey and str(waterfall_journey) != 'nan':
                 names=list(waterfall_result['attribution_breakdown'].keys()),
                 title="Revenue Attribution Distribution"
             )
-            st.plotly_chart(fig_attr_pie)
+            attr_pie_df = pd.DataFrame({
+                'Source': list(waterfall_result['attribution_breakdown'].keys()),
+                'Percentage': list(waterfall_result['attribution_breakdown'].values()),
+            })
+            render_chart(fig_attr_pie, attr_pie_df, key="journey_attr_pie", ai_label="Revenue Attribution Distribution")
 
         # Attribution insights
         st.subheader("🎯 Attribution Insights")
@@ -674,8 +681,13 @@ if waterfall_journey and str(waterfall_journey) != 'nan':
 # Journey Lifecycle Analysis
 st.subheader("🔄 Journey Lifecycle Analytics")
 
+@st.cache_data
+def _cached_lifecycle_analysis(filtered_df_json):
+    filtered_df = read_cached_json(filtered_df_json)
+    return analyze_journey_lifecycle(filtered_df)
+
 with st.spinner("Analyzing journey maturity and performance curves..."):
-    lifecycle_data = analyze_journey_lifecycle(filtered_df)
+    lifecycle_data = _cached_lifecycle_analysis(filtered_df.to_json())
 
     if lifecycle_data and not isinstance(lifecycle_data, dict) and len(lifecycle_data) > 0:
         lifecycle_df = pd.DataFrame(lifecycle_data)
@@ -688,7 +700,9 @@ with st.spinner("Analyzing journey maturity and performance curves..."):
             maturity_counts = lifecycle_df['maturity_stage'].value_counts()
             fig_maturity = px.pie(values=maturity_counts.values, names=maturity_counts.index,
                                 title="Journeys by Maturity Stage")
-            st.plotly_chart(fig_maturity)
+            maturity_df = maturity_counts.reset_index()
+            maturity_df.columns = ['Maturity Stage', 'Count']
+            render_chart(fig_maturity, maturity_df, key="journey_maturity", ai_label="Journeys by Maturity Stage")
 
         with col2:
             st.subheader("📈 Performance vs Age")
@@ -701,7 +715,7 @@ with st.spinner("Analyzing journey maturity and performance curves..."):
                                     title="Journey Performance vs Age")
             fig_age_perf.update_xaxes(title="Journey Age (Days)")
             fig_age_perf.update_yaxes(title="Efficiency Score")
-            st.plotly_chart(fig_age_perf)
+            render_chart(fig_age_perf, lifecycle_df, key="journey_age_perf", ai_label="Journey Performance vs Age")
 
         # Lifecycle insights table
         st.subheader("🔍 Journey Lifecycle Insights")
@@ -839,7 +853,7 @@ if st.button("📊 Generate Cohort Analysis", key='run_cohort'):
                                    title=f"Revenue Growth Rate by {cohort_period.title()}")
                 fig_growth.update_xaxes(title=f"{cohort_period.title()} Period")
                 fig_growth.update_yaxes(title="Growth Rate (%)")
-                st.plotly_chart(fig_growth, width='stretch')
+                render_chart(fig_growth, cohort_result, key="cohort_growth", ai_label=f"Revenue Growth Rate by {cohort_period.title()}", width='stretch')
         
         else:
             st.warning("Insufficient data for cohort analysis")
@@ -855,7 +869,13 @@ if 'Unique Click-Through Conversions' in filtered_df.columns:
 if 'Unique Impression-Through Conversions' in filtered_df.columns:
     jour_metric_options.insert(3, 'Unique Impression-Through Conversions')
 jour_metric = st.selectbox("Metric", jour_metric_options, key='jour_metric', format_func=_attribution_display)
-top_jour = get_top_journeys(filtered_df, jour_metric)
+
+@st.cache_data
+def _cached_top_journeys(filtered_df_json, jour_metric):
+    filtered_df = read_cached_json(filtered_df_json)
+    return get_top_journeys(filtered_df, jour_metric)
+
+top_jour = _cached_top_journeys(filtered_df.to_json(), jour_metric)
 
 # Build column config based on metric type for clean numeric display
 if 'Rate' in jour_metric:
@@ -874,7 +894,7 @@ render_table(top_jour.rename(columns=attribution_rename), key="top_journeys", co
 # Create chart with original numeric values
 fig2 = px.bar(top_jour, x='Journey Name', y=jour_metric, title=f"Top Journeys by {_attribution_display(jour_metric)}",
               color_discrete_sequence=COLOR_SEQUENCE)
-st.plotly_chart(fig2, width='stretch')
+render_chart(fig2, top_jour, key="top_journeys_chart", ai_label=f"Top Journeys by {_attribution_display(jour_metric)}", width='stretch')
 
 # Journey Drill-Down
 st.subheader("Journey Drill-Down")
@@ -930,7 +950,7 @@ if selected_journeys:
                            color='Channel', color_discrete_map=CHANNEL_COLORS,
                            labels={'Unique Conversions': conv_display_name})
     fig_chan_jour.update_layout(showlegend=False)
-    st.plotly_chart(fig_chan_jour, width='stretch')
+    render_chart(fig_chan_jour, chan_perf_jour, key="jour_drilldown_channel", ai_label="Channel Performance for Selected Journeys", width='stretch')
     
     # Time Series for Selected Journeys
     st.subheader("Time Series Performance")
@@ -952,7 +972,7 @@ if selected_journeys:
                                    title=f"{jour_metric} Over Time for Selected Journeys",
                                    color_discrete_sequence=COLOR_SEQUENCE)
         fig_ts_jour.update_traces(line_width=2.5)
-        st.plotly_chart(fig_ts_jour, width='stretch')
+        render_chart(fig_ts_jour, ts_jour, key="jour_drilldown_ts", ai_label=f"{jour_metric} Over Time for Selected Journeys", width='stretch')
         
         # Journey Performance Insights
         st.subheader("📊 Journey Performance Insights")
@@ -1135,8 +1155,8 @@ if selected_journeys:
     attr_df_jour = pd.DataFrame(list(attr_jour.items()), columns=['Source', 'Conversions'])
     fig_attr_jour = px.pie(attr_df_jour, names='Source', values='Conversions', title="Attribution for Selected Journeys",
                             color_discrete_sequence=COLOR_SEQUENCE)
-    st.plotly_chart(fig_attr_jour, width='stretch')
-    
+    render_chart(fig_attr_jour, attr_df_jour, key="jour_drilldown_attr", ai_label="Attribution for Selected Journeys", width='stretch')
+
     # Failed Reasons for Selected Journeys
     st.subheader("Failed Reasons")
     failed_cols = [col for col in jour_details.columns if 'Failed' in col and col != 'Failed']
@@ -1144,7 +1164,7 @@ if selected_journeys:
         failed_jour = jour_details[failed_cols].sum().reset_index().rename(columns={'index': 'Reason', 0: 'Count'})
         fig_fail_jour = px.bar(failed_jour, x='Reason', y='Count', title="Failed Reasons for Selected Journeys",
                                color_discrete_sequence=[COLORS['danger']])
-        st.plotly_chart(fig_fail_jour, width='stretch')
+        render_chart(fig_fail_jour, failed_jour, key="jour_drilldown_failed", ai_label="Failed Reasons for Selected Journeys", width='stretch')
 
 # 🚨 Stopped Journey Analysis with Revenue Loss Estimation
 st.markdown("---")
@@ -1315,7 +1335,7 @@ if st.button("🔍 Analyze Stopped Journeys", key='analyze_stopped'):
                                 height=200
                             )
 
-                            st.plotly_chart(fig_timeline)
+                            render_chart(fig_timeline, periods_df, key=f"stopped_timeline_{journey_name}", ai_label=f"Stopped Delivery Periods: {journey_name}")
 
                             # Detailed periods table
                             st.subheader("📋 Stopped Period Details")

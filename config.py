@@ -2,22 +2,12 @@
 Centralized configuration for WE Campaigns Report Dashboard
 """
 
-# Channel cost per 1000 sends (SAR) - adjust these to match your actual rates
+# Channel cost per send (SAR) — only paid channels. Free channels (Push, In-App,
+# On-Site, etc.) are handled implicitly: clean_data() falls back to 0.0 via .get().
 CHANNEL_COSTS = {
-    'Email': 1.2,       # SAR per 1000 emails
-    'SMS': 43.2,        # SAR per 1000 SMS
-    'WhatsApp': 200.0,  # SAR per 1000 WhatsApp messages
-    'Push': 0.0,
-    'Mobile Push': 0.0,
-    'App Push': 0.0,
-    'Web Push': 0.0,
-    'In-App': 0.0,
-    'In-app Notification': 0.0,
-    'On-Site': 0.0,
-    'Onsite': 0.0,
-    'On-site': 0.0,
-    'On-site Notification': 0.0,
-    'Web Personalization (Inline content)': 0.0,
+    'Email': 0.0012,    # SAR per email
+    'SMS': 0.0432,      # SAR per SMS
+    'WhatsApp': 0.20,   # SAR per WhatsApp message
 }
 
 # Minimum columns required in uploaded CSV for the dashboard to work
@@ -76,11 +66,7 @@ CHANNEL_COLORS = {
     'App Push': '#EA580C',
     'Web Push': '#0891B2',
     'In-App': '#4F46E5',
-    'In-app Notification': '#4F46E5',
     'On-Site': '#0D9488',
-    'Onsite': '#0D9488',
-    'On-site': '#0D9488',
-    'On-site Notification': '#0D9488',
     'Web Personalization (Inline content)': '#6366F1',
 }
 

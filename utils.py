@@ -6,9 +6,31 @@ Includes formatting, display helpers, and data transformation utilities.
 import streamlit as st
 import pandas as pd
 import numpy as np
-from io import BytesIO
+from io import BytesIO, StringIO
 import plotly.io as pio
 import plotly.graph_objects as go
+
+# Columns that round-trip through `.to_json()`/`read_json()` as epoch-millisecond
+# ints rather than real dates -- pandas 3.0 dropped read_json's column-name-based
+# date auto-detection, so every @st.cache_data helper that groups/resamples on
+# these columns must restore them explicitly after reading the cached JSON back.
+_DATE_COLUMNS = ('Reporting Period Start Date', 'Day')
+
+
+def read_cached_json(json_str: str) -> pd.DataFrame:
+    """Reconstructs a DataFrame passed into an `@st.cache_data` function via
+    `df.to_json()`. Wraps the string in StringIO (pandas 3.0 removed support for
+    passing a literal JSON string directly) and restores known date columns, which
+    otherwise come back as plain epoch-millisecond integers.
+    """
+    df = pd.read_json(StringIO(json_str))
+    for col in _DATE_COLUMNS:
+        if col in df.columns:
+            if pd.api.types.is_numeric_dtype(df[col]):
+                df[col] = pd.to_datetime(df[col], unit='ms')
+            else:
+                df[col] = pd.to_datetime(df[col])
+    return df
 
 
 # Configure Plotly template

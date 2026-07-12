@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
 from utils import format_metric
-from components.table import render_table
+from components.table import render_table, render_ai_explain, render_chart
 from config import COLORS, COLOR_SEQUENCE
 from attribution import get_attribution_display_label
 from analysis import time_series_analysis
@@ -49,6 +49,10 @@ with tab1:
         fig_ts = px.line(ts_df, x='Reporting Period Start Date', y=ts_metric, title=f"{_attribution_display(ts_metric)} Over Time",
                          color_discrete_sequence=[COLORS['primary']])
         fig_ts.update_traces(line_width=2.5)
+        _, explain_col = st.columns([8, 1])
+        with explain_col:
+            render_ai_explain(ts_df, key=f"time_series_{ts_metric}", ai_label=f"{_attribution_display(ts_metric)} over time",
+                               help_text="Explain this trend with AI")
         st.plotly_chart(fig_ts, width='stretch')
     else:
         st.write("No time series data available.")
@@ -69,7 +73,8 @@ with tab2:
                              color_continuous_scale='RdBu_r', aspect='auto',
                              zmin=-1, zmax=1)
         fig_corr.update_layout(width=900, height=700)
-        st.plotly_chart(fig_corr, width='stretch')
+        corr_matrix_df = corr.reset_index().rename(columns={'index': 'Metric'})
+        render_chart(fig_corr, corr_matrix_df, key="correlation_matrix", ai_label="Key Metrics Correlation Matrix", width='stretch')
 
         # Highlight strongest correlations
         st.subheader("Strongest Correlations")
