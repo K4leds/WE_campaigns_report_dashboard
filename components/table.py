@@ -409,12 +409,20 @@ def render_table(
     # compresses everything below a readable width. Columns keep their natural/minWidth
     # size and the grid scrolls horizontally instead (ag-Grid default, matches how wide
     # Streamlit tables already behave in this dashboard).
+    #
+    # Stamp the ag-Grid key with a short hash of the column names. When attribution
+    # settings change, column names change (e.g. "Unique Conversions" → "Click-Through
+    # Conversions"), and ag-Grid needs a fresh component instance — otherwise it tries
+    # to update columns in-place and renders blank cells for the renamed columns.
+    import hashlib
+    cols_fingerprint = hashlib.md5(",".join(df.columns).encode()).hexdigest()[:8]
+    stamped_key = f"{key}__cols_{cols_fingerprint}"
     AgGrid(
         display_df,
         gridOptions=grid_options,
         height=height,
         allow_unsafe_jscode=True,
-        key=key,
+        key=stamped_key,
         # Forces st_aggrid's JSON serialization path instead of its default pyarrow/Arrow
         # IPC path. With this pandas/pyarrow version, string columns serialize as Arrow's
         # LargeUtf8 type, which the frontend's bundled arrow-js decoder doesn't recognize

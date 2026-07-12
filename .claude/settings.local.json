@@ -100,7 +100,8 @@
       "Bash(grep -E \"\\\\.png$\")",
       "Bash(powershell -Command \"Get-CimInstance Win32_Process -Filter \\\\\"CommandLine LIKE '%streamlit run app.py%'\\\\\" | ForEach-Object { Stop-Process -Id \\\\$_.ProcessId -Force }\" 2>&1)",
       "Bash(powershell -Command \"Get-CimInstance Win32_Process -Filter \\\\\"CommandLine LIKE '%streamlit run app.py%'\\\\\" | Select-Object ProcessId,CommandLine\" 2>&1)",
-      "Bash(powershell -Command \"Get-NetTCPConnection -LocalPort 8510 -ErrorAction SilentlyContinue | Select-Object -First 1 OwningProcess\" 2>&1)"
+      "Bash(powershell -Command \"Get-NetTCPConnection -LocalPort 8510 -ErrorAction SilentlyContinue | Select-Object -First 1 OwningProcess\" 2>&1)",
+      "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -c \"import inspect, streamlit as st; sig = inspect.signature\\(st.plotly_chart\\); print\\(sig\\)\")"
     ]
   }
 }

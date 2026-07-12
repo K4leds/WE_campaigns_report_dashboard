@@ -454,7 +454,7 @@ with tab_forecast:
                     hovermode='x unified'
                 )
 
-                render_chart(fig_forecast, forecast_df, key="revenue_forecast", ai_label="Revenue Forecast", width='stretch')
+                render_chart(fig_forecast, forecast_df, key="revenue_forecast", ai_label="Revenue Forecast")
 
                 # Show confidence interval info
                 st.caption(f"📊 95% Confidence Interval: {format_metric(forecast.get('confidence_lower', 0), 'SAR')} - {format_metric(forecast.get('confidence_upper', 0), 'SAR')}")
@@ -496,7 +496,7 @@ with tab_roi:
     # ROI chart
     fig_roi = px.bar(roi_df, x='Channel', y=['Revenue (SAR)', 'Cost (SAR)'], barmode='group',
                      title="Revenue vs Cost by Channel", color_discrete_sequence=[COLORS['success'], COLORS['danger']])
-    render_chart(fig_roi, roi_df, key="roi_chart", ai_label="Revenue vs Cost by Channel", width='stretch')
+    render_chart(fig_roi, roi_df, key="roi_chart", ai_label="Revenue vs Cost by Channel")
 
     # Dynamic Actionable Recommendations
     st.subheader("📋 Actionable Recommendations")

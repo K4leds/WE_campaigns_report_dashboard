@@ -57,6 +57,11 @@ def _cached_channel_type_breakdown(filtered_df_json):
     for c in extra_rev_cols + extra_conv_cols:
         type_chan_agg[c] = 'sum'
     type_chan_df = _df.groupby(['Channel', 'Type of Campaign']).agg(type_chan_agg).reset_index()
+    # Safety: fill NaN with 0 for attribution-aware columns (same reasoning as channel_analysis)
+    if 'Selected Conversions' in type_chan_df.columns:
+        type_chan_df['Selected Conversions'] = type_chan_df['Selected Conversions'].fillna(0)
+    if 'Selected Revenue (SAR)' in type_chan_df.columns:
+        type_chan_df['Selected Revenue (SAR)'] = type_chan_df['Selected Revenue (SAR)'].fillna(0)
     return type_chan_df, rev_col_type, conv_col_type, extra_rev_cols, extra_conv_cols
 
 
@@ -77,12 +82,17 @@ tab1, tab2 = st.tabs(["📡 Channels", "❌ Failed Reasons"])
 with tab1:
     chan_df = _cached_channel_analysis(filtered_df.to_json())
 
-    # Channel conversion rate based on selected conversion attribution
+    # Channel conversion rate: always use click-through conversions as numerator so the rate
+    # never exceeds 100% (Selected Conversions includes impression-through which can outnumber clicks).
     conv_rate_source_col = 'Selected Conversions' if 'Selected Conversions' in chan_df.columns else 'Unique Conversions'
-    if conv_rate_source_col in chan_df.columns and 'Unique Clicks' in chan_df.columns:
+    conv_rate_numerator_col = (
+        'Unique Click-Through Conversions' if 'Unique Click-Through Conversions' in chan_df.columns
+        else conv_rate_source_col
+    )
+    if conv_rate_numerator_col in chan_df.columns and 'Unique Clicks' in chan_df.columns:
         chan_df['Conversion Rate'] = np.where(
             chan_df['Unique Clicks'] > 0,
-            (chan_df[conv_rate_source_col] / chan_df['Unique Clicks']) * 100,
+            np.minimum((chan_df[conv_rate_numerator_col] / chan_df['Unique Clicks']) * 100, 100.0),
             0
         )
 
@@ -108,6 +118,13 @@ with tab1:
     selected_conv_display = attribution_rename.get('Selected Conversions')
     if selected_conv_display and selected_conv_display != 'Selected Conversions' and selected_conv_display in chan_df_display.columns:
         chan_df_display = chan_df_display.drop(columns=[selected_conv_display])
+
+    # 'Unique Click-Through Conversions' is aggregated only as the numerator for the
+    # Conversion Rate calc above (on chan_df) -- it is NOT a display column. Drop it so
+    # it doesn't render as a second, near-duplicate conversions column next to the
+    # attribution-selected one (which broke the table's rendering for CT/IT attribution).
+    if 'Unique Click-Through Conversions' in chan_df_display.columns:
+        chan_df_display = chan_df_display.drop(columns=['Unique Click-Through Conversions'])
 
     # Rename selected attribution columns in display table only
     chan_df_display = chan_df_display.rename(columns=attribution_rename)
@@ -153,7 +170,7 @@ with tab1:
 
     if 'Conversion Rate' in chan_df_display.columns:
         total_clicks = chan_df['Unique Clicks'].sum() if 'Unique Clicks' in chan_df.columns else 0
-        total_conv_for_rate = chan_df[conv_rate_source_col].sum() if conv_rate_source_col in chan_df.columns else 0
+        total_conv_for_rate = chan_df[conv_rate_numerator_col].sum() if conv_rate_numerator_col in chan_df.columns else 0
         total_row_chan['Conversion Rate'] = (total_conv_for_rate / total_clicks) * 100 if total_clicks > 0 else 0
 
     chan_cc = {}
@@ -168,12 +185,20 @@ with tab1:
     chan_df_comparison_display = None
     if comparison_result:
         chan_df_comparison = _cached_channel_analysis(comparison_result['comparison_data'].to_json())
-        if conv_rate_source_col in chan_df_comparison.columns and 'Unique Clicks' in chan_df_comparison.columns:
+        comp_rate_numerator_col = (
+            'Unique Click-Through Conversions' if 'Unique Click-Through Conversions' in chan_df_comparison.columns
+            else conv_rate_source_col
+        )
+        if comp_rate_numerator_col in chan_df_comparison.columns and 'Unique Clicks' in chan_df_comparison.columns:
             chan_df_comparison['Conversion Rate'] = np.where(
                 chan_df_comparison['Unique Clicks'] > 0,
-                (chan_df_comparison[conv_rate_source_col] / chan_df_comparison['Unique Clicks']) * 100,
+                np.minimum((chan_df_comparison[comp_rate_numerator_col] / chan_df_comparison['Unique Clicks']) * 100, 100.0),
                 0
             )
+        # Same helper-column drop as the main frame (see note above) so the comparison
+        # frame's columns line up with chan_df_display for delta matching.
+        if 'Unique Click-Through Conversions' in chan_df_comparison.columns:
+            chan_df_comparison = chan_df_comparison.drop(columns=['Unique Click-Through Conversions'])
         chan_df_comparison_display = chan_df_comparison.rename(columns=attribution_rename)
         if not chan_df_comparison_display.columns.is_unique:
             chan_df_comparison_display = chan_df_comparison_display.loc[:, ~chan_df_comparison_display.columns.duplicated(keep='first')]
@@ -187,7 +212,7 @@ with tab1:
                 total_row_chan[f"{col}__total_comp"] = chan_df_comparison_display[col].sum()
         if 'Conversion Rate' in chan_df_comparison_display.columns:
             comp_clicks = chan_df_comparison['Unique Clicks'].sum() if 'Unique Clicks' in chan_df_comparison.columns else 0
-            comp_conv_for_rate = chan_df_comparison[conv_rate_source_col].sum() if conv_rate_source_col in chan_df_comparison.columns else 0
+            comp_conv_for_rate = chan_df_comparison[comp_rate_numerator_col].sum() if comp_rate_numerator_col in chan_df_comparison.columns else 0
             total_row_chan['Conversion Rate__total_comp'] = (comp_conv_for_rate / comp_clicks) * 100 if comp_clicks > 0 else 0
 
     render_table(
@@ -197,6 +222,11 @@ with tab1:
         comparison_df=chan_df_comparison_display,
         compare_on="Channel",
         total_row=total_row_chan,
+    )
+    st.caption(
+        "Conversion Rate = Click-Through Conversions ÷ Unique Clicks (of those who clicked, "
+        "the share who converted). It is always click-based, so it doesn't change with the "
+        "revenue/conversion attribution selected in the sidebar."
     )
 
     # Revenue Distribution (Donut Chart)
@@ -234,7 +264,7 @@ with tab1:
                 showarrow=False
             )]
         )
-        render_chart(fig_donut, chan_df, key="channel_revenue_donut", ai_label="Channel Revenue Share", width='stretch')
+        render_chart(fig_donut, chan_df, key="channel_revenue_donut", ai_label="Channel Revenue Share")
 
     # Revenue + Conversions by Channel (using selected attribution)
     st.subheader("Revenue & Conversions Comparison")
@@ -253,7 +283,7 @@ with tab1:
                 labels={'Selected Revenue (SAR)': rev_display_name}
             )
             fig_rev_chan.update_layout(showlegend=False)
-            st.plotly_chart(fig_rev_chan, width='stretch')
+            st.plotly_chart(fig_rev_chan)
     with rev_conv_col2:
         conv_col = 'Selected Conversions' if 'Selected Conversions' in chan_df.columns else 'Unique Conversions'
         conv_display_name = get_selected_conversion_display_name(conversion_attribution) if conv_col == 'Selected Conversions' else 'Unique Conversions'
@@ -264,7 +294,7 @@ with tab1:
             labels={conv_col: conv_display_name}
         )
         fig_conv_chan.update_layout(showlegend=False)
-        st.plotly_chart(fig_conv_chan, width='stretch')
+        st.plotly_chart(fig_conv_chan)
 
     # Compute derived rates for deeper channel analysis
     chan_rates = chan_df.copy()
@@ -298,7 +328,7 @@ with tab1:
         fig_dr.update_layout(showlegend=False, yaxis_title="Delivery Rate (%)")
         fig_dr.add_hline(y=95, line_dash="dash", line_color=COLORS['muted'],
                          annotation_text="95% target", annotation_position="top right")
-        st.plotly_chart(fig_dr, width='stretch')
+        st.plotly_chart(fig_dr)
     with ch_col2:
         fig_ctr = px.bar(
             chan_rates, x='Channel', y='CTR',
@@ -306,7 +336,7 @@ with tab1:
             color='Channel', color_discrete_map=CHANNEL_COLORS,
         )
         fig_ctr.update_layout(showlegend=False, yaxis_title="CTR (%)")
-        st.plotly_chart(fig_ctr, width='stretch')
+        st.plotly_chart(fig_ctr)
     with ch_col3:
         fig_cvr = px.bar(
             chan_rates, x='Channel', y='Conversion Rate',
@@ -314,7 +344,7 @@ with tab1:
             color='Channel', color_discrete_map=CHANNEL_COLORS,
         )
         fig_cvr.update_layout(showlegend=False, yaxis_title="Conversion Rate (%)")
-        st.plotly_chart(fig_cvr, width='stretch')
+        st.plotly_chart(fig_cvr)
 
     # Volume comparison (Sent vs Delivered side-by-side)
     st.subheader("Send Volume & Delivery")
@@ -326,7 +356,7 @@ with tab1:
         barmode='group', title="Sent vs Delivered by Channel",
         color_discrete_map={'Sent': COLORS['primary'], 'Delivered': COLORS['success']},
     )
-    render_chart(fig_vol, volume_melt, key="channel_volume", ai_label="Sent vs Delivered by Channel", width='stretch')
+    render_chart(fig_vol, volume_melt, key="channel_volume", ai_label="Sent vs Delivered by Channel")
 
     # Revenue Attribution Comparison (all three side-by-side)
     rev_compare_cols = [c for c in ['Revenue (SAR)', 'Click-Through Revenue (SAR)', 'Impression-Through Revenue (SAR)'] if c in chan_df.columns]
@@ -342,7 +372,7 @@ with tab1:
             barmode='group', title="Revenue by Channel & Attribution Model",
             color_discrete_sequence=COLOR_SEQUENCE,
         )
-        render_chart(fig_rev_compare, rev_melt, key="channel_rev_compare", ai_label="Revenue by Channel & Attribution Model", width='stretch')
+        render_chart(fig_rev_compare, rev_melt, key="channel_rev_compare", ai_label="Revenue by Channel & Attribution Model")
 
     # Campaign Type Performance by Channel (One-Time vs Journey)
     if 'Type of Campaign' in filtered_df.columns and 'Channel' in filtered_df.columns:
@@ -395,7 +425,7 @@ with tab1:
                         labels={rev_col_type: rev_display_name}
                     )
                     fig_type_chan_rev.update_layout(legend=dict(orientation='h', y=-0.2))
-                    st.plotly_chart(fig_type_chan_rev, width='stretch')
+                    st.plotly_chart(fig_type_chan_rev)
             with type_chan_col2:
                 conv_display_name = get_selected_conversion_display_name(conversion_attribution)
                 fig_type_chan_conv = px.bar(
@@ -405,7 +435,7 @@ with tab1:
                     labels={conv_col_type: conv_display_name}
                 )
                 fig_type_chan_conv.update_layout(legend=dict(orientation='h', y=-0.2))
-                st.plotly_chart(fig_type_chan_conv, width='stretch')
+                st.plotly_chart(fig_type_chan_conv)
 
             # Share breakdown: what % of each channel's revenue comes from journeys vs one-time
             if rev_col_type in type_chan_df.columns:
@@ -432,7 +462,7 @@ with tab1:
                     yaxis_title="Revenue Share (%)", yaxis_range=[0, 100],
                     legend=dict(orientation='h', y=-0.2)
                 )
-                render_chart(fig_share, type_share, key="channel_type_share", ai_label="Revenue Share by Campaign Type per Channel", width='stretch')
+                render_chart(fig_share, type_share, key="channel_type_share", ai_label="Revenue Share by Campaign Type per Channel")
 
     # ESP Analysis
     esp_df = esp_analysis(filtered_df)
@@ -456,13 +486,13 @@ with tab1:
         with esp_col1:
             fig_esp = px.bar(esp_df, x='ESP/SSP/WSP/RSP name', y='Delivered',
                              title="Delivered by ESP", color_discrete_sequence=COLOR_SEQUENCE)
-            st.plotly_chart(fig_esp, width='stretch')
+            st.plotly_chart(fig_esp)
         with esp_col2:
             if 'Revenue (SAR)' in esp_df.columns:
                 fig_esp_rev = px.bar(esp_df, x='ESP/SSP/WSP/RSP name', y='Revenue (SAR)',
                                      title="Send-Through Revenue by ESP", color_discrete_sequence=COLOR_SEQUENCE,
                                      labels={'Revenue (SAR)': 'Send-Through Revenue (SAR)'})
-                st.plotly_chart(fig_esp_rev, width='stretch')
+                st.plotly_chart(fig_esp_rev)
 
 with tab2:
     failed_df = failed_reasons_analysis(filtered_df)
@@ -474,7 +504,7 @@ with tab2:
         # Create chart with original numeric values
         fig_fail = px.bar(failed_df, x='Reason', y='Count', title="Failed Reasons Breakdown",
                           color_discrete_sequence=[COLORS['danger']])
-        render_chart(fig_fail, failed_df, key="channels_failed_reasons", ai_label="Failed Reasons Breakdown", width='stretch')
+        render_chart(fig_fail, failed_df, key="channels_failed_reasons", ai_label="Failed Reasons Breakdown")
 
         # Drill-down: Failed reasons by channel
         st.subheader("Failed Reasons by Channel")
@@ -490,6 +520,6 @@ with tab2:
             fig_fail_chan = px.bar(failed_melt, x='Channel', y='Count', color='Reason',
                                   title="Failed Reasons by Channel",
                                   color_discrete_sequence=COLOR_SEQUENCE)
-            render_chart(fig_fail_chan, failed_melt, key="channels_failed_by_channel", ai_label="Failed Reasons by Channel", width='stretch')
+            render_chart(fig_fail_chan, failed_melt, key="channels_failed_by_channel", ai_label="Failed Reasons by Channel")
     else:
         st.write("No failed reasons data available.")

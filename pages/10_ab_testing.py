@@ -38,6 +38,6 @@ if not ab_df.empty:
     render_table(ab_df, key="ab_testing_results", column_config=cc)
     fig_ab = px.bar(ab_df, x='Campaign Name', y='Lift', title="Conversion Lift by Campaign",
                     color='Lift', color_continuous_scale=[[0, COLORS['danger']], [0.5, COLORS['warning']], [1, COLORS['success']]])
-    render_chart(fig_ab, ab_df, key="ab_testing_chart", ai_label="Conversion Lift by Campaign", width='stretch')
+    render_chart(fig_ab, ab_df, key="ab_testing_chart", ai_label="Conversion Lift by Campaign")
 else:
     st.write("No A/B testing data available (no control groups).")

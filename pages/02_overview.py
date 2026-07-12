@@ -51,6 +51,12 @@ def _cached_channel_performance(filtered_df_json, channel_costs):
 
     channel_data = filtered_df.groupby('Channel').agg(agg_dict).reset_index()
 
+    # Safety: fill NaN with 0 for attribution-aware columns
+    if 'Selected Conversions' in channel_data.columns:
+        channel_data['Selected Conversions'] = channel_data['Selected Conversions'].fillna(0)
+    if 'Selected Revenue (SAR)' in channel_data.columns:
+        channel_data['Selected Revenue (SAR)'] = channel_data['Selected Revenue (SAR)'].fillna(0)
+
     # Calculate rates for each channel from raw counts (not pre-calculated rates)
     # Using raw metrics ensures correct calculation at channel level
     channel_data['Delivery Rate'] = np.where(
@@ -70,14 +76,13 @@ def _cached_channel_performance(filtered_df_json, channel_costs):
     if 'Unique Click-Through Conversions' in channel_data.columns:
         channel_data['Conversion Rate'] = np.where(
             channel_data['Unique Clicks'] > 0,
-            (channel_data['Unique Click-Through Conversions'] / channel_data['Unique Clicks'] * 100),
+            np.minimum(channel_data['Unique Click-Through Conversions'] / channel_data['Unique Clicks'] * 100, 100.0),
             0
         ).round(2)
     else:
-        # Fallback to total conversions if click-through not available
         channel_data['Conversion Rate'] = np.where(
             channel_data['Unique Clicks'] > 0,
-            (channel_data['Unique Conversions'] / channel_data['Unique Clicks'] * 100),
+            np.minimum(channel_data['Unique Conversions'] / channel_data['Unique Clicks'] * 100, 100.0),
             0
         ).round(2)
 
@@ -546,7 +551,7 @@ if active_stages:
             height=350,
         )
         funnel_df = pd.DataFrame({'Stage': list(stages), 'Value': list(values)})
-        render_chart(fig_funnel, funnel_df, key="overview_funnel", ai_label="Aggregate Conversion Funnel", width='stretch')
+        render_chart(fig_funnel, funnel_df, key="overview_funnel", ai_label="Aggregate Conversion Funnel")
 
     with funnel_col2:
         st.markdown("**Stage-to-Stage Conversion Rates**")
@@ -760,7 +765,7 @@ if 'Channel' in filtered_df.columns:
             renamed = attribution_rename.get(orig_name, orig_name)
             overview_cc_renamed[renamed] = cfg
 
-        st.dataframe(channel_display, column_config=overview_cc_renamed, width='stretch', hide_index=True)
+        st.dataframe(channel_display, column_config=overview_cc_renamed, hide_index=True)
 
         # Channel performance charts
         _, explain_col = st.columns([8, 1])
@@ -782,7 +787,7 @@ if 'Channel' in filtered_df.columns:
                 labels={revenue_col: rev_display_name}
             )
             fig_channel_revenue.update_layout(showlegend=False)
-            st.plotly_chart(fig_channel_revenue, width='stretch')
+            st.plotly_chart(fig_channel_revenue)
 
         with col2:
             # Conversions by channel - use consistent channel colors
@@ -797,7 +802,7 @@ if 'Channel' in filtered_df.columns:
                 labels={'Unique Conversions': conv_display_name}
             )
             fig_channel_conv.update_layout(showlegend=False)
-            st.plotly_chart(fig_channel_conv, width='stretch')
+            st.plotly_chart(fig_channel_conv)
         
         # Channel insights
         st.markdown("#### 💡 Channel Insights")
@@ -882,7 +887,7 @@ if 'Channel' in filtered_df.columns and 'Revenue (SAR)' in filtered_df.columns:
             hovertemplate='<b>%{label}</b><br>' + rev_display_name + ': %{value:,.0f} SAR<br>%{percentParent:.1%} of parent<extra></extra>',
         )
         fig_treemap.update_layout(margin=dict(l=10, r=10, t=50, b=10))
-        render_chart(fig_treemap, treemap_df, key="revenue_treemap", ai_label="Revenue by Channel & Campaign", width='stretch')
+        render_chart(fig_treemap, treemap_df, key="revenue_treemap", ai_label="Revenue by Channel & Campaign")
 
 # === CHANNEL MIX OVER TIME: Stacked area ===
 st.markdown("---")
@@ -903,14 +908,14 @@ if 'Channel' in filtered_df.columns and 'Reporting Period Start Date' in filtere
             labels={'Revenue': f'{rev_display_name} (SAR)', 'Week': ''},
         )
         fig_area.update_layout(hovermode='x unified')
-        render_chart(fig_area, time_channel, key="channel_mix_over_time", ai_label="Weekly Channel Mix", width='stretch')
+        render_chart(fig_area, time_channel, key="channel_mix_over_time", ai_label="Weekly Channel Mix")
 
 # Failed reasons
 failed_df = _cached_failed_reasons(filtered_df.to_json())
 if not failed_df.empty:
     st.subheader("Failed Reasons Breakdown")
     fig_fail = px.pie(failed_df, names='Reason', values='Count', color_discrete_sequence=COLOR_SEQUENCE)
-    render_chart(fig_fail, failed_df, key="overview_failed_reasons", ai_label="Failed Reasons Breakdown", width='stretch')
+    render_chart(fig_fail, failed_df, key="overview_failed_reasons", ai_label="Failed Reasons Breakdown")
 
 # Data Preview
 with st.expander("View Filtered Data"):

@@ -110,8 +110,21 @@ def channel_analysis(df):
         agg_dict['Click-Through Revenue (SAR)'] = 'sum'
     if 'Impression-Through Revenue (SAR)' in df.columns:
         agg_dict['Impression-Through Revenue (SAR)'] = 'sum'
+    if 'Unique Click-Through Conversions' in df.columns:
+        agg_dict['Unique Click-Through Conversions'] = 'sum'
 
     result = df.groupby('Channel').agg(agg_dict).reset_index()
+
+    # Safety: fill NaN with 0 for attribution-aware columns. When the user selects
+    # Click-Through or Impression-Through conversion attribution and the source CSV
+    # has those columns (but with only 0/NaN values), groupby().sum() can produce NaN
+    # for per-channel rows, which ag-Grid's JS formatter renders as blank cells while
+    # the Total row (computed via the renamed display column's .sum()) still shows
+    # a value because pandas .sum(skipna=True) handles NaN differently.
+    if 'Selected Conversions' in result.columns:
+        result['Selected Conversions'] = result['Selected Conversions'].fillna(0)
+    if 'Selected Revenue (SAR)' in result.columns:
+        result['Selected Revenue (SAR)'] = result['Selected Revenue (SAR)'].fillna(0)
 
     # Calculate AOV using selected metrics
     if 'Selected Revenue (SAR)' in result.columns and 'Selected Conversions' in result.columns:
@@ -191,7 +204,13 @@ def esp_analysis(df):
     if 'Impression-Through Revenue (SAR)' in df_filtered.columns:
         agg_dict['Impression-Through Revenue (SAR)'] = 'sum'
 
-    return df_filtered.groupby('ESP/SSP/WSP/RSP name').agg(agg_dict).reset_index()
+    result = df_filtered.groupby('ESP/SSP/WSP/RSP name').agg(agg_dict).reset_index()
+    # Safety: fill NaN with 0 for attribution-aware columns
+    if 'Selected Conversions' in result.columns:
+        result['Selected Conversions'] = result['Selected Conversions'].fillna(0)
+    if 'Selected Revenue (SAR)' in result.columns:
+        result['Selected Revenue (SAR)'] = result['Selected Revenue (SAR)'].fillna(0)
+    return result
 
 
 def ab_testing_analysis(df):

@@ -170,7 +170,7 @@ pg = st.navigation(_pages)
 # any other widget interaction (filters, etc.) does the same thing implicitly.
 with st.sidebar:
     st.caption(f"{'🌙 Dark' if _is_dark else '☀️ Light'} theme — switch via the ⋮ menu (top right)")
-    if st.button("🔄 Sync charts to theme", help="Refresh charts/styling to match your current theme selection", use_container_width=True):
+    if st.button("🔄 Sync charts to theme", help="Refresh charts/styling to match your current theme selection"):
         st.rerun()
     st.markdown("---")
 
@@ -270,6 +270,11 @@ if uploaded_file is None:
         uploaded_file = _test_csv_path
 
 if uploaded_file is not None:
+    # DEBUG: one-time cache clear to pick up attribution NaN fixes (remove after confirmed)
+    if not st.session_state.get('_cache_cleared_attr_fix'):
+        st.cache_data.clear()
+        st.session_state['_cache_cleared_attr_fix'] = True
+
     # Channel cost overrides — different clients negotiate different per-channel
     # rates, so the hardcoded config.CHANNEL_COSTS defaults won't fit everyone.
     # Collected before cleaning so Campaign Cost/ROAS/Cost-Per-* reflect them.

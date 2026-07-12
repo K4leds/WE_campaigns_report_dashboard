@@ -263,7 +263,7 @@ if 'Channel' in filtered_df.columns and not filtered_df.empty:
     )
     fig_rps.update_traces(textposition='outside')
     fig_rps.update_layout(showlegend=False)
-    render_chart(fig_rps, chan_eff, key="marketing_actions_rps", ai_label="Revenue Per Send by Channel", width='stretch')
+    render_chart(fig_rps, chan_eff, key="marketing_actions_rps", ai_label="Revenue Per Send by Channel")
 
     # Detailed table
     chan_eff_display = chan_eff[['Channel', 'Total_Sent', 'Total_Conversions', 'Total_Revenue', 'Revenue Per Send', 'Revenue Per Click', 'CTR (%)', 'CVR (%)', 'AOV (SAR)']].copy()
@@ -322,7 +322,7 @@ if 'Type of Campaign' in filtered_df.columns and not filtered_df.empty:
         barmode='group', title="Revenue & Conversions: Journey vs One-Time",
         color_discrete_sequence=[COLORS['primary'], COLORS['success']]
     )
-    render_chart(fig_type, type_comparison, key="marketing_actions_type", ai_label="Journey vs One-Time Campaign Effectiveness", width='stretch')
+    render_chart(fig_type, type_comparison, key="marketing_actions_type", ai_label="Journey vs One-Time Campaign Effectiveness")
 
     # Insight callout
     if len(type_comparison) >= 2:
@@ -429,7 +429,7 @@ if date_col in filtered_df.columns and not filtered_df.empty:
         yaxis2=dict(title="CVR %", overlaying='y', side='right', rangemode='tozero'),
         barmode='group'
     )
-    render_chart(fig_dow, dow_agg, key="marketing_actions_dow", ai_label="Revenue & Conversion Rate by Day of Week", width='stretch')
+    render_chart(fig_dow, dow_agg, key="marketing_actions_dow", ai_label="Revenue & Conversion Rate by Day of Week")
 
     # Highlight best/worst days
     best_day = dow_agg.loc[dow_agg['Avg Revenue/Day'].idxmax()]
@@ -468,7 +468,7 @@ if 'Campaign Tags' in filtered_df.columns and not filtered_df.empty:
             text=tag_perf.head(15)['Revenue'].apply(lambda v: f"{v:,.0f}")
         )
         fig_tags.update_traces(textposition='outside')
-        render_chart(fig_tags, tag_perf.head(15), key="marketing_actions_tags", ai_label="Top Tags by Revenue", width='stretch')
+        render_chart(fig_tags, tag_perf.head(15), key="marketing_actions_tags", ai_label="Top Tags by Revenue")
 
         # Table
         render_table(tag_perf.head(20), key="tag_perf_top20")
@@ -535,7 +535,7 @@ if 'Segment Name' in filtered_df.columns and not filtered_df.empty:
         )
         fig_seg.update_traces(textposition='outside')
         fig_seg.update_layout(xaxis_tickangle=-45)
-        render_chart(fig_seg, seg_perf.head(15), key="marketing_actions_seg", ai_label="Top Segments by Revenue", width='stretch')
+        render_chart(fig_seg, seg_perf.head(15), key="marketing_actions_seg", ai_label="Top Segments by Revenue")
 
         # Summary insight
         if len(seg_perf) >= 2:
@@ -603,7 +603,7 @@ if date_col_m in filtered_df.columns and not filtered_df.empty:
         yaxis2=dict(title="Conversions", overlaying='y', side='right', rangemode='tozero'),
         barmode='group'
     )
-    render_chart(fig_monthly, monthly_agg, key="marketing_actions_monthly", ai_label="Monthly Revenue & Conversions", width='stretch')
+    render_chart(fig_monthly, monthly_agg, key="marketing_actions_monthly", ai_label="Monthly Revenue & Conversions")
 
     # --- Efficiency metrics trend ---
     fig_eff = go.Figure()
@@ -627,7 +627,7 @@ if date_col_m in filtered_df.columns and not filtered_df.empty:
         yaxis=dict(title="Rev/Send (SAR)"),
         yaxis2=dict(title="Rate (%)", overlaying='y', side='right', rangemode='tozero'),
     )
-    render_chart(fig_eff, monthly_agg, key="marketing_actions_eff", ai_label="Monthly Efficiency Metrics", width='stretch')
+    render_chart(fig_eff, monthly_agg, key="marketing_actions_eff", ai_label="Monthly Efficiency Metrics")
 
     # --- Channel breakdown by month ---
     if 'Channel' in filtered_df.columns:
@@ -641,7 +641,7 @@ if date_col_m in filtered_df.columns and not filtered_df.empty:
             barmode='stack'
         )
         fig_chan_monthly.update_layout(xaxis_title="Month", yaxis_title="Revenue (SAR)")
-        render_chart(fig_chan_monthly, monthly_chan, key="marketing_actions_chan_monthly", ai_label="Revenue by Channel per Month", width='stretch')
+        render_chart(fig_chan_monthly, monthly_chan, key="marketing_actions_chan_monthly", ai_label="Revenue by Channel per Month")
 
     # --- MoM growth table ---
     with st.expander("View Monthly Details Table"):

@@ -477,7 +477,7 @@ if journey_health_data:
 
                 # Display as a nice table
                 contrib_df = pd.DataFrame(contribution_data)
-                st.dataframe(contrib_df, width='stretch')
+                st.dataframe(contrib_df)
 
                 # Show final calculation
                 st.markdown(f"**🎯 Total Weighted Score: {total_contribution:.1f}/100**")
@@ -641,7 +641,7 @@ if waterfall_journey and str(waterfall_journey) != 'nan':
             showlegend=False,
         )
         wf_df = pd.DataFrame({'Step': wf_labels, 'Value (SAR)': wf_values, 'Measure': wf_measures})
-        render_chart(fig_waterfall, wf_df, key="journey_waterfall", ai_label=f"Revenue Attribution Breakdown: {waterfall_journey}", width='stretch')
+        render_chart(fig_waterfall, wf_df, key="journey_waterfall", ai_label=f"Revenue Attribution Breakdown: {waterfall_journey}")
 
         # Attribution breakdown table
         st.subheader("📊 Attribution Breakdown")
@@ -853,7 +853,7 @@ if st.button("📊 Generate Cohort Analysis", key='run_cohort'):
                                    title=f"Revenue Growth Rate by {cohort_period.title()}")
                 fig_growth.update_xaxes(title=f"{cohort_period.title()} Period")
                 fig_growth.update_yaxes(title="Growth Rate (%)")
-                render_chart(fig_growth, cohort_result, key="cohort_growth", ai_label=f"Revenue Growth Rate by {cohort_period.title()}", width='stretch')
+                render_chart(fig_growth, cohort_result, key="cohort_growth", ai_label=f"Revenue Growth Rate by {cohort_period.title()}")
         
         else:
             st.warning("Insufficient data for cohort analysis")
@@ -894,7 +894,7 @@ render_table(top_jour.rename(columns=attribution_rename), key="top_journeys", co
 # Create chart with original numeric values
 fig2 = px.bar(top_jour, x='Journey Name', y=jour_metric, title=f"Top Journeys by {_attribution_display(jour_metric)}",
               color_discrete_sequence=COLOR_SEQUENCE)
-render_chart(fig2, top_jour, key="top_journeys_chart", ai_label=f"Top Journeys by {_attribution_display(jour_metric)}", width='stretch')
+render_chart(fig2, top_jour, key="top_journeys_chart", ai_label=f"Top Journeys by {_attribution_display(jour_metric)}")
 
 # Journey Drill-Down
 st.subheader("Journey Drill-Down")
@@ -950,7 +950,7 @@ if selected_journeys:
                            color='Channel', color_discrete_map=CHANNEL_COLORS,
                            labels={'Unique Conversions': conv_display_name})
     fig_chan_jour.update_layout(showlegend=False)
-    render_chart(fig_chan_jour, chan_perf_jour, key="jour_drilldown_channel", ai_label="Channel Performance for Selected Journeys", width='stretch')
+    render_chart(fig_chan_jour, chan_perf_jour, key="jour_drilldown_channel", ai_label="Channel Performance for Selected Journeys")
     
     # Time Series for Selected Journeys
     st.subheader("Time Series Performance")
@@ -972,7 +972,7 @@ if selected_journeys:
                                    title=f"{jour_metric} Over Time for Selected Journeys",
                                    color_discrete_sequence=COLOR_SEQUENCE)
         fig_ts_jour.update_traces(line_width=2.5)
-        render_chart(fig_ts_jour, ts_jour, key="jour_drilldown_ts", ai_label=f"{jour_metric} Over Time for Selected Journeys", width='stretch')
+        render_chart(fig_ts_jour, ts_jour, key="jour_drilldown_ts", ai_label=f"{jour_metric} Over Time for Selected Journeys")
         
         # Journey Performance Insights
         st.subheader("📊 Journey Performance Insights")
@@ -1155,7 +1155,7 @@ if selected_journeys:
     attr_df_jour = pd.DataFrame(list(attr_jour.items()), columns=['Source', 'Conversions'])
     fig_attr_jour = px.pie(attr_df_jour, names='Source', values='Conversions', title="Attribution for Selected Journeys",
                             color_discrete_sequence=COLOR_SEQUENCE)
-    render_chart(fig_attr_jour, attr_df_jour, key="jour_drilldown_attr", ai_label="Attribution for Selected Journeys", width='stretch')
+    render_chart(fig_attr_jour, attr_df_jour, key="jour_drilldown_attr", ai_label="Attribution for Selected Journeys")
 
     # Failed Reasons for Selected Journeys
     st.subheader("Failed Reasons")
@@ -1164,7 +1164,7 @@ if selected_journeys:
         failed_jour = jour_details[failed_cols].sum().reset_index().rename(columns={'index': 'Reason', 0: 'Count'})
         fig_fail_jour = px.bar(failed_jour, x='Reason', y='Count', title="Failed Reasons for Selected Journeys",
                                color_discrete_sequence=[COLORS['danger']])
-        render_chart(fig_fail_jour, failed_jour, key="jour_drilldown_failed", ai_label="Failed Reasons for Selected Journeys", width='stretch')
+        render_chart(fig_fail_jour, failed_jour, key="jour_drilldown_failed", ai_label="Failed Reasons for Selected Journeys")
 
 # 🚨 Stopped Journey Analysis with Revenue Loss Estimation
 st.markdown("---")

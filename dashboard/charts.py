@@ -84,7 +84,7 @@ def render_health_dashboard(health_df: pd.DataFrame, entity_col: str, entity_lab
     fig_health_dist.add_vline(x=health_df['Health Score'].mean(),
                                line_dash="dash", line_color=COLORS['danger'],
                                annotation_text=f"Average: {health_df['Health Score'].mean():.1f}")
-    st.plotly_chart(fig_health_dist, width='stretch')
+    st.plotly_chart(fig_health_dist)
 
     # Complete Health Dashboard Table
     st.subheader(f"📋 Complete {entity_label} Health Report")
@@ -174,6 +174,6 @@ def render_health_dashboard(health_df: pd.DataFrame, entity_col: str, entity_lab
             width=600, height=500,
             margin=dict(l=80, r=80, t=80, b=80),
         )
-        st.plotly_chart(fig_radar, width='stretch')
+        st.plotly_chart(fig_radar)
 
     return selected_name

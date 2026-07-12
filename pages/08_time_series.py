@@ -53,7 +53,7 @@ with tab1:
         with explain_col:
             render_ai_explain(ts_df, key=f"time_series_{ts_metric}", ai_label=f"{_attribution_display(ts_metric)} over time",
                                help_text="Explain this trend with AI")
-        st.plotly_chart(fig_ts, width='stretch')
+        st.plotly_chart(fig_ts)
     else:
         st.write("No time series data available.")
 
@@ -74,7 +74,7 @@ with tab2:
                              zmin=-1, zmax=1)
         fig_corr.update_layout(width=900, height=700)
         corr_matrix_df = corr.reset_index().rename(columns={'index': 'Metric'})
-        render_chart(fig_corr, corr_matrix_df, key="correlation_matrix", ai_label="Key Metrics Correlation Matrix", width='stretch')
+        render_chart(fig_corr, corr_matrix_df, key="correlation_matrix", ai_label="Key Metrics Correlation Matrix")
 
         # Highlight strongest correlations
         st.subheader("Strongest Correlations")

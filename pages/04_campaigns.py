@@ -336,7 +336,7 @@ render_table(renamed_display, key="top_camp", column_config=top_camp_cc if top_c
 # Create chart with original numeric values
 fig = px.bar(top_camp, x='Campaign Name', y=camp_metric, title=f"Top Campaigns by {_attribution_display(camp_metric)}",
              color_discrete_sequence=COLOR_SEQUENCE)
-render_chart(fig, top_camp, key="top_campaigns_chart", ai_label=f"Top Campaigns by {_attribution_display(camp_metric)}", width='stretch')
+render_chart(fig, top_camp, key="top_campaigns_chart", ai_label=f"Top Campaigns by {_attribution_display(camp_metric)}")
 
 # Campaign Type Breakdown (Journey vs One-Time)
 if 'Type of Campaign' in filtered_df.columns:
@@ -409,7 +409,7 @@ if 'Type of Campaign' in filtered_df.columns:
                                   color_discrete_sequence=COLOR_SEQUENCE,
                                   labels={rev_col_for_type: rev_display_name})
             fig_type_rev.update_layout(showlegend=False)
-            st.plotly_chart(fig_type_rev, width='stretch')
+            st.plotly_chart(fig_type_rev)
     with type_col2:
         conv_display_name = get_selected_conversion_display_name(conversion_attribution)
         fig_type_conv = px.bar(type_chart_data, x='Type of Campaign', y='Unique Conversions',
@@ -417,7 +417,7 @@ if 'Type of Campaign' in filtered_df.columns:
                                color_discrete_sequence=COLOR_SEQUENCE,
                                labels={'Unique Conversions': conv_display_name})
         fig_type_conv.update_layout(showlegend=False)
-        st.plotly_chart(fig_type_conv, width='stretch')
+        st.plotly_chart(fig_type_conv)
 
 # One-Time Campaigns Overview
 if 'Type of Campaign' in filtered_df.columns:
@@ -461,11 +461,11 @@ if 'Type of Campaign' in filtered_df.columns:
                 sample_data = onetime_df[onetime_df['Campaign Name'] == sample_campaign][['Campaign Name', 'Day', 'Sent', 'Delivered', 'Revenue (SAR)'] +
                                                                                            ([col for col in ['Impression-Through Revenue (SAR)', 'Click-Through Revenue (SAR)', 'Selected Revenue (SAR)'] if col in onetime_df.columns])]
                 st.write(f"Sample campaign: **{sample_campaign}**")
-                st.dataframe(sample_data, width='stretch')
+                st.dataframe(sample_data)
 
                 st.write("**After aggregation:**")
                 sample_agg = onetime_summary[onetime_summary['Campaign Name'] == sample_campaign]
-                st.dataframe(sample_agg, width='stretch')
+                st.dataframe(sample_agg)
 
                 st.write(f"**Number of days in raw data:** {len(sample_data)}")
                 st.write(f"**Total campaigns in dataset:** {onetime_df['Campaign Name'].nunique()}")
@@ -622,7 +622,7 @@ if 'Type of Campaign' in filtered_df.columns:
                     yaxis_title="Number of Campaigns",
                     xaxis=dict(type='category')
                 )
-                render_chart(fig_monthly, chart_data, key="onetime_monthly_trend", ai_label="One-Time Campaigns per Month", width='stretch')
+                render_chart(fig_monthly, chart_data, key="onetime_monthly_trend", ai_label="One-Time Campaigns per Month")
 
 # Campaign Drill-Down
 st.subheader("Campaign Drill-Down")
@@ -694,7 +694,7 @@ if selected_campaigns:
                       color='Channel', color_discrete_map=CHANNEL_COLORS,
                       labels={'Unique Conversions': conv_display_name})
     fig_chan.update_layout(showlegend=False)
-    render_chart(fig_chan, chan_perf, key="camp_drilldown_channel", ai_label="Channel Performance for Selected Campaigns", width='stretch')
+    render_chart(fig_chan, chan_perf, key="camp_drilldown_channel", ai_label="Channel Performance for Selected Campaigns")
 
     # Time Series for Selected Campaigns
     st.subheader("Time Series Performance")
@@ -704,7 +704,7 @@ if selected_campaigns:
                               title=f"{camp_metric} Over Time for Selected Campaigns",
                               color_discrete_sequence=COLOR_SEQUENCE)
         fig_ts_camp.update_traces(line_width=2.5)
-        render_chart(fig_ts_camp, ts_camp, key="camp_drilldown_ts", ai_label=f"{camp_metric} Over Time for Selected Campaigns", width='stretch')
+        render_chart(fig_ts_camp, ts_camp, key="camp_drilldown_ts", ai_label=f"{camp_metric} Over Time for Selected Campaigns")
 
     # Conversion Attribution
     st.subheader("Conversion Attribution")
@@ -716,7 +716,7 @@ if selected_campaigns:
     attr_df_camp = pd.DataFrame(list(attr_camp.items()), columns=['Source', 'Conversions'])
     fig_attr_camp = px.pie(attr_df_camp, names='Source', values='Conversions', title="Attribution for Selected Campaigns",
                             color_discrete_sequence=COLOR_SEQUENCE)
-    render_chart(fig_attr_camp, attr_df_camp, key="camp_drilldown_attr", ai_label="Attribution for Selected Campaigns", width='stretch')
+    render_chart(fig_attr_camp, attr_df_camp, key="camp_drilldown_attr", ai_label="Attribution for Selected Campaigns")
 
     # Failed Reasons for Selected Campaigns
     st.subheader("Failed Reasons")
@@ -725,7 +725,7 @@ if selected_campaigns:
         failed_camp = camp_details[failed_cols].sum().reset_index().rename(columns={'index': 'Reason', 0: 'Count'})
         fig_fail_camp = px.bar(failed_camp, x='Reason', y='Count', title="Failed Reasons for Selected Campaigns",
                                color_discrete_sequence=[COLORS['danger']])
-        render_chart(fig_fail_camp, failed_camp, key="camp_drilldown_failed", ai_label="Failed Reasons for Selected Campaigns", width='stretch')
+        render_chart(fig_fail_camp, failed_camp, key="camp_drilldown_failed", ai_label="Failed Reasons for Selected Campaigns")
 
 # Campaign Health Score Analysis
 st.subheader("🏥 Campaign Health Dashboard")
@@ -807,7 +807,7 @@ if breakdown_campaign and str(breakdown_campaign) != 'nan':
     # Display as a nice table
     if contribution_data:
         contrib_df = pd.DataFrame(contribution_data)
-        st.dataframe(contrib_df, width='stretch')
+        st.dataframe(contrib_df)
 
         # Show final calculation
         st.markdown(f"**🎯 Total Weighted Score: {total_contribution:.1f}/100**")
@@ -883,7 +883,7 @@ if breakdown_campaign and str(breakdown_campaign) != 'nan':
         'Difference': st.column_config.NumberColumn(label='Difference', format='%+.2f'),
     }
 
-    st.dataframe(comparison_df, width='stretch', column_config=perf_cc)
+    st.dataframe(comparison_df, column_config=perf_cc)
 
     # Performance Summary
     st.subheader("📋 Performance Summary")

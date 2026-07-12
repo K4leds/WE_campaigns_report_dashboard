@@ -34,14 +34,19 @@ def apply_attribution(df, revenue_attribution, conversion_attribution):
     # Apply conversion attribution
     if 'Unique Conversions' in df.columns:
         if conversion_attribution == "Click-Through" and 'Unique Click-Through Conversions' in df.columns:
-            df['Selected Conversions'] = df['Unique Click-Through Conversions']
+            df['Selected Conversions'] = df['Unique Click-Through Conversions'].fillna(0)
         elif conversion_attribution == "Impression-Through" and 'Unique Impression-Through Conversions' in df.columns:
-            df['Selected Conversions'] = df['Unique Impression-Through Conversions']
+            df['Selected Conversions'] = df['Unique Impression-Through Conversions'].fillna(0)
         else:
-            df['Selected Conversions'] = df['Unique Conversions']
+            df['Selected Conversions'] = df['Unique Conversions'].fillna(0)
     else:
         df['Selected Conversions'] = 0
-    
+
+    # Guard: ensure Selected columns are always numeric (never NaN) at the source.
+    for _col in ['Selected Revenue (SAR)', 'Selected Conversions']:
+        if _col in df.columns:
+            df[_col] = pd.to_numeric(df[_col], errors='coerce').fillna(0)
+
     return df
 
 

@@ -35,4 +35,4 @@ render_table(attr_df_display, key="attribution", column_config=col_config)
 # Create chart with original numeric values
 fig_attr = px.pie(attr_df, names='Source', values='Conversions', title="Conversions by Attribution Source",
                   color_discrete_sequence=COLOR_SEQUENCE)
-render_chart(fig_attr, attr_df, key="attribution_chart", ai_label="Conversions by Attribution Source", width='stretch')
+render_chart(fig_attr, attr_df, key="attribution_chart", ai_label="Conversions by Attribution Source")

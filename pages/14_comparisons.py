@@ -283,7 +283,7 @@ if comparison_result:
             })
 
     comparison_df = pd.DataFrame(comparison_data)
-    st.dataframe(comparison_df, width='stretch')
+    st.dataframe(comparison_df)
 
     # === VISUALIZATION ===
     st.markdown("---")
@@ -343,7 +343,7 @@ if comparison_result:
         viz_metric: [change_data['comparison'], change_data['current']],
         'Change %': [None, change_data['pct_change']],
     })
-    render_chart(fig_comparison, comparison_chart_df, key="period_comparison_chart", ai_label=f"{viz_metric} Comparison", width='stretch')
+    render_chart(fig_comparison, comparison_chart_df, key="period_comparison_chart", ai_label=f"{viz_metric} Comparison")
 
     # === CHANNEL-LEVEL COMPARISON ===
     if 'Channel' in comparison_result['current_data'].columns:
@@ -371,7 +371,7 @@ if comparison_result:
 
         # Display
         channel_display = channel_comparison[['Channel', 'Revenue Change %', 'Conversion Change %']].copy()
-        st.dataframe(channel_display, width='stretch')
+        st.dataframe(channel_display)
 
         # Channel comparison chart
         fig_channel = go.Figure()
@@ -390,7 +390,7 @@ if comparison_result:
             height=400
         )
 
-        render_chart(fig_channel, channel_comparison, key="channel_comparison_chart", ai_label="Revenue Change % by Channel", width='stretch')
+        render_chart(fig_channel, channel_comparison, key="channel_comparison_chart", ai_label="Revenue Change % by Channel")
 
     # === INSIGHTS & RECOMMENDATIONS ===
     st.markdown("---")
@@ -456,6 +456,6 @@ else:
 
         # Chart
         fig_comp = px.line(monthly_agg, x='Month', y='Revenue (SAR)', title="Revenue Over Months", markers=True)
-        render_chart(fig_comp, monthly_agg, key="comparisons_monthly_trend", ai_label="Revenue Over Months", width='stretch')
+        render_chart(fig_comp, monthly_agg, key="comparisons_monthly_trend", ai_label="Revenue Over Months")
     else:
         st.write("Not enough monthly data for trend analysis.")
