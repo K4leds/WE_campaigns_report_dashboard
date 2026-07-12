@@ -250,6 +250,17 @@ def _inject_global_styles():
             * {{
                 transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
             }}
+
+            /* ag-Grid: allow column headers to wrap across multiple lines
+               so long names like "Impression-Through Revenue (SAR)" stay
+               readable without forcing wide columns. Works together with
+               wrapHeaderText + autoHeaderHeight in components/table.py. */
+            .ag-header-cell-label .ag-header-cell-text {{
+                white-space: normal !important;
+                word-break: break-word;
+                line-height: 1.35;
+                overflow: hidden;
+            }}
         </style>
         """,
         unsafe_allow_html=True,

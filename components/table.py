@@ -232,7 +232,10 @@ def _build_grid_options(
                 comp_lookup[col] = shadow_col
 
     gb = GridOptionsBuilder.from_dataframe(display_df)
-    gb.configure_default_column(resizable=True, sortable=True, filter=True, minWidth=110)
+    gb.configure_default_column(
+        resizable=True, sortable=True, filter=True, minWidth=110,
+        wrapHeaderText=True,
+    )
 
     for col in df.columns:
         cfg = _column_config_to_aggrid(column_config.get(col))
@@ -289,6 +292,9 @@ def _build_grid_options(
     # (ag-Grid's own cell selection otherwise intercepts the mouse instead).
     grid_options_kwargs["enableCellTextSelection"] = True
     grid_options_kwargs["ensureDomOrder"] = True
+    # Multi-line headers: wrap long column names (e.g. "Impression-Through Revenue (SAR)")
+    # instead of requiring wide columns. ag-Grid computes header height automatically.
+    grid_options_kwargs["autoHeaderHeight"] = True
 
     if total_row is not None:
         pinned_row = {
