@@ -415,6 +415,13 @@ def render_table(
         height=height,
         allow_unsafe_jscode=True,
         key=key,
+        # Forces st_aggrid's JSON serialization path instead of its default pyarrow/Arrow
+        # IPC path. With this pandas/pyarrow version, string columns serialize as Arrow's
+        # LargeUtf8 type, which the frontend's bundled arrow-js decoder doesn't recognize
+        # ("Unrecognized type: LargeUtf8 (20)") -- the grid iframe loads, then silently
+        # renders nothing. st_aggrid's own auto-fallback only catches *Python-side* pyarrow
+        # errors, not this client-side decode failure, so it must be forced explicitly.
+        use_json_serialization=True,
         # update_mode=NO_UPDATE alone does nothing: st_aggrid's update_on defaults to
         # ["cellValueChanged", "selectionChanged", "filterChanged", "sortChanged"] and the
         # library only *adds* to that list for other update_mode values, never clears it for
