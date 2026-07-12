@@ -120,7 +120,18 @@ def _cached_one_time_campaigns(filtered_df_json, min_sent_threshold):
 
 @st.cache_data
 def _cached_monthly_one_time(filtered_df_json, min_sent_threshold):
-    """Cached monthly aggregation of one-time campaigns."""
+    """Cached monthly aggregation of one-time campaigns, by the calendar month the
+    activity/revenue actually happened (earned month).
+
+    WebEngage emits one row per campaign per day through the report end date, so a
+    campaign sent once keeps producing trailing all-zero rows in later months.
+    Summing metrics by each row's calendar month is what we want — revenue lands in
+    the month it was earned, and a campaign's send + later conversions naturally
+    split across the months they occurred. Those trailing all-zero rows add nothing
+    to the sums, but they WOULD inflate the campaign count, so Unique Campaigns only
+    counts campaigns with real activity (a send, delivery, conversion, or revenue)
+    that month.
+    """
     filtered_df = read_cached_json(filtered_df_json)
     if 'Type of Campaign' not in filtered_df.columns:
         return None
@@ -128,34 +139,38 @@ def _cached_monthly_one_time(filtered_df_json, min_sent_threshold):
     if onetime_df.empty:
         return None
 
-    # Extract month column (read_cached_json already restores Day/Reporting Period
-    # Start Date to real datetimes)
+    # Calendar month the row's activity occurred (read_cached_json already restores
+    # Day/Reporting Period Start Date to real datetimes).
     if 'Day' in onetime_df.columns:
-        onetime_df['Month'] = onetime_df['Day'].dt.to_period('M').dt.strftime('%Y-%m')
+        date_col = 'Day'
     elif 'Reporting Period Start Date' in onetime_df.columns:
-        onetime_df['Month'] = onetime_df['Reporting Period Start Date'].dt.to_period('M').dt.strftime('%Y-%m')
+        date_col = 'Reporting Period Start Date'
     else:
         return None
 
-    monthly_agg = {
-        'Campaign Name': 'nunique',
-        'Sent': 'sum',
-        'Delivered': 'sum',
-        'Unique Conversions': 'sum'
-    }
-    if 'Selected Revenue (SAR)' in onetime_df.columns:
-        monthly_agg['Selected Revenue (SAR)'] = 'sum'
-        rev_col_month = 'Selected Revenue (SAR)'
-    elif 'Revenue (SAR)' in onetime_df.columns:
-        monthly_agg['Revenue (SAR)'] = 'sum'
-        rev_col_month = 'Revenue (SAR)'
-    else:
-        rev_col_month = 'Revenue (SAR)'
+    onetime_df['Month'] = onetime_df[date_col].dt.to_period('M').dt.strftime('%Y-%m')
 
-    monthly_campaigns = onetime_df.groupby('Month').agg(monthly_agg).reset_index()
-    monthly_campaigns = monthly_campaigns.rename(columns={'Campaign Name': 'Unique Campaigns'})
+    # Revenue columns shown side by side (independent of the sidebar attribution
+    # toggle, so this table never looks "frozen" when only one model has revenue).
+    revenue_cols = [c for c in ['Revenue (SAR)', 'Impression-Through Revenue (SAR)',
+                                'Click-Through Revenue (SAR)'] if c in onetime_df.columns]
+    sum_cols = [c for c in ['Sent', 'Delivered', 'Unique Conversions'] if c in onetime_df.columns] + revenue_cols
+
+    # Metrics summed over every row (trailing all-zero rows contribute nothing).
+    monthly_campaigns = onetime_df.groupby('Month')[sum_cols].sum().reset_index()
+
+    # Count only campaigns that had real activity that month, so trailing
+    # all-zero rows don't inflate the Unique Campaigns figure.
+    active_rows = onetime_df[onetime_df[sum_cols].gt(0).any(axis=1)]
+    active_counts = (active_rows.groupby('Month')['Campaign Name'].nunique()
+                     .rename('Unique Campaigns'))
+    monthly_campaigns = monthly_campaigns.merge(active_counts, on='Month', how='left')
+    monthly_campaigns['Unique Campaigns'] = monthly_campaigns['Unique Campaigns'].fillna(0).astype(int)
+
+    ordered = ['Month', 'Unique Campaigns'] + sum_cols
+    monthly_campaigns = monthly_campaigns[[c for c in ordered if c in monthly_campaigns.columns]]
     monthly_campaigns = monthly_campaigns.sort_values('Month', ascending=False)
-    return monthly_campaigns, rev_col_month
+    return monthly_campaigns, revenue_cols
 
 
 @st.cache_data
@@ -579,29 +594,22 @@ if 'Type of Campaign' in filtered_df.columns:
             st.info("No date column available for monthly breakdown.")
 
         if 'Month' in onetime_df.columns:
-            # Group by month and count unique campaigns
-            # Use selected revenue if present
-            monthly_campaigns, rev_col_month = _cached_monthly_one_time(filtered_df.to_json(), min_sent_threshold)
+            # Roll each one-time campaign up to its SEND month (full lifetime
+            # totals credited to the month it was sent), and show all three
+            # revenue models side by side so this table is independent of the
+            # sidebar attribution toggle.
+            monthly_campaigns, revenue_cols = _cached_monthly_one_time(filtered_df.to_json(), min_sent_threshold)
 
             # Build column_config for monthly display
             monthly_cc = {}
             for col in ['Sent', 'Delivered', 'Unique Conversions', 'Unique Campaigns']:
                 if col in monthly_campaigns.columns:
                     monthly_cc[col] = st.column_config.NumberColumn(label=col, format='%.0f')
-            if rev_col_month in monthly_campaigns.columns:
-                monthly_cc[rev_col_month] = st.column_config.NumberColumn(label=rev_col_month, format='%.2f')
+            for col in revenue_cols:
+                if col in monthly_campaigns.columns:
+                    monthly_cc[col] = st.column_config.NumberColumn(label=col, format='%.2f')
 
-            # Rename columns to show actual attribution model
-            monthly_display = monthly_campaigns.copy()
-            monthly_display = monthly_display.rename(columns=attribution_rename)
-
-            # Map column_config keys to post-rename names
-            monthly_cc_renamed = {}
-            for col, cfg in monthly_cc.items():
-                renamed = attribution_rename.get(col, col)
-                monthly_cc_renamed[renamed] = cfg
-
-            render_table(monthly_display, key="monthly_onetime", column_config=monthly_cc_renamed)
+            render_table(monthly_campaigns, key="monthly_onetime", column_config=monthly_cc)
 
             # Optional chart
             if st.checkbox("Show Monthly Trend Chart", key='monthly_onetime_chart'):
