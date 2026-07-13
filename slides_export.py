@@ -237,8 +237,7 @@ def chart_journey_sankey(stages):
     return fig
 
 
-import pandas as pd
-from insights_engine import generate_executive_summary, generate_top_actions, format_sar
+from insights_engine import generate_executive_summary, generate_top_actions
 from analysis import (top_campaigns, get_top_journeys, channel_analysis,
                       time_series_analysis)
 import slides_narrative as sn

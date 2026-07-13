@@ -2,7 +2,7 @@
 llm_narrative: the model only phrases pre-computed facts and picks WebEngage
 features from a fixed list — it never produces a number or invents a feature.
 Every function degrades to a deterministic fallback when DeepSeek is unavailable."""
-from llm_narrative import _get_client, is_configured
+from llm_narrative import _get_client, is_configured, _DEEPSEEK_MODEL
 
 # Curated real WebEngage features. Keys are finding-type slugs; values are the
 # exact product names allowed to appear on a slide.
@@ -53,7 +53,7 @@ def narrate_summary(summary_facts: dict) -> str:
               f"Metrics: {metrics}\nPeriod: {summary_facts.get('period')}")
     try:
         resp = client.chat.completions.create(
-            model="deepseek-v4-flash", max_tokens=300,
+            model=_DEEPSEEK_MODEL, max_tokens=300,
             messages=[{"role": "system", "content": "You are a marketing analyst. No markdown."},
                       {"role": "user", "content": prompt}])
         return resp.choices[0].message.content.strip() or fallback
@@ -71,7 +71,7 @@ def narrate_findings(items: list, kind: str) -> list:
               f"Return one per line, no bullets, no markdown.\n{bullets}")
     try:
         resp = client.chat.completions.create(
-            model="deepseek-v4-flash", max_tokens=400,
+            model=_DEEPSEEK_MODEL, max_tokens=400,
             messages=[{"role": "system", "content": "Marketing analyst. Keep each line under 22 words."},
                       {"role": "user", "content": prompt}])
         lines = [l.strip("-• ").strip() for l in resp.choices[0].message.content.splitlines() if l.strip()]
@@ -92,7 +92,7 @@ def narrate_recommendation(action: dict) -> tuple:
               f"Finding: {action.get('title','')} — {action.get('action') or action.get('message','')}")
     try:
         resp = client.chat.completions.create(
-            model="deepseek-v4-flash", max_tokens=160,
+            model=_DEEPSEEK_MODEL, max_tokens=160,
             messages=[{"role": "system", "content": "Marketing analyst. One sentence, under 26 words."},
                       {"role": "user", "content": prompt}])
         return (resp.choices[0].message.content.strip() or fallback), feature
