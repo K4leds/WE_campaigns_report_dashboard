@@ -225,7 +225,16 @@ def ab_testing_analysis(df):
     """
     df_ab = df[df['Total in Control Group'] > 0].copy()
     if not df_ab.empty:
-        df_ab['Test Conversion Rate'] = df_ab['Unique Conversions'] / df_ab['Sent']
+        # One test per campaign: the daily export repeats each campaign as a row
+        # per day, and z-testing single days invites cherry-picking. Summing both
+        # arms' daily counts keeps the test and control denominators consistent.
+        df_ab = df_ab.groupby('Campaign Name', as_index=False).agg({
+            'Sent': 'sum',
+            'Unique Conversions': 'sum',
+            'Total in Control Group': 'sum',
+            'Unique Control Group Conversions': 'sum',
+        })
+        df_ab['Test Conversion Rate'] = np.where(df_ab['Sent'] > 0, df_ab['Unique Conversions'] / df_ab['Sent'], np.nan)
         df_ab['Control Conversion Rate'] = df_ab['Unique Control Group Conversions'] / df_ab['Total in Control Group']
         df_ab['Lift'] = np.where(df_ab['Control Conversion Rate'] > 0,
                                 (df_ab['Test Conversion Rate'] - df_ab['Control Conversion Rate']) / df_ab['Control Conversion Rate'],

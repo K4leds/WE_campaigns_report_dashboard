@@ -99,6 +99,7 @@ function(params) {
 
 # Colors the delta portion green/red to match the dashboard's existing
 # up/down convention (previously hand-coded per page as inline HTML spans).
+# Hexes mirror config.COLORS success/danger/muted/info.
 _DELTA_CELL_STYLE_JS = """
 function(params) {
     var compField = params.colDef.field + '__comp';
@@ -108,11 +109,11 @@ function(params) {
     }
     if (comp > 0) {
         var pct = ((params.value - comp) / comp) * 100;
-        if (pct > 0) return {color: '#28a745', fontWeight: '600'};
-        if (pct < 0) return {color: '#dc3545', fontWeight: '600'};
-        return {color: '#6c757d'};
+        if (pct > 0) return {color: '#22C55E', fontWeight: '600'};
+        if (pct < 0) return {color: '#EF4444', fontWeight: '600'};
+        return {color: '#6B7280'};
     } else if (params.value > 0) {
-        return {color: '#17a2b8', fontWeight: '600'};
+        return {color: '#6366F1', fontWeight: '600'};
     }
     return null;
 }
@@ -348,12 +349,17 @@ def render_ai_explain(df: pd.DataFrame, key: str, ai_label: str | None = None, h
 
 
 def render_chart(fig, df: pd.DataFrame, key: str, ai_label: str | None = None, **plotly_kwargs) -> None:
-    """st.plotly_chart() plus the same "✨ Explain" popover used by render_table(),
-    positioned above the chart. `df` must be the chart's *source* data (whatever
-    DataFrame was passed to px.bar/px.line/etc.), never the figure itself --
+    """st.plotly_chart() plus two popovers above the chart: "📋" showing the
+    chart's source data as a table (the Vega-editor-style "view data" affordance
+    Plotly lacks natively), and the same "✨ Explain" popover used by
+    render_table(). `df` must be the chart's *source* data (whatever DataFrame
+    was passed to px.bar/px.line/etc.), never the figure itself --
     explain_table_data() reasons over those already-computed numbers, not pixels.
     """
-    _, explain_col = st.columns([8, 1])
+    _, data_col, explain_col = st.columns([10, 1, 1])
+    with data_col:
+        with st.popover("📋", help="View the data behind this chart", type="tertiary"):
+            st.dataframe(df, hide_index=True)
     with explain_col:
         render_ai_explain(df, key, ai_label, help_text="Explain this chart with AI")
     st.plotly_chart(fig, **plotly_kwargs)

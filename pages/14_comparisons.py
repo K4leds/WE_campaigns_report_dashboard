@@ -371,7 +371,7 @@ if comparison_result:
 
         # Display
         channel_display = channel_comparison[['Channel', 'Revenue Change %', 'Conversion Change %']].copy()
-        st.dataframe(channel_display)
+        render_table(channel_display, key="comparison_channel_changes")
 
         # Channel comparison chart
         fig_channel = go.Figure()

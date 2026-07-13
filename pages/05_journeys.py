@@ -181,17 +181,9 @@ def analyze_individual_journey(journey_name, filtered_df):
                 percentile = (np.array(rpcs) <= raw_metrics['revenue']['revenue_per_conversion']).mean() * 100
                 percentiles['revenue'] = percentile
 
-        # Component score contributions
-        weights = {'delivery': 0.20, 'engagement': 0.25, 'conversion': 0.30, 'revenue': 0.25}
-        component_contributions = {}
-        for component, score in score_result['component_scores'].items():
-            weight = weights[component]
-            contribution = score * weight
-            component_contributions[component] = {
-                'score': score,
-                'weight': weight,
-                'contribution': contribution
-            }
+        # Component score contributions come straight from the scoring module,
+        # so the weights shown here can never drift from the weights used.
+        component_contributions = score_result.get('component_contributions') or {}
 
         # Summary insights
         worst_components = sorted(score_result['component_scores'].items(), key=lambda x: x[1])
@@ -299,19 +291,19 @@ with st.expander("📊 Scoring Methodology (Click to View)", expanded=False):
     - **No Fixed Benchmarks**: Scores reflect your actual portfolio distribution, not arbitrary industry numbers
 
     #### **Component Weights:**
-    - 🚀 **Conversion Performance**: 30% - Conversion rate (clicks to conversions)
-    - 🎯 **Engagement Performance**: 25% - Click-through rate (impressions to clicks)
-    - 💰 **Revenue Efficiency**: 25% - Revenue per conversion (log-scaled to reduce outlier impact)
-    - 📧 **Delivery Performance**: 20% - Delivery rate (sent to delivered)
+    - 💰 **Revenue Impact**: 35% - log-scaled total revenue, so big earners rank above tiny-but-efficient journeys
+    - 🚀 **Conversion Performance**: 25% - click-through conversions ÷ unique clicks (Empirical Bayes smoothed)
+    - 🎯 **Engagement Performance**: 20% - click-through rate, impressions → clicks (Empirical Bayes smoothed)
+    - 📧 **Delivery Performance**: 20% - delivery rate, sent → delivered
 
-    #### **Performance Tiers:**
-    - **Excellent (80-100)**: Top quartile - scale these journeys
-    - **Good (60-79)**: Above average - minor optimizations needed
-    - **Fair (40-59)**: Below average - moderate improvements required
-    - **Poor (0-39)**: Bottom quartile - immediate action required
+    #### **Performance Tiers (relative to this portfolio):**
+    - **Excellent (80-100)**: Top of this portfolio - scale these journeys
+    - **Good (60-79)**: Above portfolio average - minor optimizations needed
+    - **Fair (40-59)**: Below portfolio average - moderate improvements required
+    - **Poor (0-39)**: Bottom of this portfolio - immediate action required
 
     #### **Data Sufficiency:**
-    Journeys with fewer than 10 sends, 3 conversions, or 3 days of data are marked "Insufficient Data" to prevent unreliable scores.
+    Journeys with fewer than 100 sends, 5 conversions, or 3 days of data are marked "Insufficient Data" instead of being ranked.
     """)
 
 
@@ -483,7 +475,7 @@ if journey_health_data:
                 st.markdown(f"**🎯 Total Weighted Score: {total_contribution:.1f}/100**")
 
                 # Show the weights explanation
-                st.caption("💡 Weights: Conversion 30% (most critical for ROI) • Delivery 20% • Engagement 25% • Revenue 25%")
+                st.caption("💡 Weights: Revenue Impact 35% (business outcome first) • Conversion 25% • Engagement 20% • Delivery 20%")
 
             # Key Insights & Problem Areas
             if individual_analysis['insights']:
@@ -697,11 +689,22 @@ with st.spinner("Analyzing journey maturity and performance curves..."):
 
         with col1:
             st.subheader("📊 Journey Maturity Distribution")
+            # Bar in lifecycle order (Launch → Mature): the stages are an ordered
+            # scale, which a pie scrambles by slice size.
+            _stage_order = ["🆕 Launch (0-7 days)", "🌱 Growth (8-30 days)",
+                            "⚡ Active (31-90 days)", "🏆 Mature (90+ days)"]
             maturity_counts = lifecycle_df['maturity_stage'].value_counts()
-            fig_maturity = px.pie(values=maturity_counts.values, names=maturity_counts.index,
-                                title="Journeys by Maturity Stage")
+            maturity_counts = maturity_counts.reindex(
+                [s for s in _stage_order if s in maturity_counts.index]
+            ).fillna(0)
             maturity_df = maturity_counts.reset_index()
             maturity_df.columns = ['Maturity Stage', 'Count']
+            fig_maturity = px.bar(maturity_df, x='Maturity Stage', y='Count',
+                                  title="Journeys by Maturity Stage",
+                                  color_discrete_sequence=[COLORS['primary']],
+                                  text='Count')
+            fig_maturity.update_traces(textposition='outside')
+            fig_maturity.update_layout(xaxis_title=None)
             render_chart(fig_maturity, maturity_df, key="journey_maturity", ai_label="Journeys by Maturity Stage")
 
         with col2:
@@ -891,9 +894,12 @@ top_jour_cc = {
 }
 render_table(top_jour.rename(columns=attribution_rename), key="top_journeys", column_config=top_jour_cc)
 
-# Create chart with original numeric values
-fig2 = px.bar(top_jour, x='Journey Name', y=jour_metric, title=f"Top Journeys by {_attribution_display(jour_metric)}",
+# Horizontal ranked bars (largest on top): long journey names stay readable
+# on the y-axis instead of colliding as rotated x-ticks.
+fig2 = px.bar(top_jour.iloc[::-1], x=jour_metric, y='Journey Name', orientation='h',
+              title=f"Top Journeys by {_attribution_display(jour_metric)}",
               color_discrete_sequence=COLOR_SEQUENCE)
+fig2.update_layout(yaxis_title=None, height=max(400, 36 * len(top_jour)))
 render_chart(fig2, top_jour, key="top_journeys_chart", ai_label=f"Top Journeys by {_attribution_display(jour_metric)}")
 
 # Journey Drill-Down
@@ -1162,7 +1168,8 @@ if selected_journeys:
     failed_cols = [col for col in jour_details.columns if 'Failed' in col and col != 'Failed']
     if failed_cols:
         failed_jour = jour_details[failed_cols].sum().reset_index().rename(columns={'index': 'Reason', 0: 'Count'})
-        fig_fail_jour = px.bar(failed_jour, x='Reason', y='Count', title="Failed Reasons for Selected Journeys",
+        fig_fail_jour = px.bar(failed_jour.sort_values('Count'), x='Count', y='Reason', orientation='h',
+                               title="Failed Reasons for Selected Journeys",
                                color_discrete_sequence=[COLORS['danger']])
         render_chart(fig_fail_jour, failed_jour, key="jour_drilldown_failed", ai_label="Failed Reasons for Selected Journeys")
 

@@ -12,7 +12,7 @@ from analysis import failed_reasons_analysis
 from dashboard.comparisons_logic import (
     calculate_period_metrics, calculate_metric_changes, calculate_uplift_significance,
 )
-from components.table import render_ai_explain, render_chart
+from components.table import render_ai_explain, render_chart, render_table
 
 # ---------------------------------------------------------------------------
 # Cached data-computation helpers
@@ -258,14 +258,14 @@ if comparison_result:
     with col3:
         change_data = metric_changes['ctr']
         st.metric(
-            "Avg CTR", 
+            "CTR",
             f"{change_data['current']:.2%}",
             delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
             delta_color="normal" if change_data['pct_change'] >= 0 else "inverse"
         )
         change_data = metric_changes['conversion_rate']
         st.metric(
-            "Avg Conversion Rate", 
+            "Conversion Rate",
             f"{change_data['current']:.2%}",
             delta=f"{change_data['pct_change']:+.1f}% ({change_data['trend']})",
             delta_color="normal" if change_data['pct_change'] >= 0 else "inverse"
@@ -435,13 +435,19 @@ else:
         st.metric("Total Unique Clicks", f"{filtered_df['Unique Clicks'].sum():,.0f}")
         st.metric("Total Unique Impressions", f"{filtered_df['Unique Impressions'].sum():,.0f}")
     with col3:
-        st.metric("Avg CTR", f"{filtered_df['CTR'].mean():.2%}")
-        # Calculate conversion rate from raw data
+        # Aggregate CTR (clicks ÷ impressions), not the unweighted mean of per-row
+        # CTRs -- the mean gave 1.96% while the funnel next to it implies 14.5%.
+        total_impressions = filtered_df['Unique Impressions'].sum()
+        agg_ctr = (filtered_df['Unique Clicks'].sum() / total_impressions) if total_impressions > 0 else 0
+        st.metric("CTR", f"{agg_ctr:.2%}", help="Unique Clicks ÷ Unique Impressions, aggregated over the filtered period")
+        # Conversion rate: Click-Through Conversions ÷ Clicks (dashboard-wide definition;
+        # total-attribution conversions include non-clickers and can exceed 100% of clicks)
         total_clicks = filtered_df['Unique Clicks'].sum()
-        conv_col = 'Selected Conversions' if 'Selected Conversions' in filtered_df.columns else 'Unique Conversions'
-        total_conversions = filtered_df[conv_col].sum()
-        avg_conv_rate = (total_conversions / total_clicks) if total_clicks > 0 else 0
-        st.metric("Avg Conversion Rate", f"{avg_conv_rate:.2%}")
+        cvr_col = ('Unique Click-Through Conversions' if 'Unique Click-Through Conversions' in filtered_df.columns
+                   else 'Selected Conversions' if 'Selected Conversions' in filtered_df.columns
+                   else 'Unique Conversions')
+        avg_conv_rate = (filtered_df[cvr_col].sum() / total_clicks) if total_clicks > 0 else 0
+        st.metric("Conversion Rate", f"{avg_conv_rate:.2%}", help="Click-Through Conversions ÷ Unique Clicks")
         
         # Calculate Control Group Uplift (respects attribution selection)
         if 'Total in Control Group' in filtered_df.columns and 'Unique Control Group Conversions' in filtered_df.columns:
@@ -739,13 +745,10 @@ if 'Channel' in filtered_df.columns:
         st.markdown("#### Detailed Channel Metrics")
         st.caption("*Conversion Rate = Click-Through Conversions / Unique Clicks. Hover over abbreviated metrics for full names.*")
         
-        # Build column config for numeric columns
-        overview_cc = {}
-        for num_col in ['Sent', 'Delivered', 'Unique Clicks']:
-            overview_cc[num_col] = st.column_config.NumberColumn(label=num_col, format='%.0f')
-        if conv_col_for_calc in channel_data.columns:
-            overview_cc[conv_col_for_calc] = st.column_config.NumberColumn(label=conv_col_for_calc, format='%.0f')
-        overview_cc[revenue_col] = st.column_config.NumberColumn(label=revenue_col, format='%.2f')
+        # Counts and revenue fall through to render_table's default compact
+        # (K/M) formatting; CTR needs an explicit percent format because its
+        # name carries neither "Rate" nor "%".
+        overview_cc = {'CTR': st.column_config.NumberColumn(label='CTR', format='%.2f%%')}
 
         # Create display dataframe with original numeric values
         channel_display = channel_data.copy()
@@ -765,7 +768,8 @@ if 'Channel' in filtered_df.columns:
             renamed = attribution_rename.get(orig_name, orig_name)
             overview_cc_renamed[renamed] = cfg
 
-        st.dataframe(channel_display, column_config=overview_cc_renamed, hide_index=True)
+        render_table(channel_display, key="overview_channel_metrics",
+                     column_config=overview_cc_renamed, height=300)
 
         # Channel performance charts
         _, explain_col = st.columns([8, 1])
@@ -905,7 +909,7 @@ if 'Channel' in filtered_df.columns and 'Reporting Period Start Date' in filtere
             x='Week', y='Revenue', color='Channel',
             color_discrete_map=CHANNEL_COLORS,
             title=f'Weekly {rev_display_name}',
-            labels={'Revenue': f'{rev_display_name} (SAR)', 'Week': ''},
+            labels={'Revenue': rev_display_name, 'Week': ''},
         )
         fig_area.update_layout(hovermode='x unified')
         render_chart(fig_area, time_channel, key="channel_mix_over_time", ai_label="Weekly Channel Mix")
@@ -914,7 +918,10 @@ if 'Channel' in filtered_df.columns and 'Reporting Period Start Date' in filtere
 failed_df = _cached_failed_reasons(filtered_df.to_json())
 if not failed_df.empty:
     st.subheader("Failed Reasons Breakdown")
-    fig_fail = px.pie(failed_df, names='Reason', values='Count', color_discrete_sequence=COLOR_SEQUENCE)
+    # Horizontal bar (largest on top): magnitude comparison across many reasons,
+    # which a pie can't rank — and matches the failed-reason bars on other pages.
+    fig_fail = px.bar(failed_df.sort_values('Count'), x='Count', y='Reason', orientation='h',
+                      color_discrete_sequence=[COLORS['danger']])
     render_chart(fig_fail, failed_df, key="overview_failed_reasons", ai_label="Failed Reasons Breakdown")
 
 # Data Preview

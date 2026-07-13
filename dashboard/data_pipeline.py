@@ -60,6 +60,8 @@ def cached_journey_health_scores(filtered_df):
                 'Impression-Through Revenue (SAR)': journey_data['Impression-Through Revenue (SAR)'].sum() if 'Impression-Through Revenue (SAR)' in journey_data.columns else 0,
                 'Click-Through Revenue (SAR)': journey_data['Click-Through Revenue (SAR)'].sum() if 'Click-Through Revenue (SAR)' in journey_data.columns else 0,
                 'Total Conversions': journey_data['Selected Conversions'].sum() if 'Selected Conversions' in journey_data.columns else journey_data['Unique Conversions'].sum(),
+                'Sent': journey_data['Sent'].sum() if 'Sent' in journey_data.columns else 0,
+                'Days': journey_data['Reporting Period Start Date'].nunique() if 'Reporting Period Start Date' in journey_data.columns else len(journey_data),
                 'Delivery Score': health_info['component_scores'].get('delivery', 0),
                 'Engagement Score': health_info['component_scores'].get('engagement', 0),
                 'Conversion Score': health_info['component_scores'].get('conversion', 0),

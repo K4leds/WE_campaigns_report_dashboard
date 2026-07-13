@@ -464,7 +464,11 @@ with tab_segmentation:
     if not filtered_df.empty:
         seg_agg = _cached_customer_segmentation(filtered_df.to_json())
         if 'Cluster' in seg_agg.columns:
-            fig_seg = px.scatter(seg_agg, x='Revenue (SAR)', y='Unique Conversions', color='Cluster', hover_data=['Segment Name'])
+            # Clusters are nominal labels: cast to str so px assigns categorical
+            # hues instead of a continuous ramp over the cluster integers.
+            fig_seg = px.scatter(seg_agg, x='Revenue (SAR)', y='Unique Conversions',
+                                 color=seg_agg['Cluster'].astype(str), hover_data=['Segment Name'],
+                                 labels={'color': 'Cluster'})
             render_chart(fig_seg, seg_agg, key="segmentation_scatter", ai_label="Customer Segmentation")
             st.write("**Segmentation Insights:** Segments grouped by behavior. High-value clusters should be prioritized.")
         else:

@@ -9,3 +9,4 @@ __pycache__/
 validate_november.py
 .streamlit/secrets.toml
 .env
+.playwright-mcp/*

@@ -49,11 +49,8 @@ with tab1:
         fig_ts = px.line(ts_df, x='Reporting Period Start Date', y=ts_metric, title=f"{_attribution_display(ts_metric)} Over Time",
                          color_discrete_sequence=[COLORS['primary']])
         fig_ts.update_traces(line_width=2.5)
-        _, explain_col = st.columns([8, 1])
-        with explain_col:
-            render_ai_explain(ts_df, key=f"time_series_{ts_metric}", ai_label=f"{_attribution_display(ts_metric)} over time",
-                               help_text="Explain this trend with AI")
-        st.plotly_chart(fig_ts)
+        render_chart(fig_ts, ts_df, key=f"time_series_{ts_metric}",
+                     ai_label=f"{_attribution_display(ts_metric)} over time")
     else:
         st.write("No time series data available.")
 

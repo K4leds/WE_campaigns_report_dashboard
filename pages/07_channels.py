@@ -501,8 +501,9 @@ with tab2:
         col_config = {"Count": st.column_config.NumberColumn(label="Count", format="%.0f")}
         render_table(failed_df, key="failed_reasons", column_config=col_config)
 
-        # Create chart with original numeric values
-        fig_fail = px.bar(failed_df, x='Reason', y='Count', title="Failed Reasons Breakdown",
+        # Horizontal ranked bars (largest on top): long reason labels stay readable.
+        fig_fail = px.bar(failed_df.sort_values('Count'), x='Count', y='Reason', orientation='h',
+                          title="Failed Reasons Breakdown",
                           color_discrete_sequence=[COLORS['danger']])
         render_chart(fig_fail, failed_df, key="channels_failed_reasons", ai_label="Failed Reasons Breakdown")
 

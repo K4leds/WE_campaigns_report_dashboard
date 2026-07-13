@@ -360,7 +360,12 @@ def calculate_period_metrics(period_data, period_days, conversion_attribution='T
 
     # Calculate rates
     metrics['ctr'] = (metrics['total_clicks'] / metrics['total_impressions']) if metrics['total_impressions'] > 0 else 0
-    metrics['conversion_rate'] = (metrics['selected_conversions'] / metrics['total_clicks']) if metrics['total_clicks'] > 0 else 0
+    # Conversion rate is Click-Through Conversions ÷ Clicks dashboard-wide:
+    # total-attribution conversions include non-clickers and push the ratio past 100%.
+    _ct_conversions = (period_data['Unique Click-Through Conversions'].sum()
+                       if 'Unique Click-Through Conversions' in period_data.columns
+                       else metrics['selected_conversions'])
+    metrics['conversion_rate'] = (_ct_conversions / metrics['total_clicks']) if metrics['total_clicks'] > 0 else 0
     metrics['delivery_rate'] = (metrics['total_delivered'] / metrics['total_sent']) if metrics['total_sent'] > 0 else 0
 
     # Revenue per conversion (AOV)

@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 from dashboard.state import get_ctx
 from utils import format_metric, read_cached_json
@@ -13,6 +14,15 @@ from components.table import render_table, render_chart
 # ---------------------------------------------------------------------------
 # Cached heavy computations (eliminates dark-screen rerender on filter change)
 # ---------------------------------------------------------------------------
+
+def _cvr_numerator_col(df):
+    """CVR is Click-Through Conversions ÷ Unique Clicks dashboard-wide (matching
+    the Overview channel table). Total-attribution conversions include people who
+    never clicked, which pushed CVR past 500% on this page. Falls back to the
+    selected conversions column when the click-through column is absent."""
+    if 'Unique Click-Through Conversions' in df.columns:
+        return 'Unique Click-Through Conversions'
+    return 'Selected Conversions' if 'Selected Conversions' in df.columns else 'Unique Conversions'
 
 @st.cache_data
 def _cached_channel_efficiency(filtered_df_json):
@@ -27,12 +37,13 @@ def _cached_channel_efficiency(filtered_df_json):
         Total_Clicks=('Unique Clicks', 'sum'),
         Total_Impressions=('Unique Impressions', 'sum'),
         Total_Conversions=(conv_col, 'sum'),
+        CT_Conversions=(_cvr_numerator_col(filtered_df), 'sum'),
         Total_Revenue=(rev_col, 'sum'),
     ).reset_index()
 
     chan_eff['Revenue Per Send'] = np.where(chan_eff['Total_Sent'] > 0, chan_eff['Total_Revenue'] / chan_eff['Total_Sent'], 0)
     chan_eff['Revenue Per Click'] = np.where(chan_eff['Total_Clicks'] > 0, chan_eff['Total_Revenue'] / chan_eff['Total_Clicks'], 0)
-    chan_eff['CVR (%)'] = np.where(chan_eff['Total_Clicks'] > 0, (chan_eff['Total_Conversions'] / chan_eff['Total_Clicks']) * 100, 0)
+    chan_eff['CVR (%)'] = np.where(chan_eff['Total_Clicks'] > 0, (chan_eff['CT_Conversions'] / chan_eff['Total_Clicks']) * 100, 0)
     chan_eff['CTR (%)'] = np.where(chan_eff['Total_Impressions'] > 0, (chan_eff['Total_Clicks'] / chan_eff['Total_Impressions']) * 100, 0)
     chan_eff['AOV (SAR)'] = np.where(chan_eff['Total_Conversions'] > 0, chan_eff['Total_Revenue'] / chan_eff['Total_Conversions'], 0)
 
@@ -53,11 +64,12 @@ def _cached_type_comparison(filtered_df_json):
         Total_Delivered=('Delivered', 'sum'),
         Total_Clicks=('Unique Clicks', 'sum'),
         Total_Conversions=(conv_col, 'sum'),
+        CT_Conversions=(_cvr_numerator_col(filtered_df), 'sum'),
         Total_Revenue=(rev_col, 'sum'),
     ).reset_index()
 
     type_comparison['Rev/Send'] = np.where(type_comparison['Total_Sent'] > 0, type_comparison['Total_Revenue'] / type_comparison['Total_Sent'], 0)
-    type_comparison['CVR (%)'] = np.where(type_comparison['Total_Clicks'] > 0, (type_comparison['Total_Conversions'] / type_comparison['Total_Clicks']) * 100, 0)
+    type_comparison['CVR (%)'] = np.where(type_comparison['Total_Clicks'] > 0, (type_comparison['CT_Conversions'] / type_comparison['Total_Clicks']) * 100, 0)
     type_comparison['CTR (%)'] = np.where(type_comparison['Total_Sent'] > 0, (type_comparison['Total_Clicks'] / type_comparison['Total_Sent']) * 100, 0)
 
     return type_comparison
@@ -79,13 +91,14 @@ def _cached_day_of_week(filtered_df_json):
         Sends=('Sent', 'sum'),
         Clicks=('Unique Clicks', 'sum'),
         Conversions=(conv_col, 'sum'),
+        CT_Conversions=(_cvr_numerator_col(filtered_df), 'sum'),
         Revenue=(rev_col, 'sum'),
         Days_Count=(date_col, 'nunique'),
     ).reset_index().sort_values('DayNum')
 
     dow_agg['Avg Revenue/Day'] = dow_agg['Revenue'] / dow_agg['Days_Count']
     dow_agg['Avg Conversions/Day'] = dow_agg['Conversions'] / dow_agg['Days_Count']
-    dow_agg['CVR (%)'] = np.where(dow_agg['Clicks'] > 0, (dow_agg['Conversions'] / dow_agg['Clicks']) * 100, 0)
+    dow_agg['CVR (%)'] = np.where(dow_agg['Clicks'] > 0, (dow_agg['CT_Conversions'] / dow_agg['Clicks']) * 100, 0)
 
     return dow_agg
 
@@ -113,10 +126,11 @@ def _cached_campaign_tags(filtered_df_json):
         Sends=('Sent', 'sum'),
         Clicks=('Unique Clicks', 'sum'),
         Conversions=(conv_col, 'sum'),
+        CT_Conversions=(_cvr_numerator_col(filtered_df), 'sum'),
         Revenue=(rev_col, 'sum'),
     ).reset_index()
     tag_perf.rename(columns={'Tag_List': 'Tag'}, inplace=True)
-    tag_perf['CVR (%)'] = np.where(tag_perf['Clicks'] > 0, (tag_perf['Conversions'] / tag_perf['Clicks']) * 100, 0)
+    tag_perf['CVR (%)'] = np.where(tag_perf['Clicks'] > 0, (tag_perf['CT_Conversions'] / tag_perf['Clicks']) * 100, 0)
     tag_perf['Rev/Send'] = np.where(tag_perf['Sends'] > 0, tag_perf['Revenue'] / tag_perf['Sends'], 0)
     tag_perf = tag_perf.sort_values('Revenue', ascending=False)
 
@@ -163,9 +177,10 @@ def _cached_segment_performance(filtered_df_json):
         Sends=('Sent', 'sum'),
         Clicks=('Unique Clicks', 'sum'),
         Conversions=(conv_col, 'sum'),
+        CT_Conversions=(_cvr_numerator_col(filtered_df), 'sum'),
         Revenue=(rev_col, 'sum'),
     ).reset_index()
-    seg_perf['CVR (%)'] = np.where(seg_perf['Clicks'] > 0, (seg_perf['Conversions'] / seg_perf['Clicks']) * 100, 0)
+    seg_perf['CVR (%)'] = np.where(seg_perf['Clicks'] > 0, (seg_perf['CT_Conversions'] / seg_perf['Clicks']) * 100, 0)
     seg_perf['Rev/Send'] = np.where(seg_perf['Sends'] > 0, seg_perf['Revenue'] / seg_perf['Sends'], 0)
     seg_perf = seg_perf.sort_values('Revenue', ascending=False)
 
@@ -186,6 +201,7 @@ def _cached_monthly_aggregation(filtered_df_json):
     monthly_agg = df_monthly.groupby('Month').agg(
         Revenue=(rev_col, 'sum'),
         Conversions=(conv_col, 'sum'),
+        CT_Conversions=(_cvr_numerator_col(filtered_df), 'sum'),
         Sends=('Sent', 'sum'),
         Delivered=('Delivered', 'sum'),
         Clicks=('Unique Clicks', 'sum'),
@@ -195,7 +211,7 @@ def _cached_monthly_aggregation(filtered_df_json):
 
     monthly_agg['Month_str'] = monthly_agg['Month'].astype(str)
     monthly_agg['Rev/Send'] = np.where(monthly_agg['Sends'] > 0, monthly_agg['Revenue'] / monthly_agg['Sends'], 0)
-    monthly_agg['CVR (%)'] = np.where(monthly_agg['Clicks'] > 0, (monthly_agg['Conversions'] / monthly_agg['Clicks']) * 100, 0)
+    monthly_agg['CVR (%)'] = np.where(monthly_agg['Clicks'] > 0, (monthly_agg['CT_Conversions'] / monthly_agg['Clicks']) * 100, 0)
     monthly_agg['CTR (%)'] = np.where(monthly_agg['Impressions'] > 0, (monthly_agg['Clicks'] / monthly_agg['Impressions']) * 100, 0)
     monthly_agg['AOV (SAR)'] = np.where(monthly_agg['Conversions'] > 0, monthly_agg['Revenue'] / monthly_agg['Conversions'], 0)
 
@@ -316,12 +332,20 @@ if 'Type of Campaign' in filtered_df.columns and not filtered_df.empty:
             st.metric("CVR", f"{row['CVR (%)']:.1f}%")
             st.metric("Campaigns", f"{int(row['Campaigns'])}")
 
-    # Comparative bar charts
-    fig_type = px.bar(
-        type_comparison, x='Type of Campaign', y=['Total_Revenue', 'Total_Conversions'],
-        barmode='group', title="Revenue & Conversions: Journey vs One-Time",
-        color_discrete_sequence=[COLORS['primary'], COLORS['success']]
-    )
+    # Revenue (millions) and conversions (thousands) can't share one y-axis --
+    # side-by-side panels, one scale each.
+    fig_type = make_subplots(rows=1, cols=2, subplot_titles=("Revenue (SAR)", "Conversions"))
+    fig_type.add_trace(go.Bar(
+        x=type_comparison['Type of Campaign'], y=type_comparison['Total_Revenue'],
+        marker_color=COLORS['primary'], name='Revenue (SAR)',
+        text=type_comparison['Total_Revenue'].apply(lambda v: f"{v:,.0f}"), textposition='outside',
+    ), row=1, col=1)
+    fig_type.add_trace(go.Bar(
+        x=type_comparison['Type of Campaign'], y=type_comparison['Total_Conversions'],
+        marker_color=COLORS['success'], name='Conversions',
+        text=type_comparison['Total_Conversions'].apply(lambda v: f"{v:,.0f}"), textposition='outside',
+    ), row=1, col=2)
+    fig_type.update_layout(title="Revenue & Conversions: Journey vs One-Time", showlegend=False)
     render_chart(fig_type, type_comparison, key="marketing_actions_type", ai_label="Journey vs One-Time Campaign Effectiveness")
 
     # Insight callout
@@ -409,26 +433,28 @@ date_col = 'Reporting Period Start Date' if 'Reporting Period Start Date' in fil
 if date_col in filtered_df.columns and not filtered_df.empty:
     dow_agg = _cached_day_of_week(filtered_df.to_json())
 
-    # Heatmap-style bar chart
-    fig_dow = go.Figure()
+    # Revenue and CVR are different scales: stacked panels on a shared day
+    # axis instead of a dual-axis overlay, whose scale alignment is arbitrary.
+    fig_dow = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                            vertical_spacing=0.08, row_heights=[0.6, 0.4])
     fig_dow.add_trace(go.Bar(
         x=dow_agg['DayOfWeek'], y=dow_agg['Avg Revenue/Day'],
         name='Avg Revenue/Day', marker_color=COLORS['primary'],
         text=dow_agg['Avg Revenue/Day'].apply(lambda v: f"{v:,.0f}"),
         textposition='outside'
-    ))
+    ), row=1, col=1)
     fig_dow.add_trace(go.Scatter(
         x=dow_agg['DayOfWeek'], y=dow_agg['CVR (%)'],
-        name='CVR %', yaxis='y2', mode='lines+markers',
+        name='CVR %', mode='lines+markers',
         line=dict(color=COLORS['success'], width=3),
         marker=dict(size=8)
-    ))
+    ), row=2, col=1)
     fig_dow.update_layout(
         title="Average Daily Revenue & Conversion Rate by Day of Week",
-        yaxis=dict(title="Revenue (SAR)"),
-        yaxis2=dict(title="CVR %", overlaying='y', side='right', rangemode='tozero'),
-        barmode='group'
+        height=560,
     )
+    fig_dow.update_yaxes(title_text="Revenue (SAR)", row=1, col=1)
+    fig_dow.update_yaxes(title_text="CVR %", rangemode='tozero', row=2, col=1)
     render_chart(fig_dow, dow_agg, key="marketing_actions_dow", ai_label="Revenue & Conversion Rate by Day of Week")
 
     # Highlight best/worst days
@@ -461,13 +487,15 @@ if 'Campaign Tags' in filtered_df.columns and not filtered_df.empty:
 
     if not tag_perf.empty:
         # Show top tags
+        top_tags = tag_perf.head(15).iloc[::-1]
         fig_tags = px.bar(
-            tag_perf.head(15), x='Tag', y='Revenue',
+            top_tags, x='Revenue', y='Tag', orientation='h',
             color='CVR (%)', color_continuous_scale='Greens',
             title="Top 15 Tags by Revenue (color = CVR %)",
-            text=tag_perf.head(15)['Revenue'].apply(lambda v: f"{v:,.0f}")
+            text=top_tags['Revenue'].apply(lambda v: f"{v:,.0f}")
         )
         fig_tags.update_traces(textposition='outside')
+        fig_tags.update_layout(yaxis_title=None, height=max(400, 32 * len(top_tags)))
         render_chart(fig_tags, tag_perf.head(15), key="marketing_actions_tags", ai_label="Top Tags by Revenue")
 
         # Table
@@ -583,50 +611,54 @@ if date_col_m in filtered_df.columns and not filtered_df.empty:
             st.metric(f"CVR ({latest['Month_str']})", f"{latest['CVR (%)']:.1f}%",
                       delta=f"{latest['CVR (%)'] - prev['CVR (%)']:+.1f}pp")
 
-    # --- Revenue & Conversions trend chart ---
-    fig_monthly = go.Figure()
+    # --- Revenue & Conversions trend chart (stacked panels, one scale each) ---
+    fig_monthly = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                                vertical_spacing=0.08, row_heights=[0.6, 0.4])
     fig_monthly.add_trace(go.Bar(
         x=monthly_agg['Month_str'], y=monthly_agg['Revenue'],
         name='Revenue (SAR)', marker_color=COLORS['primary'],
         text=monthly_agg['Revenue'].apply(lambda v: f"{v:,.0f}"),
         textposition='outside'
-    ))
+    ), row=1, col=1)
     fig_monthly.add_trace(go.Scatter(
         x=monthly_agg['Month_str'], y=monthly_agg['Conversions'],
-        name='Conversions', yaxis='y2', mode='lines+markers',
+        name='Conversions', mode='lines+markers',
         line=dict(color=COLORS['success'], width=3),
         marker=dict(size=8)
-    ))
+    ), row=2, col=1)
     fig_monthly.update_layout(
         title="Monthly Revenue & Conversions",
-        yaxis=dict(title="Revenue (SAR)"),
-        yaxis2=dict(title="Conversions", overlaying='y', side='right', rangemode='tozero'),
-        barmode='group'
+        height=560,
     )
+    fig_monthly.update_yaxes(title_text="Revenue (SAR)", row=1, col=1)
+    fig_monthly.update_yaxes(title_text="Conversions", rangemode='tozero', row=2, col=1)
     render_chart(fig_monthly, monthly_agg, key="marketing_actions_monthly", ai_label="Monthly Revenue & Conversions")
 
-    # --- Efficiency metrics trend ---
-    fig_eff = go.Figure()
+    # --- Efficiency metrics trend: SAR panel on top, the two %-rates share
+    # the bottom panel (same unit, so one scale is honest there) ---
+    fig_eff = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                            vertical_spacing=0.08)
     fig_eff.add_trace(go.Scatter(
         x=monthly_agg['Month_str'], y=monthly_agg['Rev/Send'],
         name='Rev/Send (SAR)', mode='lines+markers',
         line=dict(color=COLORS['primary'], width=2), marker=dict(size=7)
-    ))
+    ), row=1, col=1)
     fig_eff.add_trace(go.Scatter(
         x=monthly_agg['Month_str'], y=monthly_agg['CVR (%)'],
-        name='CVR %', yaxis='y2', mode='lines+markers',
+        name='CVR %', mode='lines+markers',
         line=dict(color=COLORS['success'], width=2), marker=dict(size=7)
-    ))
+    ), row=2, col=1)
     fig_eff.add_trace(go.Scatter(
         x=monthly_agg['Month_str'], y=monthly_agg['CTR (%)'],
-        name='CTR %', yaxis='y2', mode='lines+markers',
+        name='CTR %', mode='lines+markers',
         line=dict(color=COLORS['warning'], width=2, dash='dot'), marker=dict(size=6)
-    ))
+    ), row=2, col=1)
     fig_eff.update_layout(
         title="Monthly Efficiency Metrics",
-        yaxis=dict(title="Rev/Send (SAR)"),
-        yaxis2=dict(title="Rate (%)", overlaying='y', side='right', rangemode='tozero'),
+        height=560,
     )
+    fig_eff.update_yaxes(title_text="Rev/Send (SAR)", row=1, col=1)
+    fig_eff.update_yaxes(title_text="Rate (%)", rangemode='tozero', row=2, col=1)
     render_chart(fig_eff, monthly_agg, key="marketing_actions_eff", ai_label="Monthly Efficiency Metrics")
 
     # --- Channel breakdown by month ---

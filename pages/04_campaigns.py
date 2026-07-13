@@ -205,8 +205,10 @@ def _cached_channel_perf_for_campaigns(filtered_df_json, selected_campaigns):
     """Cached Channel groupby for the selected campaigns."""
     filtered_df = read_cached_json(filtered_df_json)
     camp_details = filtered_df[filtered_df['Campaign Name'].isin(selected_campaigns)]
-    chan_perf = _cached_channel_perf_for_campaigns(filtered_df.to_json(), tuple(selected_campaigns))
-    return chan_perf
+    agg_cols = {c: 'sum' for c in ['Sent', 'Delivered', 'Unique Conversions', 'Revenue (SAR)',
+                                   'Impression-Through Revenue (SAR)', 'Click-Through Revenue (SAR)']
+                if c in camp_details.columns}
+    return camp_details.groupby('Channel').agg(agg_cols).reset_index()
 
 
 @st.cache_data
@@ -229,6 +231,8 @@ def _cached_campaign_health_scores(filtered_df_json):
                 'Impression-Through Revenue (SAR)': campaign_data['Impression-Through Revenue (SAR)'].sum(),
                 'Click-Through Revenue (SAR)': campaign_data['Click-Through Revenue (SAR)'].sum(),
                 'Total Conversions': campaign_data['Unique Conversions'].sum(),
+                'Sent': campaign_data['Sent'].sum() if 'Sent' in campaign_data.columns else 0,
+                'Days': campaign_data['Reporting Period Start Date'].nunique() if 'Reporting Period Start Date' in campaign_data.columns else len(campaign_data),
                 'Delivery Score': health_info['component_scores'].get('delivery', 0),
                 'Engagement Score': health_info['component_scores'].get('engagement', 0),
                 'Conversion Score': health_info['component_scores'].get('conversion', 0),
@@ -333,9 +337,12 @@ if camp_metric in attribution_rename:
 
 render_table(renamed_display, key="top_camp", column_config=top_camp_cc if top_camp_cc else None)
 
-# Create chart with original numeric values
-fig = px.bar(top_camp, x='Campaign Name', y=camp_metric, title=f"Top Campaigns by {_attribution_display(camp_metric)}",
+# Horizontal ranked bars (largest on top): long campaign names stay readable
+# on the y-axis instead of colliding as rotated x-ticks.
+fig = px.bar(top_camp.iloc[::-1], x=camp_metric, y='Campaign Name', orientation='h',
+             title=f"Top Campaigns by {_attribution_display(camp_metric)}",
              color_discrete_sequence=COLOR_SEQUENCE)
+fig.update_layout(yaxis_title=None, height=max(400, 36 * len(top_camp)))
 render_chart(fig, top_camp, key="top_campaigns_chart", ai_label=f"Top Campaigns by {_attribution_display(camp_metric)}")
 
 # Campaign Type Breakdown (Journey vs One-Time)
@@ -723,7 +730,8 @@ if selected_campaigns:
     failed_cols = [col for col in camp_details.columns if 'Failed' in col and col != 'Failed']
     if failed_cols:
         failed_camp = camp_details[failed_cols].sum().reset_index().rename(columns={'index': 'Reason', 0: 'Count'})
-        fig_fail_camp = px.bar(failed_camp, x='Reason', y='Count', title="Failed Reasons for Selected Campaigns",
+        fig_fail_camp = px.bar(failed_camp.sort_values('Count'), x='Count', y='Reason', orientation='h',
+                               title="Failed Reasons for Selected Campaigns",
                                color_discrete_sequence=[COLORS['danger']])
         render_chart(fig_fail_camp, failed_camp, key="camp_drilldown_failed", ai_label="Failed Reasons for Selected Campaigns")
 
@@ -743,19 +751,19 @@ with st.expander("📊 Scoring Methodology (Click to View)", expanded=False):
     - **No Fixed Benchmarks**: Scores reflect your actual portfolio distribution, not arbitrary industry numbers
 
     #### **Component Weights:**
-    - 🚀 **Conversion Performance**: 30% - Conversion rate (clicks to conversions)
-    - 🎯 **Engagement Performance**: 25% - Click-through rate (impressions to clicks)
-    - 💰 **Revenue Efficiency**: 25% - Revenue per conversion (log-scaled to reduce outlier impact)
-    - 📧 **Delivery Performance**: 20% - Delivery rate (sent to delivered)
+    - 💰 **Revenue Impact**: 35% - log-scaled total revenue, so big earners rank above tiny-but-efficient campaigns
+    - 🚀 **Conversion Performance**: 25% - click-through conversions ÷ unique clicks (Empirical Bayes smoothed)
+    - 🎯 **Engagement Performance**: 20% - click-through rate, impressions → clicks (Empirical Bayes smoothed)
+    - 📧 **Delivery Performance**: 20% - delivery rate, sent → delivered
 
-    #### **Performance Tiers:**
-    - **Excellent (80-100)**: Top quartile - scale and replicate
-    - **Good (60-79)**: Above average - minor optimizations
-    - **Fair (40-59)**: Below average - review and improve
-    - **Poor (0-39)**: Bottom quartile - immediate action needed
+    #### **Performance Tiers (relative to this portfolio):**
+    - **Excellent (80-100)**: Top of this portfolio - scale and replicate
+    - **Good (60-79)**: Above portfolio average - minor optimizations
+    - **Fair (40-59)**: Below portfolio average - review and improve
+    - **Poor (0-39)**: Bottom of this portfolio - immediate action needed
 
     #### **Data Sufficiency:**
-    Campaigns with fewer than 10 sends, 3 conversions, or 3 days of data are marked "Insufficient Data" to avoid misleading scores.
+    Campaigns with fewer than 100 sends, 5 conversions, or 3 days of data are marked "Insufficient Data" instead of being ranked.
     """)
 
 
@@ -813,7 +821,7 @@ if breakdown_campaign and str(breakdown_campaign) != 'nan':
         st.markdown(f"**🎯 Total Weighted Score: {total_contribution:.1f}/100**")
 
         # Show the weights explanation
-        st.caption("💡 Weights: Conversion 30% (most critical for ROI) • Delivery 25% • Engagement 25% • Revenue 20%")
+        st.caption("💡 Weights: Revenue Impact 35% (business outcome first) • Conversion 25% • Engagement 20% • Delivery 20%")
 
     # Performance Insights
     st.subheader("🎯 Performance Insights")
@@ -883,7 +891,7 @@ if breakdown_campaign and str(breakdown_campaign) != 'nan':
         'Difference': st.column_config.NumberColumn(label='Difference', format='%+.2f'),
     }
 
-    st.dataframe(comparison_df, column_config=perf_cc)
+    render_table(comparison_df, key="campaign_vs_portfolio", column_config=perf_cc)
 
     # Performance Summary
     st.subheader("📋 Performance Summary")
