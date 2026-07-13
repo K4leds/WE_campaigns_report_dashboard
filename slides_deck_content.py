@@ -219,6 +219,46 @@ def add_slide_campaigns(prs, df, period_label):
     add_morph(slide)
 
 
+def top_campaign_spotlight(df):
+    conv_col = "Selected Conversions" if "Selected Conversions" in df.columns else "Unique Conversions"
+    rev_col = "Selected Revenue (SAR)" if "Selected Revenue (SAR)" in df.columns else "Revenue (SAR)"
+    agg = df.groupby("Campaign Name").agg(
+        Revenue=(rev_col, "sum"), Conversions=(conv_col, "sum"),
+        Clicks=("Unique Clicks", "sum"), Sent=("Sent", "sum"),
+        Channel=("Channel", lambda s: s.mode().iat[0] if not s.mode().empty else ""),
+    ).reset_index()
+    if agg.empty or agg["Revenue"].sum() == 0:
+        return None
+    top = agg.nlargest(1, "Revenue").iloc[0]
+    cvr = (top["Conversions"] / top["Clicks"]) if top["Clicks"] > 0 else 0
+    return {
+        "name": top["Campaign Name"], "channel": top["Channel"], "revenue": top["Revenue"],
+        "conversions": top["Conversions"], "cvr": cvr, "audience": top["Sent"],
+    }
+
+
+def add_slide_campaign_spotlight(prs, spotlight, period_label):
+    slide = blank_slide(prs)
+    rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
+    _header(slide, "CAMPAIGN SPOTLIGHT", spotlight["name"], period_label)
+    rect(slide, 9.55, 0.45, 3.05, 0.5, fill=BRAND, shape=MSO_SHAPE.ROUNDED_RECTANGLE)
+    text(slide, 9.55, 0.45, 3.05, 0.5, (spotlight["channel"], 12, WHITE, F_BOLD, True, None),
+         align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+    tiles = [
+        ("REVENUE", f"SAR {spotlight['revenue']:,.0f}"),
+        ("CONVERSIONS", f"{spotlight['conversions']:,.0f}"),
+        ("CVR", f"{spotlight['cvr']:.1%}"),
+        ("AUDIENCE REACHED", f"{spotlight['audience']:,.0f}"),
+    ]
+    tx, tw, gap = 0.55, 2.92, 0.15
+    for i, (lab, val) in enumerate(tiles):
+        stat_tile(slide, tx + i * (tw + gap), 1.9, tw, 1.3, lab, val, "", MUTED)
+    insight_box(slide, 0.55, 3.6, 12.23, 1.2, "WHY IT WORKED",
+                f"'{spotlight['name']}' was this period's highest-revenue campaign on "
+                f"{spotlight['channel']}, converting {spotlight['cvr']:.1%} of its clicks.")
+    add_morph(slide)
+
+
 def add_slide_journeys(prs, df, period_label):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
@@ -306,6 +346,9 @@ def build_deck(df, client_name="", period_label=None, comparison_result=None, co
     if uplift_summary:
         add_slide_control_uplift(prs, uplift_summary, period_label)
     add_slide_campaigns(prs, df, period_label)
+    spotlight = top_campaign_spotlight(df)
+    if spotlight:
+        add_slide_campaign_spotlight(prs, spotlight, period_label)
     add_slide_journeys(prs, df, period_label)
     _add_findings_slide(prs, "WHAT'S WORKING", "Opportunities",
                         ni.get("opportunities", []), "opportunity", period_label)

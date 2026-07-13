@@ -95,7 +95,7 @@ def test_build_deck_has_10_slides_with_client_name():
     data = sx.build_deck(_df(), client_name="Acme Co", period_label="Jun 2026")
     assert isinstance(data, (bytes, bytearray)) and len(data) > 5000
     prs = Presentation(io.BytesIO(data))
-    assert len(prs.slides) == 13
+    assert len(prs.slides) == 14
     # client name appears on the title slide
     texts = [sh.text_frame.text for sh in prs.slides[0].shapes if sh.has_text_frame]
     assert any("Acme Co" in t for t in texts)
@@ -151,3 +151,8 @@ def test_top_campaigns_table_has_cvr_and_aov_columns():
     assert tables, "expected a table on the campaigns slide"
     header_texts = [c.text for c in tables[0].table.rows[0].cells]
     assert header_texts == ["Campaign", "Conversions", "Revenue", "CVR", "AOV"]
+
+
+def test_top_campaign_spotlight_picks_highest_revenue_campaign():
+    spotlight = sx.top_campaign_spotlight(_df())
+    assert spotlight["name"] == "C1"  # C1 has Revenue 5500, the max in _df()
