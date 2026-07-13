@@ -5,11 +5,32 @@ from io import BytesIO
 from dashboard.state import get_ctx
 from analysis import top_campaigns, get_top_journeys, top_segments, channel_analysis, esp_analysis, time_series_analysis, failed_reasons_analysis
 from utils import format_metric
+import slides_export
 
 ctx = get_ctx()
 filtered_df = ctx.filtered_df
 
 st.header("Export")
+
+st.subheader("Client Review Deck (PowerPoint)")
+client_name = st.text_input("Client / brand name", value="", key="deck_client")
+if st.button("Generate Client Review Deck"):
+    if filtered_df is None or filtered_df.empty:
+        st.warning("No data for the current filters — adjust filters and try again.")
+    else:
+        with st.spinner("Building deck (rendering charts)…"):
+            try:
+                deck_bytes = slides_export.build_deck(filtered_df, client_name=client_name)
+                st.session_state["deck_bytes"] = deck_bytes
+            except Exception as e:
+                st.error(f"Could not build the deck: {e}")
+if st.session_state.get("deck_bytes"):
+    safe = (client_name or "WebEngage").replace(" ", "_")
+    st.download_button(
+        "Download Deck (.pptx)", st.session_state["deck_bytes"],
+        file_name=f"WebEngage_Review_{safe}.pptx",
+        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        key="deck_dl")
 
 # Compute aggregates for export
 camp_metric = 'Unique Conversions'
