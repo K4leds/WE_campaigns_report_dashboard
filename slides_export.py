@@ -4,6 +4,7 @@ numbers and charts; slides_narrative.py owns prose. Never rendered server-side
 import functools
 import io
 import os
+import re
 import zipfile
 
 import plotly.graph_objects as go
@@ -417,7 +418,6 @@ _EMBED_FONTS = [
     ("DM Sans", {"regular": "DMSans-Regular.ttf", "bold": "DMSans-Bold.ttf"}),
     ("DM Sans Medium", {"regular": "DMSans-Medium.ttf"}),
 ]
-_P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
 _R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 _CT_FONT = "application/x-fontdata"
 _RT_FONT = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/font"
@@ -428,12 +428,11 @@ def embed_fonts(pptx_bytes: bytes) -> bytes:
     the original bytes unchanged (deck still valid, just not embedded)."""
     try:
         src = zipfile.ZipFile(io.BytesIO(pptx_bytes))
-        names = set(src.namelist())
         pres = src.read("ppt/presentation.xml").decode("utf-8")
         rels = src.read("ppt/_rels/presentation.xml.rels").decode("utf-8")
         ct = src.read("[Content_Types].xml").decode("utf-8")
 
-        existing_rids = [int(x) for x in __import__("re").findall(r'Id="rId(\d+)"', rels)]
+        existing_rids = [int(x) for x in re.findall(r'Id="rId(\d+)"', rels)]
         next_rid = (max(existing_rids) + 1) if existing_rids else 1
 
         font_parts, rels_add, lst_entries, idx = {}, [], [], 1
@@ -464,7 +463,10 @@ def embed_fonts(pptx_bytes: bytes) -> bytes:
         if "xmlns:r=" not in pres[:pres_tag_end]:
             pres = pres.replace("<p:presentation ", f'<p:presentation xmlns:r="{_R_NS}" ', 1)
         pres = pres.replace("<p:presentation ", "<p:presentation embedTrueTypeFonts=\"1\" ", 1)
-        pres = pres.replace("<p:sldIdLst", lst + "<p:sldIdLst", 1)
+        if "<p:defaultTextStyle" in pres:
+            pres = pres.replace("<p:defaultTextStyle", lst + "<p:defaultTextStyle", 1)
+        else:
+            pres = re.sub(r"(<p:notesSz[^>]*/>)", r"\1" + lst, pres, count=1)
 
         rels = rels.replace("</Relationships>", "".join(rels_add) + "</Relationships>")
         if _CT_FONT not in ct:

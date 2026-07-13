@@ -101,7 +101,30 @@
       "Bash(powershell -Command \"Get-CimInstance Win32_Process -Filter \\\\\"CommandLine LIKE '%streamlit run app.py%'\\\\\" | ForEach-Object { Stop-Process -Id \\\\$_.ProcessId -Force }\" 2>&1)",
       "Bash(powershell -Command \"Get-CimInstance Win32_Process -Filter \\\\\"CommandLine LIKE '%streamlit run app.py%'\\\\\" | Select-Object ProcessId,CommandLine\" 2>&1)",
       "Bash(powershell -Command \"Get-NetTCPConnection -LocalPort 8510 -ErrorAction SilentlyContinue | Select-Object -First 1 OwningProcess\" 2>&1)",
-      "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -c \"import inspect, streamlit as st; sig = inspect.signature\\(st.plotly_chart\\); print\\(sig\\)\")"
+      "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -c \"import inspect, streamlit as st; sig = inspect.signature\\(st.plotly_chart\\); print\\(sig\\)\")",
+      "Bash(.venv/Scripts/python.exe -c \"import pptx, plotly; print\\('pptx', pptx.__version__\\); print\\('plotly', plotly.__version__\\)\")",
+      "Bash(.venv/Scripts/python.exe -c \"import kaleido; print\\('kaleido', kaleido.__version__\\)\")",
+      "Bash(where soffice *)",
+      "Read(//c/Program Files/LibreOffice/program/**)",
+      "Read(//c/Program Files/Microsoft Office/root/Office16/**)",
+      "Read(//c/Program Files \\\\\\(x86\\\\\\)/Microsoft Office/root/Office16/**)",
+      "Bash(.venv/Scripts/python.exe \"C:/Users/USER/AppData/Local/Temp/claude/C--Users-USER-vs-projects-WE-campaigns-report-dashboard/5f2cea1e-ae67-4bf7-9484-1129a5956f89/scratchpad/sample_slide.py\")",
+      "Bash(git commit -q -m 'docs: design spec for WebEngage client review deck export *)",
+      "Bash(.venv/Scripts/python.exe -c \"import kaleido; print\\(kaleido.__version__\\)\")",
+      "Bash(pip index *)",
+      "Bash(.venv/Scripts/python.exe *)",
+      "mcp__claude_ai_Context7__query-docs",
+      "Skill(developing-with-streamlit)",
+      "WebSearch",
+      "Bash(sed -i 's/- Task 1: Dependencies, fonts, kaleido smoke test — pending/- Task 1: complete \\(commits d43f5bd..6691d7e, review clean\\)/' .superpowers/sdd/progress.md)",
+      "Bash(echo \"Task 1: complete \\(commits d43f5bd..6691d7e, review clean\\) — HANDOFF: Task 2 must wire cached pio.get_chrome\\(\\) at startup + docstring note \\(kaleido v1 chromium on Streamlit Cloud\\)\")",
+      "Bash(bash __TRACKED_VAR__/scripts/task-brief docs/superpowers/plans/2026-07-13-slides-report-export.md 2)",
+      "Bash(sed -i 's/- Task 2: slides_export theme + layout helpers — pending/- Task 2: complete \\(commits 6691d7e..03bbf22, review clean\\)/' .superpowers/sdd/progress.md)",
+      "Bash(echo \"- Minor \\(Task 2\\): unused imports io/go in slides_export.py:5,7 — intentionally kept; consumed by Task 3 \\(go\\) and Task 5 \\(io\\). No fix needed.\")",
+      "Bash(bash __TRACKED_VAR__/scripts/task-brief docs/superpowers/plans/2026-07-13-slides-report-export.md 3)",
+      "Bash(sed -i 's/- Task 5: build_deck orchestration — pending/- Task 5: complete \\(commits f738da6..8ffcaf5, review clean\\)/' .superpowers/sdd/progress.md)",
+      "Bash(printf -- '- Minor \\(Task 5\\): unused imports pandas/format_sar in slides_export.py — delete at final cleanup.\\\\n- Minor \\(Task 5\\): no test forces _put_chart to return False \\(chart-skip degradation unverified by a test\\).\\\\n')",
+      "Bash(bash __TRACKED_VAR__/scripts/task-brief docs/superpowers/plans/2026-07-13-slides-report-export.md 6)"
     ]
   }
 }
