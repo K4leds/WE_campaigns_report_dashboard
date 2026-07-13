@@ -62,11 +62,17 @@ def _comparison_result(df):
     }
 
 
+def test_monthly_kpi_rows_includes_total_row():
+    rows = sx.monthly_kpi_rows(_df())
+    assert rows[-1][0] == "Total"
+    assert len(rows) == 2  # 1 month of data (all June) + Total
+
+
 def test_build_deck_has_10_slides_with_client_name():
     data = sx.build_deck(_df(), client_name="Acme Co", period_label="Jun 2026")
     assert isinstance(data, (bytes, bytearray)) and len(data) > 5000
     prs = Presentation(io.BytesIO(data))
-    assert len(prs.slides) == 12
+    assert len(prs.slides) == 13
     # client name appears on the title slide
     texts = [sh.text_frame.text for sh in prs.slides[0].shapes if sh.has_text_frame]
     assert any("Acme Co" in t for t in texts)

@@ -2,6 +2,7 @@
 slides_export.py for drawing primitives and on analysis/insights_engine/
 comparisons_logic for the numbers each slide shows."""
 import io
+import pandas as pd
 
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.enum.shapes import MSO_SHAPE
@@ -50,6 +51,30 @@ def add_slide_agenda(prs, period_label):
              align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
         text(slide, 1.3, y + 0.08, 10.8, 0.4, (item, 15, INK, F_MED, True, None))
         y += 0.68
+    add_morph(slide)
+
+
+def monthly_kpi_rows(df):
+    d = df.copy()
+    d["_month"] = pd.to_datetime(d["Reporting Period Start Date"]).dt.to_period("M")
+    rev_col = "Selected Revenue (SAR)" if "Selected Revenue (SAR)" in d.columns else "Revenue (SAR)"
+    conv_col = "Selected Conversions" if "Selected Conversions" in d.columns else "Unique Conversions"
+    agg = d.groupby("_month").agg(
+        Revenue=(rev_col, "sum"), Conversions=(conv_col, "sum"), Sent=("Sent", "sum")
+    ).reset_index().sort_values("_month")
+    rows = [(r["_month"].strftime("%B %Y"), f"{r['Revenue']:,.0f}", f"{r['Conversions']:,.0f}", f"{r['Sent']:,.0f}")
+            for _, r in agg.iterrows()]
+    rows.append(("Total", f"{agg['Revenue'].sum():,.0f}", f"{agg['Conversions'].sum():,.0f}", f"{agg['Sent'].sum():,.0f}"))
+    return rows
+
+
+def add_slide_monthly_kpi(prs, df, period_label):
+    slide = blank_slide(prs)
+    rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
+    _header(slide, "KPI OVERVIEW", "Revenue & Conversions by Month", period_label)
+    rows = monthly_kpi_rows(df)
+    styled_table(slide, 0.55, 1.9, 8.5, ["Month", "Revenue (SAR)", "Conversions", "Sent"],
+                 rows, [2.6, 2.2, 1.9, 1.8])
     add_morph(slide)
 
 
@@ -182,6 +207,7 @@ def build_deck(df, client_name="", period_label=None, comparison_result=None, co
     add_slide_title(prs, client_name, period_label)
     add_slide_agenda(prs, period_label)
     add_slide_exec_summary(prs, summary, period_label)
+    add_slide_monthly_kpi(prs, df, period_label)
     add_slide_trend(prs, df, period_label)
     add_slide_channels(prs, df, period_label)
     add_slide_campaigns(prs, df, period_label)
