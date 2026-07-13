@@ -3,6 +3,8 @@ numbers and charts; slides_narrative.py owns prose. Never rendered server-side
 — build_deck returns bytes for st.download_button."""
 import functools
 import io
+import os
+import zipfile
 
 import plotly.graph_objects as go
 import plotly.io as pio
@@ -406,4 +408,82 @@ def build_deck(df, client_name="", period_label=None) -> bytes:
     add_slide_action_plan(prs, actions, period_label)
     buf = io.BytesIO()
     prs.save(buf)
-    return buf.getvalue()
+    return embed_fonts(buf.getvalue())
+
+
+_FONT_DIR = os.path.join(os.path.dirname(__file__), "assets", "fonts")
+# Each entry: (typeface name as used in runs, {style tag: filename})
+_EMBED_FONTS = [
+    ("DM Sans", {"regular": "DMSans-Regular.ttf", "bold": "DMSans-Bold.ttf"}),
+    ("DM Sans Medium", {"regular": "DMSans-Medium.ttf"}),
+]
+_P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
+_R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_CT_FONT = "application/x-fontdata"
+_RT_FONT = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/font"
+
+
+def embed_fonts(pptx_bytes: bytes) -> bytes:
+    """Add DM Sans TTFs as embedded font parts. Best-effort: on any error returns
+    the original bytes unchanged (deck still valid, just not embedded)."""
+    try:
+        src = zipfile.ZipFile(io.BytesIO(pptx_bytes))
+        names = set(src.namelist())
+        pres = src.read("ppt/presentation.xml").decode("utf-8")
+        rels = src.read("ppt/_rels/presentation.xml.rels").decode("utf-8")
+        ct = src.read("[Content_Types].xml").decode("utf-8")
+
+        existing_rids = [int(x) for x in __import__("re").findall(r'Id="rId(\d+)"', rels)]
+        next_rid = (max(existing_rids) + 1) if existing_rids else 1
+
+        font_parts, rels_add, lst_entries, idx = {}, [], [], 1
+        for typeface, styles in _EMBED_FONTS:
+            font_xml = f'<p:embeddedFont><p:font typeface="{typeface}"/>'
+            for style_tag, fname in styles.items():
+                path = os.path.join(_FONT_DIR, fname)
+                if not os.path.exists(path):
+                    continue
+                part_name = f"ppt/fonts/font{idx}.fntdata"
+                with open(path, "rb") as fh:
+                    font_parts[part_name] = fh.read()
+                rid = f"rId{next_rid}"; next_rid += 1
+                rels_add.append(
+                    f'<Relationship Id="{rid}" Type="{_RT_FONT}" Target="fonts/font{idx}.fntdata"/>')
+                tag = "regular" if style_tag == "regular" else style_tag
+                font_xml += f'<p:{tag} r:id="{rid}"/>'
+                idx += 1
+            font_xml += "</p:embeddedFont>"
+            lst_entries.append(font_xml)
+
+        if not font_parts:
+            return pptx_bytes
+
+        # inject embeddedFontLst + embedTrueTypeFonts attr into presentation.xml
+        lst = f'<p:embeddedFontLst>{"".join(lst_entries)}</p:embeddedFontLst>'
+        pres_tag_end = pres.index(">", pres.index("<p:presentation"))
+        if "xmlns:r=" not in pres[:pres_tag_end]:
+            pres = pres.replace("<p:presentation ", f'<p:presentation xmlns:r="{_R_NS}" ', 1)
+        pres = pres.replace("<p:presentation ", "<p:presentation embedTrueTypeFonts=\"1\" ", 1)
+        pres = pres.replace("<p:sldIdLst", lst + "<p:sldIdLst", 1)
+
+        rels = rels.replace("</Relationships>", "".join(rels_add) + "</Relationships>")
+        if _CT_FONT not in ct:
+            ct = ct.replace("</Types>",
+                            f'<Default Extension="fntdata" ContentType="{_CT_FONT}"/></Types>')
+
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+            for n in src.namelist():
+                if n == "ppt/presentation.xml":
+                    z.writestr(n, pres)
+                elif n == "ppt/_rels/presentation.xml.rels":
+                    z.writestr(n, rels)
+                elif n == "[Content_Types].xml":
+                    z.writestr(n, ct)
+                else:
+                    z.writestr(n, src.read(n))
+            for part_name, data in font_parts.items():
+                z.writestr(part_name, data)
+        return out.getvalue()
+    except Exception:
+        return pptx_bytes
