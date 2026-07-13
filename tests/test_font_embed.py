@@ -2,7 +2,7 @@ import io
 import zipfile
 import pandas as pd
 import pytest
-import slides_export as sx
+import slides_deck_content as sx
 import slides_narrative as sn
 
 

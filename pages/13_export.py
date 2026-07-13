@@ -5,7 +5,7 @@ from io import BytesIO
 from dashboard.state import get_ctx
 from analysis import top_campaigns, get_top_journeys, top_segments, channel_analysis, esp_analysis, time_series_analysis, failed_reasons_analysis
 from utils import format_metric
-import slides_export
+import slides_deck_content
 
 ctx = get_ctx()
 filtered_df = ctx.filtered_df
@@ -32,7 +32,7 @@ if st.button("Generate Client Review Deck"):
     else:
         with st.spinner("Building deck (rendering charts)…"):
             try:
-                st.session_state["deck_bytes"] = slides_export.build_deck(filtered_df, client_name=client_name)
+                st.session_state["deck_bytes"] = slides_deck_content.build_deck(filtered_df, client_name=client_name)
                 st.session_state["deck_sig"] = cur_sig
             except Exception as e:
                 st.error(f"Could not build the deck: {e}")
