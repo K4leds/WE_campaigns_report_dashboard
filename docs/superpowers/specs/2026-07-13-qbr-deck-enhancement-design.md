@@ -21,6 +21,25 @@ The dashboard already computes most of what's missing:
 This design wires that existing analysis into new/enhanced slides. No new data
 pipelines are introduced.
 
+**Audience.** This deck is read by experienced analysts and marketing managers
+deciding where to act, not a general-audience summary. Two consequences drive
+the rest of this design:
+- **Recommendations carry numbers, not just narrative.** `insights_engine.
+  generate_top_actions()` already computes `expected_impact` (a dollar or
+  percentage-point figure) per action; today `slides_narrative.
+  narrate_recommendation()` drops it in favor of a prose sentence. The
+  Recommendations slide (17) is changed to show the sentence *and* the
+  `expected_impact` figure as a stat, so every recommendation is defensible in
+  a client ROI conversation.
+- **Rate metrics carry a benchmark, not a bare number.** `insights_engine`
+  already encodes what "good" looks like for the rates it alerts on (delivery
+  rate <85% is critical, conversion-rate/CTR drop >30-40% vs. historical is a
+  problem, ROAS ≥4 is strong / ≥2 is workable). Any stat tile or table column
+  showing delivery rate, CTR, conversion rate, or ROAS displays that threshold
+  as a small reference label (e.g. "target >90%") pulled from the same
+  constants `insights_engine` uses, so a manager can judge good vs. bad
+  without leaving the slide.
+
 ## Slide lineup (10 → 18 slides)
 
 1. Title — unchanged.
@@ -56,7 +75,8 @@ pipelines are introduced.
     fed by `ctx.comparison_result` (the dashboard's existing comparison state).
 15. What's Working (opportunities) — unchanged.
 16. What's At Risk (alerts) — unchanged.
-17. Recommendations — unchanged.
+17. Recommendations — each recommendation now shows its `expected_impact`
+    figure (from `generate_top_actions`) as a stat alongside the sentence.
 18. Action Plan — unchanged, followed by a static closing brand slide
     ("Measure. Analyze. Optimize.").
 
