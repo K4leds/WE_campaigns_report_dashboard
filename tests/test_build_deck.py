@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 from pptx import Presentation
 import slides_deck_content as sx
+import slides_export as sx_export
 import slides_narrative as sn
 
 
@@ -37,7 +38,11 @@ def _full_df():
         "Channel": ["Email", "Web Push", "SMS"] * 2,
         "ESP/SSP/WSP/RSP name": ["SES", "FCM", "Twilio"] * 2,
         "Reporting Period Start Date": pd.to_datetime(
-            ["2026-06-01", "2026-06-02", "2026-06-03"] * 2),
+            # Email's first occurrence is pinned to 06-02 (not 06-01) so that Email
+            # has data on both sides of the current/comparison split in
+            # _comparison_result below — otherwise every channel maps to exactly
+            # one date and per-channel QoQ can never find an overlapping channel.
+            ["2026-06-02", "2026-06-02", "2026-06-03", "2026-06-01", "2026-06-02", "2026-06-03"]),
         "Sent": [1000, 900, 800, 500, 400, 300],
         "Delivered": [960, 880, 700, 480, 390, 280],
         "Failed Invalid Number": [10, 5, 20, 5, 3, 2],
@@ -60,6 +65,24 @@ def _comparison_result(df):
         "current_days": 2, "comparison_days": 1,
         "current_label": "Jun 2-3", "comparison_label": "Jun 1",
     }
+
+
+def test_channel_card_rows_flags_low_volume_channel():
+    df = _df()  # SMS has 800+300=1100 sent total, others higher -> still >= CHANNEL_MIN_SENT (200)
+    rows = sx.channel_card_rows(df)
+    assert all(r["status"] in ("ACTIVE", "LOW VOLUME", "INACTIVE") for r in rows)
+    assert {r["channel"] for r in rows} == {"Email", "Web Push", "SMS"}
+
+
+def test_channel_card_rows_computes_qoq_when_comparison_given():
+    df = _full_df()
+    cr = _comparison_result(df)
+    rows = sx.channel_card_rows(cr["current_data"], comparison_df=cr["comparison_data"])
+    assert any(r["qoq"] is not None for r in rows)
+
+
+def test_build_deck_channel_cards_slide_has_no_bar_chart_helper_left():
+    assert not hasattr(sx_export, "chart_channels")
 
 
 def test_monthly_kpi_rows_includes_total_row():

@@ -10,7 +10,7 @@ from pptx.enum.shapes import MSO_SHAPE
 from slides_export import (
     new_deck, blank_slide, rect, text, stat_tile, styled_table, insight_box,
     recommendation_strip, add_morph, _header, _put_chart, journey_funnel_stages,
-    chart_trend, chart_channels, chart_journey_sankey, embed_fonts,
+    chart_trend, chart_journey_sankey, embed_fonts, channel_status, status_pill,
     BRAND, BRAND_D, TBL_HDR, INK, MUTED, LINE, WHITE, INSIGHT, GREEN, RED,
     PILL_LBL, F_REG, F_MED, F_BOLD, qoq_delta_text, BENCHMARK_DELIVERY_RATE,
 )
@@ -112,16 +112,55 @@ def add_slide_trend(prs, df, period_label):
     add_morph(slide)
 
 
-def add_slide_channels(prs, df, period_label):
+def channel_card_rows(df, comparison_df=None):
+    chan = channel_analysis(df)
+    rev_col = "Selected Revenue (SAR)" if "Selected Revenue (SAR)" in chan.columns else "Revenue (SAR)"
+    comp_chan = channel_analysis(comparison_df) if comparison_df is not None and not comparison_df.empty else None
+    rows = []
+    for _, r in chan.sort_values(rev_col, ascending=False).iterrows():
+        sent = r["Sent"]
+        status, color = channel_status(sent)
+        delivery = (r["Delivered"] / sent) if sent > 0 else 0
+        revenue = r[rev_col]
+        qoq = None
+        if comp_chan is not None:
+            match = comp_chan[comp_chan["Channel"] == r["Channel"]]
+            if not match.empty and match.iloc[0][rev_col] > 0:
+                prev = match.iloc[0][rev_col]
+                qoq = ((revenue - prev) / prev) * 100
+        rows.append({
+            "channel": r["Channel"], "status": status, "status_color": color,
+            "revenue": revenue, "delivery": delivery,
+            "insight": f"{delivery:.0%} delivery on {sent:,.0f} sends",
+            "qoq": qoq,
+        })
+    return rows
+
+
+def add_slide_channel_cards(prs, df, period_label, comparison_df=None):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
-    _header(slide, "CHANNEL PERFORMANCE", "Where Conversions Come From", period_label)
-    chan = channel_analysis(df)
-    _put_chart(slide, chart_channels(chan), 0.5, 1.9, 4.0)
-    conv_col = "Selected Conversions" if "Selected Conversions" in chan.columns else "Unique Conversions"
-    top = chan.sort_values(conv_col, ascending=False).head(6)
-    rows = [(r["Channel"], f"{r[conv_col]:,.0f}") for _, r in top.iterrows()]
-    styled_table(slide, 7.85, 1.9, 4.95, ["Channel", "Conversions"], rows, [3.2, 1.75])
+    _header(slide, "CHANNEL PERFORMANCE", "Where Revenue Comes From", period_label)
+    rows = channel_card_rows(df, comparison_df)[:6]
+    cols, card_w, card_h, gap_x, gap_y = 3, 3.95, 2.35, 0.19, 0.2
+    ox, oy = 0.55, 1.7
+    for i, r in enumerate(rows):
+        col, row = i % cols, i // cols
+        x = ox + col * (card_w + gap_x)
+        y = oy + row * (card_h + gap_y)
+        rect(slide, x, y, card_w, card_h, fill=WHITE, line=LINE, line_w=1.0)
+        rect(slide, x, y, card_w, 0.05, fill=BRAND)
+        text(slide, x + 0.22, y + 0.18, card_w - 1.6, 0.3, (r["channel"], 14, INK, F_BOLD, True, None))
+        status_pill(slide, x + card_w - 1.35, y + 0.2, r["status"], r["status_color"])
+        text(slide, x + 0.22, y + 0.58, card_w - 0.4, 0.35,
+             (f"SAR {r['revenue']:,.0f}", 18, BRAND, F_BOLD, True, None))
+        if r["qoq"] is not None:
+            arrow = "▲" if r["qoq"] > 0 else ("▼" if r["qoq"] < 0 else "→")
+            color = GREEN if r["qoq"] > 0 else (RED if r["qoq"] < 0 else MUTED)
+            text(slide, x + 0.22, y + 0.95, card_w - 0.4, 0.25,
+                 (f"{arrow} {r['qoq']:+.1f}% vs prior period", 10, color, F_MED, True, None))
+        text(slide, x + 0.22, y + card_h - 0.55, card_w - 0.4, 0.45,
+             (r["insight"], 10.5, MUTED, F_REG, False, None))
     add_morph(slide)
 
 
@@ -214,7 +253,10 @@ def build_deck(df, client_name="", period_label=None, comparison_result=None, co
     add_slide_exec_summary(prs, summary, period_label)
     add_slide_monthly_kpi(prs, df, period_label)
     add_slide_trend(prs, df, period_label)
-    add_slide_channels(prs, df, period_label)
+    add_slide_channel_cards(
+        prs, df, period_label,
+        comparison_df=comparison_result["comparison_data"] if comparison_result else None,
+    )
     add_slide_campaigns(prs, df, period_label)
     add_slide_journeys(prs, df, period_label)
     _add_findings_slide(prs, "WHAT'S WORKING", "Opportunities",

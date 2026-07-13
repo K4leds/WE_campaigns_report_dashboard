@@ -235,20 +235,6 @@ def chart_trend(ts_df, metric):
     return fig
 
 
-def chart_channels(chan_df):
-    conv_col = "Selected Conversions" if "Selected Conversions" in chan_df.columns else "Unique Conversions"
-    d = chan_df.sort_values(conv_col, ascending=True)
-    fig = go.Figure(go.Bar(
-        x=d[conv_col], y=d["Channel"], orientation="h",
-        marker_color="#006FA2", text=d[conv_col], textposition="auto"))
-    fig.update_layout(
-        font=_PLOTLY_FONT, paper_bgcolor="white", plot_bgcolor="white",
-        margin=dict(l=120, r=24, t=12, b=24), width=720, height=430,
-        xaxis=dict(showgrid=True, gridcolor="#EEF2F4", zeroline=False),
-        yaxis=dict(showgrid=False))
-    return fig
-
-
 def chart_journey_sankey(stages):
     # stages: [(label, value), ...] progression; each step also produces a drop-off.
     labels, node_colors, src, tgt, val, link_colors = [], [], [], [], [], []

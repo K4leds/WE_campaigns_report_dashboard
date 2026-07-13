@@ -27,8 +27,7 @@ def test_funnel_stages_monotonic_and_labeled():
 
 def test_chart_builders_return_figures():
     df = _df()
-    from analysis import time_series_analysis, channel_analysis
+    from analysis import time_series_analysis
     assert isinstance(sx.chart_trend(time_series_analysis(df), "Unique Conversions"), go.Figure)
-    assert isinstance(sx.chart_channels(channel_analysis(df)), go.Figure)
     stages = sx.journey_funnel_stages(df, "Cart Recovery")
     assert isinstance(sx.chart_journey_sankey(stages), go.Figure)
