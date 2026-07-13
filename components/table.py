@@ -234,8 +234,8 @@ def _build_grid_options(
 
     gb = GridOptionsBuilder.from_dataframe(display_df)
     gb.configure_default_column(
-        resizable=True, sortable=True, filter=True, minWidth=110,
-        wrapHeaderText=True,
+        resizable=True, sortable=True, filter=True,
+        minWidth=110, flex=1, wrapHeaderText=True,
     )
 
     for col in df.columns:
@@ -283,6 +283,16 @@ def _build_grid_options(
                 )
             else:
                 gb.configure_column(field=col, header_name=header_name, type=["numericColumn"])
+
+    # Give columns with long header names more min-width to avoid 3-line wrapping.
+    # autoHeaderHeight miscalculates when text wraps beyond 2 lines, cutting off content.
+    LONG_HEADER_THRESHOLD = 20
+    LONG_HEADER_MINWIDTH = 160
+    for col in display_df.columns:
+        cfg = _column_config_to_aggrid(column_config.get(col)) if column_config else None
+        header_name = (cfg.get("headerName") or cfg.get("header_name") or col) if cfg else col
+        if len(str(header_name)) > LONG_HEADER_THRESHOLD:
+            gb.configure_column(field=col, minWidth=LONG_HEADER_MINWIDTH)
 
     if column_order:
         gb.configure_columns(column_order, hide=False)
@@ -417,10 +427,6 @@ def render_table(
         df, column_config, comparison_df, compare_on, height, column_order, total_row,
     )
 
-    # fit_columns_on_grid_load is intentionally NOT used here: with many columns it
-    # compresses everything below a readable width. Columns keep their natural/minWidth
-    # size and the grid scrolls horizontally instead (ag-Grid default, matches how wide
-    # Streamlit tables already behave in this dashboard).
     #
     # Stamp the ag-Grid key with a short hash of the column names. When attribution
     # settings change, column names change (e.g. "Unique Conversions" → "Click-Through
