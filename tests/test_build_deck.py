@@ -156,3 +156,12 @@ def test_top_campaigns_table_has_cvr_and_aov_columns():
 def test_top_campaign_spotlight_picks_highest_revenue_campaign():
     spotlight = sx.top_campaign_spotlight(_df())
     assert spotlight["name"] == "C1"  # C1 has Revenue 5500, the max in _df()
+
+
+def test_journeys_table_has_revenue_and_cvr_columns():
+    prs = sx.new_deck()
+    sx.add_slide_journeys(prs, _full_df(), "Jun 2026")
+    tables = [sh for sh in prs.slides[0].shapes if sh.has_table]
+    assert tables, "expected a table on the journeys slide"
+    header_texts = [c.text for c in tables[0].table.rows[0].cells]
+    assert header_texts == ["Journey", "Conversions", "Revenue", "CVR"]

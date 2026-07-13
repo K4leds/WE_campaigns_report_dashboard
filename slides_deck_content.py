@@ -17,7 +17,7 @@ from slides_export import (
 )
 from insights_engine import generate_executive_summary, generate_top_actions
 from dashboard.comparisons_logic import calculate_period_metrics, calculate_uplift_significance
-from analysis import (get_top_journeys, channel_analysis,
+from analysis import (channel_analysis,
                       time_series_analysis)
 import slides_narrative as sn
 
@@ -263,11 +263,20 @@ def add_slide_journeys(prs, df, period_label):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
     _header(slide, "JOURNEY HEALTH", "Top Journey & Its Flow", period_label)
-    tj = get_top_journeys(df, "Unique Conversions", top_n=6)
-    if not tj.empty:
-        rows = [(str(r.iloc[0]), f"{r.iloc[1]:,.0f}") for _, r in tj.iterrows()]
-        styled_table(slide, 7.85, 1.9, 4.95, ["Journey", "Conversions"], rows, [3.2, 1.75])
-        stages = journey_funnel_stages(df, str(tj.iloc[0, 0]))
+    conv_col = "Selected Conversions" if "Selected Conversions" in df.columns else "Unique Conversions"
+    rev_col = "Selected Revenue (SAR)" if "Selected Revenue (SAR)" in df.columns else "Revenue (SAR)"
+    jdf = df[df["Journey Name"].notna() & (df["Journey Name"] != "nan") & (df["Journey Name"] != "")]
+    if not jdf.empty:
+        agg = jdf.groupby("Journey Name").agg(
+            Conversions=(conv_col, "sum"), Revenue=(rev_col, "sum"), Clicks=("Unique Clicks", "sum")
+        ).reset_index().nlargest(6, "Conversions")
+        agg["CVR"] = np.where(agg["Clicks"] > 0, agg["Conversions"] / agg["Clicks"], 0)
+        rows = [(r["Journey Name"], f"{r['Conversions']:,.0f}", f"SAR {r['Revenue']:,.0f}", f"{r['CVR']:.1%}")
+                for _, r in agg.iterrows()]
+        styled_table(slide, 7.85, 1.9, 4.95, ["Journey", "Conversions", "Revenue", "CVR"], rows,
+                     [2.05, 0.95, 1.15, 0.8])
+        top_journey_name = str(agg.iloc[0]["Journey Name"])
+        stages = journey_funnel_stages(df, top_journey_name)
         _put_chart(slide, chart_journey_sankey(stages), 0.3, 2.6, 2.9)
     add_morph(slide)
 
