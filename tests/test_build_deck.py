@@ -142,3 +142,12 @@ def test_build_deck_adds_control_uplift_slide_when_data_present():
     n_minimal = len(Presentation(io.BytesIO(data_minimal)).slides)
     n_full = len(Presentation(io.BytesIO(data_full)).slides)
     assert n_full == n_minimal + 1
+
+
+def test_top_campaigns_table_has_cvr_and_aov_columns():
+    prs = sx.new_deck()
+    sx.add_slide_campaigns(prs, _full_df(), "Jun 2026")
+    tables = [sh for sh in prs.slides[0].shapes if sh.has_table]
+    assert tables, "expected a table on the campaigns slide"
+    header_texts = [c.text for c in tables[0].table.rows[0].cells]
+    assert header_texts == ["Campaign", "Conversions", "Revenue", "CVR", "AOV"]

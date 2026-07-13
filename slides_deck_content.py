@@ -3,6 +3,7 @@ slides_export.py for drawing primitives and on analysis/insights_engine/
 comparisons_logic for the numbers each slide shows."""
 import io
 import pandas as pd
+import numpy as np
 
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.enum.shapes import MSO_SHAPE
@@ -16,7 +17,7 @@ from slides_export import (
 )
 from insights_engine import generate_executive_summary, generate_top_actions
 from dashboard.comparisons_logic import calculate_period_metrics, calculate_uplift_significance
-from analysis import (top_campaigns, get_top_journeys, channel_analysis,
+from analysis import (get_top_journeys, channel_analysis,
                       time_series_analysis)
 import slides_narrative as sn
 
@@ -204,9 +205,17 @@ def add_slide_campaigns(prs, df, period_label):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
     _header(slide, "TOP CAMPAIGNS", "Highest-Converting Campaigns", period_label)
-    tc = top_campaigns(df, "Unique Conversions", top_n=8)
-    rows = [(str(r.iloc[0]), f"{r.iloc[1]:,.0f}") for _, r in tc.iterrows()]
-    styled_table(slide, 0.55, 1.7, 7.0, ["Campaign", "Conversions"], rows, [5.2, 1.8])
+    conv_col = "Selected Conversions" if "Selected Conversions" in df.columns else "Unique Conversions"
+    rev_col = "Selected Revenue (SAR)" if "Selected Revenue (SAR)" in df.columns else "Revenue (SAR)"
+    agg = df.groupby("Campaign Name").agg(
+        Conversions=(conv_col, "sum"), Revenue=(rev_col, "sum"), Clicks=("Unique Clicks", "sum")
+    ).reset_index().nlargest(8, "Conversions")
+    agg["CVR"] = np.where(agg["Clicks"] > 0, agg["Conversions"] / agg["Clicks"], 0)
+    agg["AOV"] = np.where(agg["Conversions"] > 0, agg["Revenue"] / agg["Conversions"], 0)
+    rows = [(r["Campaign Name"], f"{r['Conversions']:,.0f}", f"SAR {r['Revenue']:,.0f}",
+             f"{r['CVR']:.1%}", f"SAR {r['AOV']:,.0f}") for _, r in agg.iterrows()]
+    styled_table(slide, 0.55, 1.7, 11.4, ["Campaign", "Conversions", "Revenue", "CVR", "AOV"], rows,
+                 [4.6, 1.6, 2.0, 1.5, 1.7])
     add_morph(slide)
 
 
