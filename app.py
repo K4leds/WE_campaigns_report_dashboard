@@ -1,6 +1,5 @@
 import os
-import hashlib
-import json
+
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -113,11 +112,6 @@ st.set_page_config(
 
 # Placeholder for brand logo — replace with actual logo path
 # st.logo("assets/logo.png", size="large")
-
-def _hash_filters(filters_dict):
-    """Stable MD5 hash of filter values to detect changes without widget callbacks."""
-    raw = json.dumps(filters_dict, sort_keys=True, default=str)
-    return hashlib.md5(raw.encode()).hexdigest()
 
 
 def _month_range_options(start_date, end_date):
@@ -333,8 +327,7 @@ if uploaded_file is not None:
         }
     _opts = st.session_state['_filter_options']
 
-    # Store date bounds in session_state so the fragment can access them when
-    # re-running in isolation (without the main flow re-executing).
+    # Store date bounds in session_state for sidebar widget defaults.
     if not df.empty:
         st.session_state['_df_min_date'] = df['Reporting Period Start Date'].min()
         st.session_state['_df_max_date'] = df['Reporting Period End Date'].max()
@@ -342,12 +335,13 @@ if uploaded_file is not None:
         st.session_state['_df_min_date'] = None
         st.session_state['_df_max_date'] = None
 
-    # --- Sidebar filter fragment ---
-    # When a widget inside this fragment changes, only the fragment re-runs.
-    # Hash-based change detection triggers st.rerun(scope="app") to propagate
-    # the new values to the main flow without blocking the UI.
-    @st.fragment
-    def _sidebar_filters():
+    # --- Sidebar filters ---
+    # No @st.fragment here: fragment + st.rerun(scope="app") doesn't reliably
+    # trigger pg.run() to re-execute the current page, so filter changes were
+    # ignored until the user navigated away and back. Plain widget reruns
+    # (Streamlit's natural full-script re-execution) work correctly because
+    # every expensive computation downstream is already @st.cache_data'd.
+    with st.sidebar:
         st.header("Filters")
 
         # Global Attribution Filters
@@ -356,36 +350,36 @@ if uploaded_file is not None:
             "Revenue Attribution",
             ["Total", "Impression-Through", "Click-Through"],
             help="Select which type of revenue attribution to use throughout the dashboard",
-            key="_frag_rev_attr"
+            key="sidebar_rev_attr"
         )
         conversion_attribution = st.selectbox(
             "Conversion Attribution",
             ["Total", "Impression-Through", "Click-Through"],
             help="Select which type of conversion attribution to use throughout the dashboard",
-            key="_frag_conv_attr"
+            key="sidebar_conv_attr"
         )
 
         # Date range picker
         min_date = st.session_state.get('_df_min_date')
         max_date = st.session_state.get('_df_max_date')
         if min_date is not None and max_date is not None:
-            use_month_picker = st.toggle("Use Month Picker", value=False, key="_frag_month_picker")
+            use_month_picker = st.toggle("Use Month Picker", value=False, key="sidebar_month_picker")
             if use_month_picker:
                 month_options = _month_range_options(min_date, max_date)
                 month_labels = [m.strftime('%b %Y') for m in month_options]
                 if month_labels:
-                    start_month_label = st.selectbox("Start Month", month_labels, index=0, key="_frag_start_month")
-                    end_month_label = st.selectbox("End Month", month_labels, index=len(month_labels) - 1, key="_frag_end_month")
+                    start_month_label = st.selectbox("Start Month", month_labels, index=0, key="sidebar_start_month")
+                    end_month_label = st.selectbox("End Month", month_labels, index=len(month_labels) - 1, key="sidebar_end_month")
                     start_month = month_options[month_labels.index(start_month_label)]
                     end_month = month_options[month_labels.index(end_month_label)]
                     date_range = (start_month, (end_month + pd.offsets.MonthEnd(0)).date())
                 else:
                     date_range = (min_date, max_date)
             else:
-                date_range = st.date_input("Date Range", value=(min_date, max_date), key="_frag_date_range")
+                date_range = st.date_input("Date Range", value=(min_date, max_date), key="sidebar_date_range")
         else:
             use_month_picker = False
-            date_range = st.date_input("Date Range", [], key="_frag_date_range")
+            date_range = st.date_input("Date Range", [], key="sidebar_date_range")
 
         # Comparison Period Settings
         st.subheader("📊 Comparison Settings")
@@ -394,7 +388,7 @@ if uploaded_file is not None:
             ["None", "Previous Period (Auto)", "Week over Week", "Month over Month",
              "Quarter over Quarter", "Custom Date Range"],
             help="Select a comparison period to see trends and changes",
-            key="_frag_comp_mode"
+            key="sidebar_comp_mode"
         )
 
         comparison_date_range = None
@@ -407,11 +401,11 @@ if uploaded_file is not None:
                     if month_labels:
                         comp_start_label = st.selectbox(
                             "Comparison Start Month", month_labels, index=0,
-                            key="_frag_comp_start"
+                            key="sidebar_comp_start"
                         )
                         comp_end_label = st.selectbox(
                             "Comparison End Month", month_labels,
-                            index=min(1, len(month_labels) - 1), key="_frag_comp_end"
+                            index=min(1, len(month_labels) - 1), key="sidebar_comp_end"
                         )
                         comp_start = month_options[month_labels.index(comp_start_label)]
                         comp_end = month_options[month_labels.index(comp_end_label)]
@@ -420,71 +414,26 @@ if uploaded_file is not None:
                     comparison_date_range = st.date_input(
                         "Custom Comparison Range",
                         value=(min_date, min_date + pd.Timedelta(days=7)),
-                        key="_frag_comp_date_range"
+                        key="sidebar_comp_date_range"
                     )
             else:
-                comparison_date_range = st.date_input("Custom Comparison Range", [], key="_frag_comp_date_range")
+                comparison_date_range = st.date_input("Custom Comparison Range", [], key="sidebar_comp_date_range")
 
         # Multi-select filters
         _opts = st.session_state.get('_filter_options', {})
-        channels = st.multiselect("Channels", _opts.get('channels', []), key="_frag_channels")
+        channels = st.multiselect("Channels", _opts.get('channels', []), key="sidebar_channels")
         campaign_types = st.multiselect(
             "Campaign Type", _opts.get('campaign_types', []),
-            help="Filter by Journey or One-Time campaigns", key="_frag_camp_types"
+            help="Filter by Journey or One-Time campaigns", key="sidebar_camp_types"
         )
-        campaigns = st.multiselect("Campaigns", _opts.get('campaigns', []), key="_frag_campaigns")
-        segments = st.multiselect("Segments", _opts.get('segments', []), key="_frag_segments")
-        journeys = st.multiselect("Journeys", _opts.get('journeys', []), key="_frag_journeys")
+        campaigns = st.multiselect("Campaigns", _opts.get('campaigns', []), key="sidebar_campaigns")
+        segments = st.multiselect("Segments", _opts.get('segments', []), key="sidebar_segments")
+        journeys = st.multiselect("Journeys", _opts.get('journeys', []), key="sidebar_journeys")
         conversion_events = st.multiselect(
             "Conversion Event", _opts.get('conversion_events', []),
             help="Filter by conversion event type (e.g., Order Completed, Cart Submitted)",
-            key="_frag_conv_events"
+            key="sidebar_conv_events"
         )
-
-        # Build filter values dict and detect changes via stable hash comparison
-        current_filters = {
-            'revenue_attribution': revenue_attribution,
-            'conversion_attribution': conversion_attribution,
-            'date_range': date_range,
-            'use_month_picker': use_month_picker,
-            'comparison_mode': comparison_mode,
-            'comparison_date_range': comparison_date_range,
-            'channels': channels,
-            'campaign_types': campaign_types,
-            'campaigns': campaigns,
-            'segments': segments,
-            'journeys': journeys,
-            'conversion_events': conversion_events,
-        }
-        current_hash = _hash_filters(current_filters)
-        applied_hash = st.session_state.get('_filter_applied_hash')
-
-        if applied_hash is not None and current_hash != applied_hash:
-            # User changed a filter — store values and trigger full app rerun
-            st.session_state['_filter_draft'] = current_filters
-            st.session_state['_filter_applied_hash'] = current_hash
-            st.rerun(scope="app")
-        elif applied_hash is None:
-            # Initial load — store values without triggering rerun
-            st.session_state['_filter_draft'] = current_filters
-            st.session_state['_filter_applied_hash'] = current_hash
-
-    with st.sidebar:
-        _sidebar_filters()
-
-    # Read filter values from session_state (populated by the fragment above)
-    _fv = st.session_state.get('_filter_draft', {})
-    revenue_attribution = _fv.get('revenue_attribution', 'Total')
-    conversion_attribution = _fv.get('conversion_attribution', 'Total')
-    date_range = _fv.get('date_range', ())
-    comparison_mode = _fv.get('comparison_mode', 'None')
-    comparison_date_range = _fv.get('comparison_date_range', None)
-    channels = _fv.get('channels', [])
-    campaign_types = _fv.get('campaign_types', [])
-    campaigns = _fv.get('campaigns', [])
-    segments = _fv.get('segments', [])
-    journeys = _fv.get('journeys', [])
-    conversion_events = _fv.get('conversion_events', [])
 
     # Display-friendly labels for the selected attribution model
     _REV_ATTR_LABELS = {"Total": "Revenue (SAR)", "Click-Through": "Click-Through Revenue (SAR)", "Impression-Through": "Impression-Through Revenue (SAR)"}

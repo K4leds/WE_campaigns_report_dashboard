@@ -428,7 +428,15 @@ def render_table(
     # to update columns in-place and renders blank cells for the renamed columns.
     import hashlib
     cols_fingerprint = hashlib.md5(",".join(df.columns).encode()).hexdigest()[:8]
-    stamped_key = f"{key}__cols_{cols_fingerprint}"
+    # Data fingerprint: row count + head/tail sample. Ensures ag-Grid gets a
+    # fresh component when filter changes don't rename columns but change data.
+    n_rows = len(df)
+    if n_rows > 0:
+        sample = df.head(min(3, n_rows)).to_json() + df.tail(min(2, n_rows)).to_json()
+    else:
+        sample = ""
+    data_fp = hashlib.md5(f"{n_rows}|{sample}".encode()).hexdigest()[:8]
+    stamped_key = f"{key}_c_{cols_fingerprint}_d_{data_fp}"
     AgGrid(
         display_df,
         gridOptions=grid_options,
