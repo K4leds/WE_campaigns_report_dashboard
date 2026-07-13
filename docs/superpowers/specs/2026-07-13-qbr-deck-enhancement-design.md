@@ -40,12 +40,13 @@ the rest of this design:
   constants `insights_engine` uses, so a manager can judge good vs. bad
   without leaving the slide.
 
-## Slide lineup (10 → 18 slides)
+## Slide lineup (10 → 20 slides)
 
 1. Title — unchanged.
 2. **Agenda** *(new)* — static section list.
 3. Executive Summary — tiles gain a QoQ delta (▲/▼ %) next to each metric when
-   comparison mode is active (via `calculate_metric_changes`); unchanged otherwise.
+   comparison mode is active (via `calculate_metric_changes`); the Delivery
+   Rate tile always shows its benchmark target.
 4. **Monthly KPI table** *(new)* — Revenue / Conversions / Sent by month with a
    Total row (same groupby-by-month pattern already used in
    `pages/14_comparisons.py::_cached_monthly_trend`).
@@ -54,36 +55,53 @@ the rest of this design:
    channel: status pill (Active / Low Volume / Inactive, from
    `CHANNEL_MIN_SENT`), revenue, delivery rate, one computed insight sentence,
    QoQ arrow when comparison data exists. Source: `channel_analysis`.
-7. **Control Group Uplift** *(new, conditional)* — uplift % and reliability tier.
+7. **Channel Metrics table** *(new)* — a second, data-dense channel slide
+   alongside the cards: two stacked tables (Sent / Delivered / Delivery Rate /
+   Clicks / CTR, then Conversions / Conv Rate / Revenue / AOV / ROAS) with one
+   row per channel, closer to the UPC sample's "Channels Performance" table
+   than the cards are. ROAS column only appears if `Campaign Cost` exists.
+8. **Control Group Uplift** *(new, conditional)* — uplift % and reliability tier.
    Emitted only if `Total in Control Group` has nonzero data.
    Source: `calculate_uplift_significance`, `control_group_uplift` metric.
-8. Top Campaigns — table gains CVR and AOV columns (not just conversions).
-9. **Campaign Spotlight** *(new)* — large stat-card slide for the single
-   #1-ranked campaign: revenue, CVR, audience size, one-line computed insight.
-   No creative image (not in the source data).
-10. **Top Segments** *(new, conditional)* — table, only if `Segment Name` is
+9. Top Campaigns — table gains CVR and AOV columns (not just conversions).
+10. **Campaign Spotlight** *(new)* — large stat-card slide for the single
+    #1-ranked campaign: revenue, CVR, audience size, one-line computed insight.
+    No creative image (not in the source data).
+11. **Top Segments** *(new, conditional)* — table, only if `Segment Name` is
     populated. Source: `top_segments`.
-11. Journeys — table gains Revenue and CVR columns.
-12. **Deliverability / ESP** *(new, conditional)* — ESP performance table +
+12. Journeys — table gains Revenue and CVR columns.
+13. **Deliverability / ESP** *(new, conditional)* — ESP performance table +
     top failure reasons. Only if `ESP/SSP/WSP/RSP name` or failure-reason
     columns exist. Source: `esp_analysis`, `failed_reasons_analysis`.
-13. **Attribution breakdown** *(new, conditional)* — Click-Through /
+14. **Attribution breakdown** *(new, conditional)* — Click-Through /
     Impression-Only / Send-Only split. Source: `attribution_analysis`.
-14. **QoQ Scorecard** *(new, conditional on comparison mode)* — table:
+15. **QoQ Scorecard** *(new, conditional on comparison mode)* — table:
     Revenue / Conversions / CTR / Delivery Rate / AOV / ROAS, current vs.
-    previous period, % change, trend arrow. Source: `calculate_metric_changes`,
-    fed by `ctx.comparison_result` (the dashboard's existing comparison state).
-15. What's Working (opportunities) — unchanged.
-16. What's At Risk (alerts) — unchanged.
-17. Recommendations — each recommendation now shows its `expected_impact`
+    previous period, % change, trend arrow, with benchmark labels on the
+    Delivery Rate and ROAS rows. Source: `calculate_metric_changes`, fed by
+    `ctx.comparison_result` (the dashboard's existing comparison state).
+16. What's Working (opportunities) — unchanged.
+17. What's At Risk (alerts) — unchanged.
+18. Recommendations — each recommendation now shows its `expected_impact`
     figure (from `generate_top_actions`) as a stat alongside the sentence.
-18. Action Plan — unchanged, followed by a static closing brand slide
-    ("Measure. Analyze. Optimize.").
+19. Action Plan — unchanged.
+20. Closing — static brand slide ("Measure. Analyze. Optimize.").
 
-Conditional slides (7, 10, 12, 13, 14) are silently skipped when their
+Conditional slides (8, 11, 13, 14, 15) are silently skipped when their
 underlying data isn't present — no broken/empty slides for a client CSV that
 lacks that column, matching the existing `_put_chart` degrade-gracefully
 pattern already in `slides_export.py`.
+
+## Narrative arc (storyline captions)
+Every slide's header gains an optional one-line "story" caption — a computed
+sentence connecting that slide to the one before it, so the deck reads as a
+chain of findings ("this total → broken down by month → shaped like this →
+driven by this channel → by these specific campaigns → ...") rather than a
+stack of independent reports. Each caption is built from numbers the
+corresponding slide-builder function already has in scope (or that its
+predecessor computed) — no new analysis, purely narrative framing on top of
+existing data. `_header()` renders the caption; a single `_build_storylines()`
+function computes all of them once per deck build.
 
 ## Plumbing change
 `pages/13_export.py` passes one new optional argument,

@@ -1657,6 +1657,8 @@ def test_build_deck_full_fixture_with_comparison_reaches_max_slide_count():
     data = sx.build_deck(df, client_name="Acme Co", comparison_result=cr, conversion_attribution="Total")
     prs = Presentation(io.BytesIO(data))
     # 14 base (Task 9) + control uplift + segments + deliverability + attribution + qoq scorecard
+    # NOTE: Task 17 (added after this task in the plan) inserts one more
+    # unconditional slide and bumps this assertion to 20 — see Task 17 Step 1.
     assert len(prs.slides) == 19
 ```
 
@@ -1731,6 +1733,337 @@ git commit -m "feat: wire comparison_result/conversion_attribution into deck exp
 
 ---
 
+### Task 17: Add a dense Channel Metrics table slide (separate from the channel cards)
+
+The channel cards (Task 6) stay exactly as they are — this adds a *second*,
+data-dense channel slide alongside them: one row per channel across two
+stacked tables covering delivery, engagement, and revenue efficiency, closer
+to the UPC sample's "Channels Performance" table than the cards are.
+
+**Files:**
+- Modify: `slides_deck_content.py`
+- Test: `tests/test_build_deck.py`
+
+**Interfaces:**
+- Produces: `channel_metrics_rows(df) -> dict` (keys: `engagement_rows`, `revenue_rows`, `revenue_headers`), `add_slide_channel_metrics(prs, data, period_label) -> None`.
+- Consumes: `analysis.channel_analysis` (already imported), `numpy as np` (already imported per Task 8).
+- This task does not touch `_header`'s `story` kwarg (it doesn't exist yet) — `add_slide_channel_metrics` is written using only the parameters `_header` supports today. Task 18 retrofits storyline support onto this function along with every other slide function, in the same mechanical pass.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+def test_channel_metrics_rows_has_engagement_and_revenue_tables():
+    data = sx.channel_metrics_rows(_df())
+    assert len(data["engagement_rows"]) == 3  # Email, Web Push, SMS
+    assert len(data["revenue_rows"]) == 3
+    assert data["revenue_headers"] == ["Channel", "Conversions", "Conv Rate", "Revenue", "AOV"]
+
+
+def test_channel_metrics_rows_adds_roas_column_when_cost_present():
+    df = _df().copy()
+    df["Campaign Cost"] = [100, 90, 80, 50, 40, 30]
+    data = sx.channel_metrics_rows(df)
+    assert data["revenue_headers"] == ["Channel", "Conversions", "Conv Rate", "Revenue", "AOV", "ROAS"]
+
+
+def test_build_deck_has_15_slides_minimal_fixture():
+    data = sx.build_deck(_df(), client_name="Acme Co", period_label="Jun 2026")
+    prs = Presentation(io.BytesIO(data))
+    assert len(prs.slides) == 15
+```
+
+Update `test_build_deck_has_10_slides_with_client_name`'s assertion from
+`== 14` to `== 15` and delete the temporary
+`test_build_deck_has_15_slides_minimal_fixture` (same running-total
+convention as Tasks 3, 4, and 9). Also update
+`test_build_deck_full_fixture_with_comparison_reaches_max_slide_count`
+(Task 16) from `== 19` to `== 20`.
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `python -m pytest tests/test_build_deck.py -v`
+Expected: FAIL — `AttributeError: module 'slides_deck_content' has no attribute 'channel_metrics_rows'`.
+
+- [ ] **Step 3: Implement**
+
+Add after `add_slide_channel_cards`:
+
+```python
+def channel_metrics_rows(df):
+    chan = channel_analysis(df)
+    rev_col = "Selected Revenue (SAR)" if "Selected Revenue (SAR)" in chan.columns else "Revenue (SAR)"
+    conv_col = "Selected Conversions" if "Selected Conversions" in chan.columns else "Unique Conversions"
+    chan = chan.sort_values(rev_col, ascending=False).copy()
+    chan["Delivery Rate"] = np.where(chan["Sent"] > 0, chan["Delivered"] / chan["Sent"], 0)
+    chan["CTR"] = np.where(chan["Unique Impressions"] > 0, chan["Unique Clicks"] / chan["Unique Impressions"], 0)
+    chan["Conv Rate"] = np.where(chan["Unique Clicks"] > 0, chan[conv_col] / chan["Unique Clicks"], 0)
+    chan["AOV"] = np.where(chan[conv_col] > 0, chan[rev_col] / chan[conv_col], 0)
+
+    engagement_rows = [
+        (r["Channel"], f"{r['Sent']:,.0f}", f"{r['Delivered']:,.0f}",
+         f"{r['Delivery Rate']:.1%}", f"{r['Unique Clicks']:,.0f}", f"{r['CTR']:.2%}")
+        for _, r in chan.iterrows()
+    ]
+
+    has_cost = "Campaign Cost" in df.columns
+    if has_cost:
+        cost_by_channel = df.groupby("Channel")["Campaign Cost"].sum()
+        chan["Cost"] = chan["Channel"].map(cost_by_channel).fillna(0)
+        chan["ROAS"] = np.where(chan["Cost"] > 0, chan[rev_col] / chan["Cost"], 0)
+        revenue_headers = ["Channel", "Conversions", "Conv Rate", "Revenue", "AOV", "ROAS"]
+        revenue_rows = [
+            (r["Channel"], f"{r[conv_col]:,.0f}", f"{r['Conv Rate']:.1%}",
+             f"SAR {r[rev_col]:,.0f}", f"SAR {r['AOV']:,.0f}", f"{r['ROAS']:.2f}x")
+            for _, r in chan.iterrows()
+        ]
+    else:
+        revenue_headers = ["Channel", "Conversions", "Conv Rate", "Revenue", "AOV"]
+        revenue_rows = [
+            (r["Channel"], f"{r[conv_col]:,.0f}", f"{r['Conv Rate']:.1%}",
+             f"SAR {r[rev_col]:,.0f}", f"SAR {r['AOV']:,.0f}")
+            for _, r in chan.iterrows()
+        ]
+
+    return {"engagement_rows": engagement_rows, "revenue_rows": revenue_rows, "revenue_headers": revenue_headers}
+
+
+def add_slide_channel_metrics(prs, data, period_label):
+    slide = blank_slide(prs)
+    rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
+    _header(slide, "CHANNEL PERFORMANCE", "Full Channel Metrics", period_label)
+    styled_table(slide, 0.55, 1.85, 11.4,
+                 ["Channel", "Sent", "Delivered", "Delivery Rate", "Clicks", "CTR"],
+                 data["engagement_rows"], [2.2, 1.9, 1.9, 1.9, 1.7, 1.8])
+    revenue_widths = [2.2, 1.9, 1.9, 2.3, 1.7, 1.4] if len(data["revenue_headers"]) == 6 else [2.5, 2.5, 2.5, 2.5, 2.4]
+    styled_table(slide, 0.55, 4.35, 11.4, data["revenue_headers"], data["revenue_rows"], revenue_widths)
+    add_morph(slide)
+```
+
+In `build_deck`, immediately after the `add_slide_channel_cards(...)` call,
+add:
+
+```python
+    add_slide_channel_metrics(prs, channel_metrics_rows(df), period_label)
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `python -m pytest tests/test_build_deck.py -v`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add slides_deck_content.py tests/test_build_deck.py
+git commit -m "feat: add dense channel metrics table slide alongside the channel cards"
+```
+
+---
+
+### Task 18: Add storyline captions connecting each slide to the next
+
+**Files:**
+- Modify: `slides_export.py` (`_header` gains a `story` parameter)
+- Modify: `slides_deck_content.py` (every `add_slide_*` function gains a `story=None` parameter that it forwards to `_header`; `build_deck` computes the storyline sentences once and passes the right one to each call)
+- Test: `tests/test_slides_helpers.py`, `tests/test_build_deck.py`
+
+**Interfaces:**
+- Modifies: `_header(slide, eyebrow, title, period_label, story=None)` — new trailing optional kwarg, backward compatible with every existing call site that doesn't pass it.
+- Produces: `_build_storylines(summary, chan_rows, monthly_rows, spotlight, comparison_label) -> dict[str, str | None]` in `slides_deck_content.py`, keyed by slide name (`monthly_kpi`, `trend`, `channel_cards`, `channel_metrics`, `campaigns`, `spotlight`, `journeys`, `segments`, `deliverability`, `attribution`, `qoq_scorecard`, `recommendations`, `action_plan`).
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+# tests/test_slides_helpers.py
+def test_header_renders_story_line_when_given():
+    prs = sx.new_deck()
+    slide = sx.blank_slide(prs)
+    sx._header(slide, "TREND", "Conversions Over Time", "Jun 2026", story="Here's the shape behind that total.")
+    texts = " ".join(sh.text_frame.text for sh in prs.slides[0].shapes if sh.has_text_frame) if False else \
+            " ".join(sh.text_frame.text for sh in slide.shapes if sh.has_text_frame)
+    assert "Here's the shape behind that total." in texts
+```
+
+```python
+# tests/test_build_deck.py
+def test_build_storylines_references_top_channel_and_totals():
+    from insights_engine import generate_executive_summary
+    df = _full_df()
+    summary = generate_executive_summary(df)
+    chan_rows = sx.channel_card_rows(df)
+    monthly_rows = sx.monthly_kpi_rows(df)
+    spotlight = sx.top_campaign_spotlight(df)
+    stories = sx._build_storylines(summary, chan_rows, monthly_rows, spotlight, comparison_label=None)
+    assert stories["channel_cards"] is not None and chan_rows[0]["channel"] in stories["channel_cards"]
+    assert stories["spotlight"] is not None and spotlight["name"] in stories["spotlight"]
+
+
+def test_build_deck_channel_cards_slide_has_story_text():
+    data = sx.build_deck(_full_df(), client_name="Acme Co", period_label="Jun 2026")
+    prs = Presentation(io.BytesIO(data))
+    # slide order: title, agenda, exec, monthly kpi, trend, channel cards, channel metrics, ...
+    channel_cards_slide = prs.slides[5]
+    texts = " ".join(sh.text_frame.text for sh in channel_cards_slide.shapes if sh.has_text_frame)
+    assert "drove" in texts  # from the "{channel} alone drove {share:.0%}..." template
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `python -m pytest tests/test_slides_helpers.py tests/test_build_deck.py -v`
+Expected: FAIL — `TypeError: _header() got an unexpected keyword argument 'story'` and `AttributeError: module 'slides_deck_content' has no attribute '_build_storylines'`.
+
+- [ ] **Step 3: Implement `_header`'s story line in `slides_export.py`**
+
+Replace `_header`:
+
+```python
+def _header(slide, eyebrow, title, period_label, story=None):
+    rect(slide, 0.55, 0.42, 0.10, 0.62, fill=BRAND)
+    text(slide, 0.78, 0.40, 8.5, 0.3, (eyebrow, 10.5, BRAND, F_MED, True, 2.2))
+    text(slide, 0.76, 0.62, 9.5, 0.5, (title, 24, INK, F_BOLD, True, None))
+    if story:
+        text(slide, 0.78, 1.06, 9.5, 0.25, (story, 11, MUTED, F_REG, False, None))
+    if period_label:
+        text(slide, 9.2, 0.52, 3.6, 0.5,
+             [[("Reporting period  ", 10.5, MUTED, F_REG, False, None)],
+              [(period_label, 13, INK, F_MED, True, None)]], align=PP_ALIGN.RIGHT)
+    rect(slide, 0.55, 1.28, 12.23, 0.02, fill=LINE)
+```
+
+- [ ] **Step 4: Thread `story=None` through every slide-builder function**
+
+For each function below in `slides_deck_content.py`, add a trailing
+`story=None` parameter and pass it through to that function's `_header(...)`
+call by appending `, story=story)` in place of the call's closing `)`.
+Functions to change (all in `slides_deck_content.py`):
+`add_slide_agenda`, `add_slide_exec_summary`, `add_slide_monthly_kpi`,
+`add_slide_trend`, `add_slide_channel_cards`, `add_slide_control_uplift`,
+`add_slide_campaigns`, `add_slide_campaign_spotlight`, `add_slide_segments`,
+`add_slide_journeys`, `add_slide_deliverability`, `add_slide_attribution`,
+`add_slide_qoq_scorecard`, `_add_findings_slide`, `add_slide_recommendations`,
+`add_slide_action_plan`, and `add_slide_channel_metrics` (added in Task 17
+without a `story` parameter — add it here along with the rest).
+(`add_slide_title` and `add_slide_closing` don't call `_header` — skip them.)
+
+Example for `add_slide_trend` (apply the same pattern — add the parameter,
+add `story=story` to the `_header` call — to every function in the list
+above):
+
+```python
+def add_slide_trend(prs, df, period_label, story=None):
+    slide = blank_slide(prs)
+    rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
+    _header(slide, "PERFORMANCE TREND", "Conversions Over Time", period_label, story=story)
+    ts = time_series_analysis(df, "Unique Conversions")
+    if not _put_chart(slide, chart_trend(ts, "Unique Conversions"), 0.7, 1.7, 4.9):
+        text(slide, 0.76, 3.0, 11, 0.5, ("Trend chart unavailable.", 14, MUTED, F_REG, False, None))
+    add_morph(slide)
+```
+
+- [ ] **Step 5: Implement `_build_storylines` and wire it into `build_deck`**
+
+Add near the top of `slides_deck_content.py`, after the imports:
+
+```python
+def _build_storylines(summary, chan_rows, monthly_rows, spotlight, comparison_label):
+    """One computed sentence per slide, so the deck reads as a chain of
+    findings rather than a stack of independent reports. Every sentence is
+    built from numbers the caller already computed for that slide (or the
+    slide immediately before it) -- no new analysis, just narrative framing."""
+    m = summary.get("headline_metrics", {})
+    total_revenue = m.get("total_revenue", 0)
+    total_conversions = m.get("total_conversions", 0)
+    n_months = max(len(monthly_rows) - 1, 0)  # exclude the synthetic Total row
+
+    channel_cards_story = None
+    if chan_rows and total_revenue:
+        top = chan_rows[0]
+        share = top["revenue"] / total_revenue
+        channel_cards_story = f"{top['channel']} alone drove {share:.0%} of the SAR {total_revenue:,.0f} total below."
+
+    spotlight_story = None
+    if spotlight:
+        spotlight_story = f"'{spotlight['name']}' was the single best-performing campaign this period."
+
+    return {
+        "monthly_kpi": f"SAR {total_revenue:,.0f} came in across {n_months} month(s) — here's the monthly split.",
+        "trend": "Here's the day-by-day shape behind that total.",
+        "channel_cards": channel_cards_story,
+        "channel_metrics": "The full metric set behind those channels.",
+        "campaigns": "Here's which individual campaigns drove those channel numbers.",
+        "spotlight": spotlight_story,
+        "journeys": "Beyond one-off campaigns, here's how automated journeys performed.",
+        "segments": "Here's which audience segments converted best.",
+        "deliverability": "None of this works if messages don't land — a deliverability check.",
+        "attribution": f"How the {total_conversions:,.0f} conversions above split between click-driven and impression-driven.",
+        "qoq_scorecard": f"Compared to {comparison_label or 'the prior period'}, here's what moved.",
+        "recommendations": "Turning those findings into next steps.",
+        "action_plan": "Prioritized and ready to execute.",
+    }
+```
+
+In `build_deck`, after `ni = summary.get("narrative_insights", {}) or {}` and
+before `metric_changes, current_label, comparison_label = None, None, None`,
+compute the pieces `_build_storylines` needs and call it once
+`comparison_label` is known — move the call to just before
+`prs = new_deck()`:
+
+```python
+    chan_rows_for_story = channel_card_rows(df)
+    monthly_rows_for_story = monthly_kpi_rows(df)
+    spotlight_for_story = top_campaign_spotlight(df)
+    stories = _build_storylines(summary, chan_rows_for_story, monthly_rows_for_story,
+                                 spotlight_for_story, comparison_label)
+```
+
+Then update every `add_slide_*` call inside `build_deck` to pass its
+matching `story=stories.get("<key>")` argument, e.g.:
+
+```python
+    add_slide_monthly_kpi(prs, df, period_label, story=stories.get("monthly_kpi"))
+    add_slide_trend(prs, df, period_label, story=stories.get("trend"))
+    add_slide_channel_cards(
+        prs, df, period_label,
+        comparison_df=comparison_result["comparison_data"] if comparison_result else None,
+        story=stories.get("channel_cards"),
+    )
+    add_slide_channel_metrics(prs, channel_metrics_rows(df), period_label, story=stories.get("channel_metrics"))
+    # (this replaces Task 17's call, which did not pass `story`)
+```
+
+Apply the same `story=stories.get("<key>")` pattern to the remaining calls:
+`add_slide_control_uplift(..., story=stories.get("control_uplift"))` — note
+`"control_uplift"` is not a key `_build_storylines` returns (it's
+conditional and has no natural "connects to next slide" framing); pass
+`story=None` for it explicitly instead. Do the same for `add_slide_campaigns`
+(`story=stories.get("campaigns")`), `add_slide_campaign_spotlight`
+(`story=stories.get("spotlight")`), `add_slide_segments`
+(`story=stories.get("segments")`), `add_slide_journeys`
+(`story=stories.get("journeys")`), `add_slide_deliverability`
+(`story=stories.get("deliverability")`), `add_slide_attribution`
+(`story=stories.get("attribution")`), `add_slide_qoq_scorecard`
+(`story=stories.get("qoq_scorecard")`), `add_slide_recommendations`
+(`story=stories.get("recommendations")`), `add_slide_action_plan`
+(`story=stories.get("action_plan")`). Leave `add_slide_agenda`,
+`add_slide_exec_summary`, and the two `_add_findings_slide` calls with no
+`story` argument (they default to `None` — the agenda and exec summary open
+the story rather than continue it, and findings slides already carry their
+own narrated bullets).
+
+- [ ] **Step 6: Run the full test suite**
+
+Run: `python -m pytest tests/test_build_deck.py tests/test_slides_helpers.py -v`
+Expected: PASS.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add slides_export.py slides_deck_content.py tests/test_slides_helpers.py tests/test_build_deck.py
+git commit -m "feat: add computed storyline captions connecting each slide to the next"
+```
+
+---
+
 ## Self-Review Notes
 
 - **Spec coverage:** All 18 slide-lineup rows from the spec map to a task:
@@ -1747,10 +2080,33 @@ git commit -m "feat: wire comparison_result/conversion_attribution into deck exp
   defined but not surfaced anywhere; only the single "good" threshold is
   shown per metric to keep tiles/table cells short — acceptable since the
   spec asked for "a target reference," not a full three-tier legend.
+  Post-approval feedback added two more requirements, both covered: "the
+  channels table should have a lot of metrics" → Task 17 (a dense two-table
+  channel metrics slide, separate from and additive to the Task 6 cards,
+  covering Sent/Delivered/Delivery Rate/Clicks/CTR/Conversions/Conv
+  Rate/Revenue/AOV/ROAS); "the whole slides should tell a story" → Task 18
+  (`_header` gains a `story` line, `_build_storylines` computes one
+  connecting sentence per slide from numbers already computed for that
+  slide or the one before it, threaded through every `add_slide_*` call in
+  `build_deck`).
 - **Placeholder scan:** No TBD/TODO markers; every step has runnable code.
 - **Type consistency:** `channel_status`, `qoq_delta_text`, `status_pill`
   (Task 2) are used with identical signatures in Task 6 and Task 5. All
   `*_rows`/`*_data`/`*_summary` helpers consistently return `None` when their
   slide should be skipped, and `build_deck` consistently checks truthiness
   before calling the matching `add_slide_*` — verified across Tasks 7, 10,
-  12, 13, 14.
+  12, 13, 14. `add_slide_channel_metrics` is defined in Task 17 without a
+  `story` parameter (matching `_header`'s signature at that point in the
+  plan) and Task 18 retrofits it identically to every other slide function —
+  verified the Task 17 Interfaces line and Step 3 code agree with each other
+  (both omit `story`) and that Task 18 explicitly lists it among the
+  functions to update, including the `build_deck` call site.
+- **Task-ordering fix:** an earlier draft had Task 18 (storylines) depend on
+  Task 17 (channel metrics) for a parameter, while also being numbered to
+  execute after it — a forward reference that would have broken Task 17's
+  own tests. Resolved by keeping Task 17 free of the `story` kwarg entirely
+  (it's simply not part of `_header`'s signature yet) and having Task 18 add
+  `story` to *every* slide function, including the one Task 17 just wrote —
+  the same "later tasks extend earlier ones" pattern already used
+  throughout this plan (e.g. Task 8 modifies Task 1's `add_slide_campaigns`,
+  Task 14 modifies Task 1's `build_deck`).
