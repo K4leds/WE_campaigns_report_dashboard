@@ -15,6 +15,7 @@ from slides_export import (
     PILL_LBL, F_REG, F_MED, F_BOLD, qoq_delta_text, BENCHMARK_DELIVERY_RATE,
 )
 from insights_engine import generate_executive_summary, generate_top_actions
+from dashboard.comparisons_logic import calculate_period_metrics, calculate_uplift_significance
 from analysis import (top_campaigns, get_top_journeys, channel_analysis,
                       time_series_analysis)
 import slides_narrative as sn
@@ -164,6 +165,41 @@ def add_slide_channel_cards(prs, df, period_label, comparison_df=None):
     add_morph(slide)
 
 
+def control_group_uplift_summary(df, conversion_attribution="Total"):
+    if "Total in Control Group" not in df.columns or "Unique Control Group Conversions" not in df.columns:
+        return None
+    control = df[df["Total in Control Group"] > 0]
+    if control.empty:
+        return None
+    dates = pd.to_datetime(df["Reporting Period Start Date"]) if "Reporting Period Start Date" in df.columns else None
+    period_days = (dates.max() - dates.min()).days + 1 if dates is not None else 1
+    metrics = calculate_period_metrics(df, period_days, conversion_attribution)
+    uplift = metrics.get("control_group_uplift")
+    if uplift is None:
+        return None
+    total_control_group = control["Total in Control Group"].sum()
+    total_control_conversions = control["Unique Control Group Conversions"].sum()
+    conv_col = "Selected Conversions" if "Selected Conversions" in control.columns else "Unique Conversions"
+    test_conversions = control[conv_col].sum()
+    test_total = control["Sent"].sum()
+    _, is_significant, reliability = calculate_uplift_significance(
+        test_conversions, test_total, total_control_conversions, total_control_group)
+    return {"uplift_pct": uplift, "reliability": reliability, "is_significant": is_significant}
+
+
+def add_slide_control_uplift(prs, summary, period_label):
+    slide = blank_slide(prs)
+    rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
+    _header(slide, "CAMPAIGN EFFICIENCY", "Control Group vs. Target Group Uplift", period_label)
+    text(slide, 0.55, 2.0, 8, 0.6,
+         ("The control group measures how much WebEngage-targeted campaigns "
+          "outperform an untouched baseline audience.", 13, INK, F_REG, False, None))
+    color = GREEN if summary["uplift_pct"] > 0 else RED
+    stat_tile(slide, 0.55, 2.8, 3.4, 1.6, "CONVERSION UPLIFT",
+              f"{summary['uplift_pct']:+.1f}%", summary["reliability"], color)
+    add_morph(slide)
+
+
 def add_slide_campaigns(prs, df, period_label):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
@@ -257,6 +293,9 @@ def build_deck(df, client_name="", period_label=None, comparison_result=None, co
         prs, df, period_label,
         comparison_df=comparison_result["comparison_data"] if comparison_result else None,
     )
+    uplift_summary = control_group_uplift_summary(df, conversion_attribution)
+    if uplift_summary:
+        add_slide_control_uplift(prs, uplift_summary, period_label)
     add_slide_campaigns(prs, df, period_label)
     add_slide_journeys(prs, df, period_label)
     _add_findings_slide(prs, "WHAT'S WORKING", "Opportunities",

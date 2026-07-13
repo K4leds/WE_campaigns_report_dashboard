@@ -124,3 +124,21 @@ def test_exec_summary_delivery_tile_shows_benchmark():
     sx.add_slide_exec_summary(prs, summary, "Jun 2026")
     texts = " ".join(sh.text_frame.text for sh in prs.slides[0].shapes if sh.has_text_frame)
     assert "target" in texts.lower() and "90%" in texts
+
+
+def test_control_group_uplift_summary_none_without_control_columns():
+    assert sx.control_group_uplift_summary(_df()) is None
+
+
+def test_control_group_uplift_summary_present_with_control_columns():
+    summary = sx.control_group_uplift_summary(_full_df())
+    assert summary is not None
+    assert "uplift_pct" in summary and "reliability" in summary
+
+
+def test_build_deck_adds_control_uplift_slide_when_data_present():
+    data_minimal = sx.build_deck(_df(), client_name="Acme Co")
+    data_full = sx.build_deck(_full_df(), client_name="Acme Co")
+    n_minimal = len(Presentation(io.BytesIO(data_minimal)).slides)
+    n_full = len(Presentation(io.BytesIO(data_full)).slides)
+    assert n_full == n_minimal + 1
