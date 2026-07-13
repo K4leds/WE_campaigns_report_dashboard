@@ -76,3 +76,28 @@ def test_build_deck_has_10_slides_with_client_name():
     # client name appears on the title slide
     texts = [sh.text_frame.text for sh in prs.slides[0].shapes if sh.has_text_frame]
     assert any("Acme Co" in t for t in texts)
+
+
+def test_exec_summary_shows_qoq_delta_when_comparison_given():
+    from dashboard.comparisons_logic import calculate_period_metrics, calculate_metric_changes
+    df = _full_df()
+    cr = _comparison_result(df)
+    current_m = calculate_period_metrics(cr["current_data"], cr["current_days"], "Total")
+    comp_m = calculate_period_metrics(cr["comparison_data"], cr["comparison_days"], "Total")
+    changes = calculate_metric_changes(current_m, comp_m)
+
+    prs = sx.new_deck()
+    from insights_engine import generate_executive_summary
+    summary = generate_executive_summary(df)
+    sx.add_slide_exec_summary(prs, summary, "Jun 2026", changes, "Jun 1")
+    texts = " ".join(sh.text_frame.text for sh in prs.slides[0].shapes if sh.has_text_frame)
+    assert "vs Jun 1" in texts
+
+
+def test_exec_summary_delivery_tile_shows_benchmark():
+    prs = sx.new_deck()
+    from insights_engine import generate_executive_summary
+    summary = generate_executive_summary(_df())
+    sx.add_slide_exec_summary(prs, summary, "Jun 2026")
+    texts = " ".join(sh.text_frame.text for sh in prs.slides[0].shapes if sh.has_text_frame)
+    assert "target" in texts.lower() and "90%" in texts

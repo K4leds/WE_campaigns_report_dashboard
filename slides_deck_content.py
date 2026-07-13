@@ -12,7 +12,7 @@ from slides_export import (
     recommendation_strip, add_morph, _header, _put_chart, journey_funnel_stages,
     chart_trend, chart_channels, chart_journey_sankey, embed_fonts,
     BRAND, BRAND_D, TBL_HDR, INK, MUTED, LINE, WHITE, INSIGHT, GREEN, RED,
-    PILL_LBL, F_REG, F_MED, F_BOLD,
+    PILL_LBL, F_REG, F_MED, F_BOLD, qoq_delta_text, BENCHMARK_DELIVERY_RATE,
 )
 from insights_engine import generate_executive_summary, generate_top_actions
 from analysis import (top_campaigns, get_top_journeys, channel_analysis,
@@ -78,20 +78,25 @@ def add_slide_monthly_kpi(prs, df, period_label):
     add_morph(slide)
 
 
-def add_slide_exec_summary(prs, summary, period_label):
+def add_slide_exec_summary(prs, summary, period_label, metric_changes=None, comparison_label=None):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
     _header(slide, "EXECUTIVE SUMMARY", "Performance at a Glance", period_label)
     m = summary.get("headline_metrics", {})
-    tiles = [
-        ("REVENUE", f"SAR {m.get('total_revenue', 0):,.0f}"),
-        ("CONVERSIONS", f"{m.get('total_conversions', 0):,.0f}"),
-        ("DELIVERY RATE", f"{m.get('avg_delivery_rate', 0):.1%}"),
-        ("CONV. RATE", f"{m.get('avg_conversion_rate', 0):.1%}"),
+    tile_specs = [
+        ("REVENUE", f"SAR {m.get('total_revenue', 0):,.0f}", "selected_revenue", None),
+        ("CONVERSIONS", f"{m.get('total_conversions', 0):,.0f}", "selected_conversions", None),
+        ("DELIVERY RATE", f"{m.get('avg_delivery_rate', 0):.1%}", "delivery_rate",
+         f"target ≥{BENCHMARK_DELIVERY_RATE:.0%}"),
+        ("CONV. RATE", f"{m.get('avg_conversion_rate', 0):.1%}", "conversion_rate", None),
     ]
     tx, tw, gap = 0.55, 2.92, 0.15
-    for i, (lab, val) in enumerate(tiles):
-        stat_tile(slide, tx + i * (tw + gap), 1.52, tw, 1.18, lab, val, "", MUTED)
+    for i, (lab, val, key, benchmark) in enumerate(tile_specs):
+        delta, delta_color = benchmark or "", MUTED
+        if metric_changes and key in metric_changes:
+            qoq_text, delta_color = qoq_delta_text(metric_changes[key], comparison_label or "prior period")
+            delta = f"{qoq_text} · {benchmark}" if benchmark else qoq_text
+        stat_tile(slide, tx + i * (tw + gap), 1.52, tw, 1.18, lab, val, delta, delta_color)
     prose = sn.narrate_summary(summary)
     insight_box(slide, 0.55, 3.05, 12.23, 1.7, "THE READ", prose)
     add_morph(slide)
