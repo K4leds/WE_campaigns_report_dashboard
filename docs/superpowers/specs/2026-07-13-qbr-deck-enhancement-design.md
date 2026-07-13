@@ -40,7 +40,7 @@ the rest of this design:
   constants `insights_engine` uses, so a manager can judge good vs. bad
   without leaving the slide.
 
-## Slide lineup (10 → 20 slides)
+## Slide lineup (10 → 19 slides)
 
 1. Title — unchanged.
 2. **Agenda** *(new)* — static section list.
@@ -67,27 +67,30 @@ the rest of this design:
 10. **Campaign Spotlight** *(new)* — large stat-card slide for the single
     #1-ranked campaign: revenue, CVR, audience size, one-line computed insight.
     No creative image (not in the source data).
-11. **Top Segments** *(new, conditional)* — table, only if `Segment Name` is
-    populated. Source: `top_segments`.
-12. Journeys — table gains Revenue and CVR columns.
-13. **Deliverability / ESP** *(new, conditional)* — ESP performance table +
+11. Journeys — table gains Revenue and CVR columns.
+12. **Deliverability / ESP** *(new, conditional)* — ESP performance table +
     top failure reasons. Only if `ESP/SSP/WSP/RSP name` or failure-reason
     columns exist. Source: `esp_analysis`, `failed_reasons_analysis`.
-14. **Attribution breakdown** *(new, conditional)* — Click-Through /
+13. **Attribution breakdown** *(new, conditional)* — Click-Through /
     Impression-Only / Send-Only split. Source: `attribution_analysis`.
-15. **QoQ Scorecard** *(new, conditional on comparison mode)* — table:
+14. **QoQ Scorecard** *(new, conditional on comparison mode)* — table:
     Revenue / Conversions / CTR / Delivery Rate / AOV / ROAS, current vs.
     previous period, % change, trend arrow, with benchmark labels on the
     Delivery Rate and ROAS rows. Source: `calculate_metric_changes`, fed by
     `ctx.comparison_result` (the dashboard's existing comparison state).
-16. What's Working (opportunities) — unchanged.
-17. What's At Risk (alerts) — unchanged.
-18. Recommendations — each recommendation now shows its `expected_impact`
+15. What's Working (opportunities) — unchanged.
+16. What's At Risk (alerts) — unchanged.
+17. Recommendations — each recommendation now shows its `expected_impact`
     figure (from `generate_top_actions`) as a stat alongside the sentence.
-19. Action Plan — unchanged.
-20. Closing — static brand slide ("Measure. Analyze. Optimize.").
+18. Action Plan — unchanged.
+19. Closing — static brand slide ("Measure. Analyze. Optimize.").
 
-Conditional slides (8, 11, 13, 14, 15) are silently skipped when their
+A **Top Segments** slide (table by `Segment Name`, via `analysis.top_segments`)
+was originally scoped here as slide 11 but was cancelled during execution per
+explicit user feedback ("cancel top segments slide I didn't ask for it") —
+not part of the final deck.
+
+Conditional slides (8, 12, 13, 14) are silently skipped when their
 underlying data isn't present — no broken/empty slides for a client CSV that
 lacks that column, matching the existing `_put_chart` degrade-gracefully
 pattern already in `slides_export.py`.

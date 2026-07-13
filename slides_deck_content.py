@@ -41,7 +41,7 @@ def add_slide_agenda(prs, period_label):
         "Performance Snapshot & Executive Summary",
         "Monthly KPI Trend",
         "Channel Performance",
-        "Campaigns, Journeys & Segments",
+        "Campaigns & Journeys",
         "Deliverability & Attribution",
         "Quarter-over-Quarter Scorecard",
         "Findings, Recommendations & Action Plan",

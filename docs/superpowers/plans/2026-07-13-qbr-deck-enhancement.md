@@ -1062,85 +1062,17 @@ git commit -m "feat: add campaign spotlight slide for the top-revenue campaign"
 
 ---
 
-### Task 10: Add Top Segments conditional slide
+### Task 10: CANCELLED — Top Segments slide removed from scope
 
-**Files:**
-- Modify: `slides_deck_content.py`
-- Test: `tests/test_build_deck.py`
-
-**Interfaces:**
-- Produces: `top_segment_rows(df) -> list[tuple] | None`, `add_slide_segments(prs, rows, period_label) -> None`.
-- Consumes: `analysis.top_segments` (already imported by `slides_deck_content.py` since Task 1).
-
-- [ ] **Step 1: Write the failing tests**
-
-```python
-def test_top_segment_rows_none_without_segment_column():
-    assert sx.top_segment_rows(_df()) is None
-
-
-def test_top_segment_rows_present_with_segment_column():
-    rows = sx.top_segment_rows(_full_df())
-    assert rows is not None and len(rows) > 0
-
-
-def test_build_deck_adds_segments_slide_when_data_present():
-    data_minimal = sx.build_deck(_df(), client_name="Acme Co")
-    data_full = sx.build_deck(_full_df(), client_name="Acme Co")
-    n_minimal = len(Presentation(io.BytesIO(data_minimal)).slides)
-    n_full = len(Presentation(io.BytesIO(data_full)).slides)
-    assert n_full > n_minimal
-```
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run: `python -m pytest tests/test_build_deck.py -v`
-Expected: FAIL — `AttributeError: module 'slides_deck_content' has no attribute 'top_segment_rows'`.
-
-- [ ] **Step 3: Implement**
-
-Add `top_segments` to the `from analysis import (...)` line at the top of
-`slides_deck_content.py` if it isn't already there (it was removed from that
-import in Task 8 alongside `top_campaigns`, so re-add just `top_segments`).
-
-Add after `add_slide_campaign_spotlight`:
-
-```python
-def top_segment_rows(df):
-    conv_col = "Selected Conversions" if "Selected Conversions" in df.columns else "Unique Conversions"
-    seg = top_segments(df, conv_col, top_n=8)
-    if seg.empty:
-        return None
-    return [(str(r.iloc[0]), f"{r.iloc[1]:,.0f}") for _, r in seg.iterrows()]
-
-
-def add_slide_segments(prs, rows, period_label):
-    slide = blank_slide(prs)
-    rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
-    _header(slide, "AUDIENCE SEGMENTS", "Top-Converting Segments", period_label)
-    styled_table(slide, 0.55, 1.7, 7.0, ["Segment", "Conversions"], rows, [5.2, 1.8])
-    add_morph(slide)
-```
-
-In `build_deck`, after the campaign spotlight block, add:
-
-```python
-    seg_rows = top_segment_rows(df)
-    if seg_rows:
-        add_slide_segments(prs, seg_rows, period_label)
-```
-
-- [ ] **Step 4: Run tests to verify they pass**
-
-Run: `python -m pytest tests/test_build_deck.py -v`
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add slides_deck_content.py tests/test_build_deck.py
-git commit -m "feat: add conditional top-segments slide"
-```
+Cancelled per explicit user feedback during execution ("cancel top segments
+slide I didn't ask for it"). No `top_segment_rows` / `add_slide_segments`
+functions are implemented; `slides_deck_content.py` does not call
+`analysis.top_segments` anywhere. Task 12 (Deliverability/ESP) is wired
+directly after the campaign-spotlight block instead of after a segments
+block — see Task 12's updated Step 3. Task 18 (storylines) does not
+reference a `"segments"` key. The `_full_df()` test fixture still carries an
+unused `Segment Name` column (harmless — no code reads it once this task is
+skipped; not worth the diff churn to strip it).
 
 ---
 
@@ -1257,7 +1189,8 @@ Expected: FAIL — `AttributeError: module 'slides_deck_content' has no attribut
 Add `esp_analysis, failed_reasons_analysis` to the `from analysis import (...)`
 line at the top of `slides_deck_content.py`.
 
-Add after `add_slide_segments`:
+Add after `add_slide_campaign_spotlight` (Task 10, the Top Segments slide,
+was cancelled — this is the next slide in the deck now):
 
 ```python
 def deliverability_data(df):
@@ -1292,7 +1225,9 @@ def add_slide_deliverability(prs, data, period_label):
     add_morph(slide)
 ```
 
-In `build_deck`, after the segments block, add:
+In `build_deck`, after the `add_slide_journeys(prs, df, period_label)` call
+(the Top Segments slide that would have sat here was cancelled — see Task
+10), add:
 
 ```python
     deliverability = deliverability_data(df)
@@ -1527,10 +1462,6 @@ def build_deck(df, client_name="", period_label=None, comparison_result=None, co
     if spotlight:
         add_slide_campaign_spotlight(prs, spotlight, period_label)
 
-    seg_rows = top_segment_rows(df)
-    if seg_rows:
-        add_slide_segments(prs, seg_rows, period_label)
-
     add_slide_journeys(prs, df, period_label)
 
     deliverability = deliverability_data(df)
@@ -1656,10 +1587,12 @@ def test_build_deck_full_fixture_with_comparison_reaches_max_slide_count():
     cr = _comparison_result(df)
     data = sx.build_deck(df, client_name="Acme Co", comparison_result=cr, conversion_attribution="Total")
     prs = Presentation(io.BytesIO(data))
-    # 14 base (Task 9) + control uplift + segments + deliverability + attribution + qoq scorecard
+    # 14 base (Task 9) + control uplift + deliverability + attribution + qoq scorecard
+    # (Top Segments would have added a 5th conditional slide here, but that
+    # slide was cancelled during execution — see Task 10.)
     # NOTE: Task 17 (added after this task in the plan) inserts one more
-    # unconditional slide and bumps this assertion to 20 — see Task 17 Step 1.
-    assert len(prs.slides) == 19
+    # unconditional slide and bumps this assertion to 19 — see Task 17 Step 1.
+    assert len(prs.slides) == 18
 ```
 
 - [ ] **Step 2: Run test to verify it fails or passes**
@@ -1777,7 +1710,7 @@ Update `test_build_deck_has_10_slides_with_client_name`'s assertion from
 `test_build_deck_has_15_slides_minimal_fixture` (same running-total
 convention as Tasks 3, 4, and 9). Also update
 `test_build_deck_full_fixture_with_comparison_reaches_max_slide_count`
-(Task 16) from `== 19` to `== 20`.
+(Task 16) from `== 18` to `== 19`.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -1869,7 +1802,7 @@ git commit -m "feat: add dense channel metrics table slide alongside the channel
 
 **Interfaces:**
 - Modifies: `_header(slide, eyebrow, title, period_label, story=None)` — new trailing optional kwarg, backward compatible with every existing call site that doesn't pass it.
-- Produces: `_build_storylines(summary, chan_rows, monthly_rows, spotlight, comparison_label) -> dict[str, str | None]` in `slides_deck_content.py`, keyed by slide name (`monthly_kpi`, `trend`, `channel_cards`, `channel_metrics`, `campaigns`, `spotlight`, `journeys`, `segments`, `deliverability`, `attribution`, `qoq_scorecard`, `recommendations`, `action_plan`).
+- Produces: `_build_storylines(summary, chan_rows, monthly_rows, spotlight, comparison_label) -> dict[str, str | None]` in `slides_deck_content.py`, keyed by slide name (`monthly_kpi`, `trend`, `channel_cards`, `channel_metrics`, `campaigns`, `spotlight`, `journeys`, `deliverability`, `attribution`, `qoq_scorecard`, `recommendations`, `action_plan`). No `"segments"` key — that slide was cancelled (Task 10).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1938,7 +1871,7 @@ call by appending `, story=story)` in place of the call's closing `)`.
 Functions to change (all in `slides_deck_content.py`):
 `add_slide_agenda`, `add_slide_exec_summary`, `add_slide_monthly_kpi`,
 `add_slide_trend`, `add_slide_channel_cards`, `add_slide_control_uplift`,
-`add_slide_campaigns`, `add_slide_campaign_spotlight`, `add_slide_segments`,
+`add_slide_campaigns`, `add_slide_campaign_spotlight`,
 `add_slide_journeys`, `add_slide_deliverability`, `add_slide_attribution`,
 `add_slide_qoq_scorecard`, `_add_findings_slide`, `add_slide_recommendations`,
 `add_slide_action_plan`, and `add_slide_channel_metrics` (added in Task 17
@@ -1993,7 +1926,6 @@ def _build_storylines(summary, chan_rows, monthly_rows, spotlight, comparison_la
         "campaigns": "Here's which individual campaigns drove those channel numbers.",
         "spotlight": spotlight_story,
         "journeys": "Beyond one-off campaigns, here's how automated journeys performed.",
-        "segments": "Here's which audience segments converted best.",
         "deliverability": "None of this works if messages don't land — a deliverability check.",
         "attribution": f"How the {total_conversions:,.0f} conversions above split between click-driven and impression-driven.",
         "qoq_scorecard": f"Compared to {comparison_label or 'the prior period'}, here's what moved.",
@@ -2037,8 +1969,7 @@ Apply the same `story=stories.get("<key>")` pattern to the remaining calls:
 conditional and has no natural "connects to next slide" framing); pass
 `story=None` for it explicitly instead. Do the same for `add_slide_campaigns`
 (`story=stories.get("campaigns")`), `add_slide_campaign_spotlight`
-(`story=stories.get("spotlight")`), `add_slide_segments`
-(`story=stories.get("segments")`), `add_slide_journeys`
+(`story=stories.get("spotlight")`), `add_slide_journeys`
 (`story=stories.get("journeys")`), `add_slide_deliverability`
 (`story=stories.get("deliverability")`), `add_slide_attribution`
 (`story=stories.get("attribution")`), `add_slide_qoq_scorecard`
@@ -2069,8 +2000,10 @@ git commit -m "feat: add computed storyline captions connecting each slide to th
 - **Spec coverage:** All 18 slide-lineup rows from the spec map to a task:
   agenda/closing → Task 3; monthly KPI → Task 4; exec summary QoQ → Task 5;
   channel cards → Task 6; control uplift → Task 7; campaigns CVR/AOV → Task 8;
-  campaign spotlight → Task 9; segments → Task 10; journeys → Task 11;
-  deliverability → Task 12; attribution → Task 13; QoQ scorecard → Task 14;
+  campaign spotlight → Task 9; journeys → Task 11; deliverability → Task 12
+  (Task 10, Top Segments, was cancelled during execution per explicit user
+  feedback — not part of the spec's final scope); attribution → Task 13;
+  QoQ scorecard → Task 14;
   recommendations impact figures → Task 15; plumbing → Task 16. Benchmark
   thresholds (`BENCHMARK_DELIVERY_RATE`, `BENCHMARK_ROAS_GOOD/OK`, added in
   Task 2) are rendered on the exec-summary delivery-rate tile (Task 5) and
