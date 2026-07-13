@@ -203,7 +203,7 @@ def chart_channels(chan_df):
         marker_color="#006FA2", text=d[conv_col], textposition="auto"))
     fig.update_layout(
         font=_PLOTLY_FONT, paper_bgcolor="white", plot_bgcolor="white",
-        margin=dict(l=8, r=24, t=12, b=24), width=720, height=430,
+        margin=dict(l=120, r=24, t=12, b=24), width=720, height=430,
         xaxis=dict(showgrid=True, gridcolor="#EEF2F4", zeroline=False),
         yaxis=dict(showgrid=False))
     return fig
@@ -231,9 +231,9 @@ def chart_journey_sankey(stages):
         node=dict(label=labels, color=node_colors, pad=18, thickness=16,
                   line=dict(color="white", width=0)),
         link=dict(source=src, target=tgt, value=val, color=link_colors)))
-    fig.update_layout(font=dict(family="DM Sans", size=15, color="#1B2A32"),
+    fig.update_layout(font=dict(family="DM Sans", size=13, color="#1B2A32"),
                       paper_bgcolor="white", plot_bgcolor="white",
-                      margin=dict(l=8, r=8, t=10, b=22), width=900, height=380)
+                      margin=dict(l=10, r=150, t=10, b=20), width=880, height=360)
     return fig
 
 
@@ -291,7 +291,7 @@ def add_slide_exec_summary(prs, summary, period_label):
     for i, (lab, val) in enumerate(tiles):
         stat_tile(slide, tx + i * (tw + gap), 1.52, tw, 1.18, lab, val, "", MUTED)
     prose = sn.narrate_summary(summary)
-    insight_box(slide, 0.55, 3.05, 12.23, 3.2, "THE READ", prose)
+    insight_box(slide, 0.55, 3.05, 12.23, 1.7, "THE READ", prose)
     add_morph(slide)
 
 
@@ -310,7 +310,7 @@ def add_slide_channels(prs, df, period_label):
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
     _header(slide, "CHANNEL PERFORMANCE", "Where Conversions Come From", period_label)
     chan = channel_analysis(df)
-    _put_chart(slide, chart_channels(chan), 0.5, 1.7, 4.7)
+    _put_chart(slide, chart_channels(chan), 0.5, 1.9, 4.0)
     conv_col = "Selected Conversions" if "Selected Conversions" in chan.columns else "Unique Conversions"
     top = chan.sort_values(conv_col, ascending=False).head(6)
     rows = [(r["Channel"], f"{r[conv_col]:,.0f}") for _, r in top.iterrows()]
@@ -337,7 +337,7 @@ def add_slide_journeys(prs, df, period_label):
         rows = [(str(r.iloc[0]), f"{r.iloc[1]:,.0f}") for _, r in tj.iterrows()]
         styled_table(slide, 7.85, 1.9, 4.95, ["Journey", "Conversions"], rows, [3.2, 1.75])
         stages = journey_funnel_stages(df, str(tj.iloc[0, 0]))
-        _put_chart(slide, chart_journey_sankey(stages), 0.45, 2.4, 3.6)
+        _put_chart(slide, chart_journey_sankey(stages), 0.3, 2.6, 2.9)
     add_morph(slide)
 
 
