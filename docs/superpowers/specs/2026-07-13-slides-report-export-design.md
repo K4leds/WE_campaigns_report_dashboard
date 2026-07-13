@@ -52,10 +52,10 @@ The app runs server-side on Streamlit Cloud. See memory `deployment-target-strea
   chart builders (`_chart_trend`, `_chart_channels`, `_chart_journey_sankey`), a
   `_fig_to_png(fig)` seam, and one `add_slide_*` function per slide type. Kept focused;
   if it grows past ~500 lines, split charts into `slides_charts.py`.
-- **`slides_narrative.py`** (new) *or* extend `llm_narrative.py` — DeepSeek functions that
-  return slide prose and recommendation text from fact sheets, plus the curated WebEngage
-  feature map (§7). Decision at plan time; default is a new module to keep `llm_narrative`
-  small.
+- **`slides_narrative.py`** (new, confirmed) — DeepSeek functions that return slide prose
+  and recommendation text from fact sheets, plus the curated WebEngage feature map (§7).
+  Kept separate from `llm_narrative.py` for organization. Reuses `llm_narrative`'s client
+  helper and anti-hallucination discipline.
 - **`pages/13_export.py`** (edit) — add a "Generate Client Review Deck (PowerPoint)"
   button + client-name input; on click, spinner → `build_deck(ctx.filtered_df, ...)` →
   `st.download_button`. Existing CSV/Excel buttons stay.
@@ -98,6 +98,10 @@ titles/messages (§9).
 
 **Segments slide intentionally dropped** (data not useful — user decision).
 
+**Future growth:** slide count will increase over time (user note). Keep slide construction
+modular — one self-contained `add_slide_*(prs, ...)` per slide and a simple ordered list
+that `build_deck` iterates — so adding a slide is appending one function, not restructuring.
+
 ### Journey-flow Sankey (slide 6)
 Plotly Sankey, brand-blue progression links, grey drop-off links, green convert / red
 abandon terminals. Stage values from the selected top journey's funnel (entry → delivered
@@ -119,12 +123,17 @@ finding-type→feature lookup provides a deterministic default pill.
 
 ## 8. Font embedding
 
-`python-pptx` has no native font embedding. Implement by post-processing the OOXML
-package: add DM Sans TTFs as `/ppt/fonts/fontN.fntdata` parts, wire relationships, and
-add `<p:embeddedFontLst>` to `presentation.xml`. Isolated in one `_embed_fonts(pptx_bytes)`
-helper with a clear seam. **Fallback if embedding proves brittle:** ship font-name-only
-(renders in Google Slides + machines with DM Sans) and treat embedding as fast-follow —
-but embedding is the target for v1 per user decision.
+**Hard-required for v1** (user decision). `python-pptx` has no native font embedding.
+Implement by post-processing the OOXML package: add DM Sans TTFs as
+`/ppt/fonts/fontN.fntdata` parts, wire relationships, and add `<p:embeddedFontLst>` to
+`presentation.xml`. Isolated in one `_embed_fonts(pptx_bytes)` helper with a clear seam.
+
+**Google Slides caveat:** Google Slides discards embedded fonts on `.pptx` import and
+substitutes from its own font list — but DM Sans is a native Google Fonts option in
+Slides, so it renders correctly there anyway. The embed therefore matters for viewers who
+open the raw `.pptx` in desktop PowerPoint (no DM Sans installed); in the Google-Slides
+workflow, native DM Sans does the work. We validate the actual look after the first real
+export before considering any change.
 
 ## 9. Graceful degradation
 
