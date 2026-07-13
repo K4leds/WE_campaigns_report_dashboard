@@ -90,11 +90,12 @@ def channel_analysis(df):
         'Delivered': 'sum',
         'Unique Impressions': 'sum',
         'Unique Clicks': 'sum',
-        'Selected Conversions': 'sum' if 'Selected Conversions' in df.columns else 'Unique Conversions',
     }
-    
-    # Remove the old conversions field if we have the selected one
-    if 'Selected Conversions' not in df.columns:
+
+    # Add conversions column (prefer Selected Conversions if available)
+    if 'Selected Conversions' in df.columns:
+        agg_dict['Selected Conversions'] = 'sum'
+    else:
         agg_dict['Unique Conversions'] = 'sum'
     
     # Only add columns that exist in the dataframe

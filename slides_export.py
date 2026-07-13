@@ -164,3 +164,71 @@ def fig_to_png(fig) -> bytes:
     is missing; build_deck degrades per spec."""
     _ensure_chrome()
     return fig.to_image(format="png", scale=3)
+
+
+_PLOTLY_FONT = dict(family="DM Sans", size=15, color="#1B2A32")
+
+
+def journey_funnel_stages(df, journey_name):
+    sub = df[df["Journey Name"] == journey_name]
+    conv_col = "Selected Conversions" if "Selected Conversions" in sub.columns else "Unique Conversions"
+    spec = [("Sent", "Sent"), ("Delivered", "Delivered"), ("Opened", "Unique Impressions"),
+            ("Clicked", "Unique Clicks"), ("Converted", conv_col)]
+    return [(label, int(sub[col].sum()) if col in sub.columns else 0) for label, col in spec]
+
+
+def chart_trend(ts_df, metric):
+    x = ts_df.iloc[:, 0]
+    y = ts_df[metric] if metric in ts_df.columns else ts_df.iloc[:, 1]
+    fig = go.Figure(go.Scatter(
+        x=x, y=y, mode="lines", fill="tozeroy",
+        line=dict(color="#006FA2", width=3),
+        fillcolor="rgba(0,111,162,0.12)"))
+    fig.update_layout(
+        font=_PLOTLY_FONT, paper_bgcolor="white", plot_bgcolor="white",
+        margin=dict(l=48, r=16, t=12, b=36), width=1120, height=430,
+        xaxis=dict(showgrid=False, showline=True, linecolor="#E3E8EB"),
+        yaxis=dict(showgrid=True, gridcolor="#EEF2F4", zeroline=False))
+    return fig
+
+
+def chart_channels(chan_df):
+    conv_col = "Selected Conversions" if "Selected Conversions" in chan_df.columns else "Unique Conversions"
+    d = chan_df.sort_values(conv_col, ascending=True)
+    fig = go.Figure(go.Bar(
+        x=d[conv_col], y=d["Channel"], orientation="h",
+        marker_color="#006FA2", text=d[conv_col], textposition="auto"))
+    fig.update_layout(
+        font=_PLOTLY_FONT, paper_bgcolor="white", plot_bgcolor="white",
+        margin=dict(l=8, r=24, t=12, b=24), width=720, height=430,
+        xaxis=dict(showgrid=True, gridcolor="#EEF2F4", zeroline=False),
+        yaxis=dict(showgrid=False))
+    return fig
+
+
+def chart_journey_sankey(stages):
+    # stages: [(label, value), ...] progression; each step also produces a drop-off.
+    labels, node_colors, src, tgt, val, link_colors = [], [], [], [], [], []
+    prog_blue = ["#006FA2", "#1685B3", "#3FA0C6", "#66B6D6", "#1E9E62"]
+    for i, (lab, _) in enumerate(stages):
+        labels.append(lab); node_colors.append(prog_blue[min(i, len(prog_blue) - 1)])
+    drop_start = len(labels)
+    for i in range(len(stages) - 1):
+        cur, nxt = stages[i][1], stages[i + 1][1]
+        # progression link
+        src.append(i); tgt.append(i + 1); val.append(max(nxt, 0))
+        link_colors.append("rgba(0,111,162,0.38)")
+        # drop-off link to a grey terminal
+        drop = max(cur - nxt, 0)
+        labels.append(f"Lost at {stages[i][0]}"); node_colors.append("#C9D4DA")
+        src.append(i); tgt.append(drop_start + i); val.append(drop)
+        link_colors.append("rgba(180,190,196,0.30)")
+    fig = go.Figure(go.Sankey(
+        arrangement="snap",
+        node=dict(label=labels, color=node_colors, pad=18, thickness=16,
+                  line=dict(color="white", width=0)),
+        link=dict(source=src, target=tgt, value=val, color=link_colors)))
+    fig.update_layout(font=dict(family="DM Sans", size=15, color="#1B2A32"),
+                      paper_bgcolor="white", plot_bgcolor="white",
+                      margin=dict(l=8, r=8, t=10, b=22), width=900, height=380)
+    return fig
