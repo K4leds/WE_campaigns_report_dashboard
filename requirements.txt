@@ -10,3 +10,4 @@ prophet
 scipy
 openai
 streamlit-aggrid==1.2.1.post2
+python-pptx>=1.0.2
