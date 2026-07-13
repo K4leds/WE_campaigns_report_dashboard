@@ -24,7 +24,7 @@ from dashboard.comparisons_logic import (
 )
 from dashboard.data_pipeline import cached_journey_health_scores
 from dashboard.charts import render_health_dashboard
-from analysis import get_top_journeys
+from analysis import get_top_journeys, attribution_analysis
 
 ctx = get_ctx()
 df = ctx.df
@@ -1153,12 +1153,7 @@ if selected_journeys:
     
     # Conversion Attribution
     st.subheader("Conversion Attribution")
-    attr_jour = {
-        'Impression-Through': jour_details['Unique Impression-Through Conversions'].sum(),
-        'Click-Through': jour_details['Unique Click-Through Conversions'].sum(),
-        'Direct/Open-Through': jour_details['Unique Conversions'].sum() - jour_details['Unique Impression-Through Conversions'].sum() - jour_details['Unique Click-Through Conversions'].sum()
-    }
-    attr_df_jour = pd.DataFrame(list(attr_jour.items()), columns=['Source', 'Conversions'])
+    attr_df_jour = attribution_analysis(jour_details)
     fig_attr_jour = px.pie(attr_df_jour, names='Source', values='Conversions', title="Attribution for Selected Journeys",
                             color_discrete_sequence=COLOR_SEQUENCE)
     render_chart(fig_attr_jour, attr_df_jour, key="jour_drilldown_attr", ai_label="Attribution for Selected Journeys")

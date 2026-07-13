@@ -278,17 +278,32 @@ def ab_testing_analysis(df):
 def attribution_analysis(df):
     """
     Summarize conversion attribution by source.
-    
+
+    Click-Through, Impression-Through, and Unique (Total/send-through)
+    Conversions are separate, HIERARCHICAL attribution windows over the same
+    conversion events -- not independent, additive counts. Every row in the
+    underlying data satisfies Click-Through <= Impression-Through <= Unique
+    Conversions (a click implies an impression; any attributed conversion
+    counts toward the broader send-through total). Subtracting them naively
+    (Total - Impression - Click) double-counts the Click-Through slice and
+    goes negative whenever a campaign's own IT/CT share is large. This
+    mirrors the same hierarchy already handled correctly for revenue in
+    dashboard.lifecycle.create_revenue_attribution_waterfall().
+
     Args:
         df: DataFrame with attribution columns
-    
+
     Returns:
-        DataFrame with attribution breakdown
+        DataFrame with attribution breakdown (Click-Through, Impression-Only,
+        Send-Only), each mutually exclusive and non-negative by construction.
     """
-    # Summarize conversions by source
+    total = df['Unique Conversions'].sum()
+    impression = df['Unique Impression-Through Conversions'].sum()
+    click = df['Unique Click-Through Conversions'].sum()
+
     attr = {
-        'Impression-Through': df['Unique Impression-Through Conversions'].sum(),
-        'Click-Through': df['Unique Click-Through Conversions'].sum(),
-        'Direct/Open-Through': df['Unique Conversions'].sum() - df['Unique Impression-Through Conversions'].sum() - df['Unique Click-Through Conversions'].sum()
+        'Click-Through': click,
+        'Impression-Only': impression - click,
+        'Send-Only': total - impression,
     }
     return pd.DataFrame(list(attr.items()), columns=['Source', 'Conversions'])

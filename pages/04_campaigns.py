@@ -11,7 +11,7 @@ from utils import format_metric, read_cached_json
 from components.table import render_table, render_chart, render_ai_explain
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_attribution_display_label, get_selected_revenue_display_name, get_selected_conversion_display_name
-from analysis import top_campaigns
+from analysis import top_campaigns, attribution_analysis
 from dashboard.health import calculate_campaign_health_score
 from dashboard.funnels import analyze_campaign_funnel
 from dashboard.anomalies import detect_campaign_anomalies
@@ -715,12 +715,7 @@ if selected_campaigns:
 
     # Conversion Attribution
     st.subheader("Conversion Attribution")
-    attr_camp = {
-        'Impression-Through': camp_details['Unique Impression-Through Conversions'].sum(),
-        'Click-Through': camp_details['Unique Click-Through Conversions'].sum(),
-        'Direct/Open-Through': camp_details['Unique Conversions'].sum() - camp_details['Unique Impression-Through Conversions'].sum() - camp_details['Unique Click-Through Conversions'].sum()
-    }
-    attr_df_camp = pd.DataFrame(list(attr_camp.items()), columns=['Source', 'Conversions'])
+    attr_df_camp = attribution_analysis(camp_details)
     fig_attr_camp = px.pie(attr_df_camp, names='Source', values='Conversions', title="Attribution for Selected Campaigns",
                             color_discrete_sequence=COLOR_SEQUENCE)
     render_chart(fig_attr_camp, attr_df_camp, key="camp_drilldown_attr", ai_label="Attribution for Selected Campaigns")
