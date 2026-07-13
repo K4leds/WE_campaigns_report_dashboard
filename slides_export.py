@@ -29,6 +29,14 @@ INSIGHT = RGBColor(0xEA, 0xF3, 0xF8)
 GREEN   = RGBColor(0x1E, 0x9E, 0x62)
 RED     = RGBColor(0xC0, 0x3A, 0x2B)
 PILL_LBL = RGBColor(0xBF, 0xE1, 0xEF)
+AMBER   = RGBColor(0xC9, 0x7A, 0x1E)
+
+# Mirrors insights_engine.detect_performance_alerts (delivery <0.85 is
+# critical, target is >0.90) and the ROAS tiering already used in
+# pages/14_comparisons.py's channel-efficiency display.
+BENCHMARK_DELIVERY_RATE = 0.90
+BENCHMARK_ROAS_GOOD = 4.0
+BENCHMARK_ROAS_OK = 2.0
 F_REG, F_MED, F_BOLD = "DM Sans", "DM Sans Medium", "DM Sans"
 
 
@@ -146,6 +154,38 @@ def add_morph(slide):
     )
     cSld = slide.element.find(qn('p:cSld'))
     slide.element.insert(list(slide.element).index(cSld) + 1, parse_xml(xml))
+
+
+from insights_engine import CHANNEL_MIN_SENT
+
+
+def channel_status(sent):
+    """Classify a channel's activity level for the QBR deck's channel cards.
+    Mirrors the volume floor insights_engine.py already uses to decide
+    whether a channel is eligible for its own alerts/opportunities."""
+    if sent <= 0:
+        return "INACTIVE", MUTED
+    if sent < CHANNEL_MIN_SENT:
+        return "LOW VOLUME", AMBER
+    return "ACTIVE", GREEN
+
+
+def qoq_delta_text(change, suffix=""):
+    """change: one entry from dashboard.comparisons_logic.calculate_metric_changes()
+    (a dict with a 'pct_change' key). Returns (label text, RGBColor)."""
+    pct = change["pct_change"]
+    arrow = "▲" if pct > 0 else ("▼" if pct < 0 else "→")
+    color = GREEN if pct > 0 else (RED if pct < 0 else MUTED)
+    label = f"vs {suffix}" if suffix else ""
+    return f"{arrow} {pct:+.1f}% {label}".strip(), color
+
+
+def status_pill(slide, x, y, label, color):
+    w = 0.14 + 0.09 * len(label)
+    rect(slide, x, y, w, 0.26, fill=color, shape=MSO_SHAPE.ROUNDED_RECTANGLE)
+    text(slide, x, y + 0.02, w, 0.22, (label, 8.5, WHITE, F_MED, True, 0.6),
+         align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+    return w
 
 
 @functools.lru_cache(maxsize=1)

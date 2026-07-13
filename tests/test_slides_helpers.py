@@ -27,3 +27,23 @@ def test_fig_to_png_returns_png_bytes():
     import plotly.graph_objects as go
     png = sx.fig_to_png(go.Figure(go.Bar(x=[1], y=[1])))
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_channel_status_thresholds():
+    assert sx.channel_status(0)[0] == "INACTIVE"
+    assert sx.channel_status(50)[0] == "LOW VOLUME"
+    assert sx.channel_status(500)[0] == "ACTIVE"
+
+
+def test_qoq_delta_text_direction():
+    up_text, up_color = sx.qoq_delta_text({"pct_change": 12.5}, "prior period")
+    assert "12.5%" in up_text and up_color == sx.GREEN
+    down_text, down_color = sx.qoq_delta_text({"pct_change": -8.0}, "prior period")
+    assert "-8.0%" in down_text and down_color == sx.RED
+
+
+def test_status_pill_draws_without_error():
+    prs = sx.new_deck()
+    slide = sx.blank_slide(prs)
+    width = sx.status_pill(slide, 0.5, 0.5, "ACTIVE", sx.GREEN)
+    assert width > 0
