@@ -30,6 +30,29 @@ def add_slide_title(prs, client_name, period_label):
     add_morph(slide)
 
 
+def add_slide_agenda(prs, period_label):
+    slide = blank_slide(prs)
+    rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
+    _header(slide, "AGENDA", "What's in This Review", period_label)
+    items = [
+        "Performance Snapshot & Executive Summary",
+        "Monthly KPI Trend",
+        "Channel Performance",
+        "Campaigns, Journeys & Segments",
+        "Deliverability & Attribution",
+        "Quarter-over-Quarter Scorecard",
+        "Findings, Recommendations & Action Plan",
+    ]
+    y = 1.9
+    for i, item in enumerate(items, start=1):
+        rect(slide, 0.6, y, 0.5, 0.5, fill=BRAND, shape=MSO_SHAPE.OVAL)
+        text(slide, 0.6, y, 0.5, 0.5, (str(i), 15, WHITE, F_BOLD, True, None),
+             align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+        text(slide, 1.3, y + 0.08, 10.8, 0.4, (item, 15, INK, F_MED, True, None))
+        y += 0.68
+    add_morph(slide)
+
+
 def add_slide_exec_summary(prs, summary, period_label):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
@@ -143,6 +166,13 @@ def add_slide_action_plan(prs, actions, period_label):
     add_morph(slide)
 
 
+def add_slide_closing(prs):
+    slide = blank_slide(prs)
+    rect(slide, 0, 0, 13.333, 7.5, fill=BRAND)
+    text(slide, 0.9, 3.1, 11.5, 1.3, ("Measure. Analyze. Optimize.", 34, WHITE, F_BOLD, True, None))
+    add_morph(slide)
+
+
 def build_deck(df, client_name="", period_label=None, comparison_result=None, conversion_attribution="Total") -> bytes:
     summary = generate_executive_summary(df)
     period_label = period_label or summary.get("period")
@@ -150,6 +180,7 @@ def build_deck(df, client_name="", period_label=None, comparison_result=None, co
     ni = summary.get("narrative_insights", {}) or {}
     prs = new_deck()
     add_slide_title(prs, client_name, period_label)
+    add_slide_agenda(prs, period_label)
     add_slide_exec_summary(prs, summary, period_label)
     add_slide_trend(prs, df, period_label)
     add_slide_channels(prs, df, period_label)
@@ -161,6 +192,7 @@ def build_deck(df, client_name="", period_label=None, comparison_result=None, co
                         ni.get("performance_alerts", []), "alert", period_label)
     add_slide_recommendations(prs, actions, period_label)
     add_slide_action_plan(prs, actions, period_label)
+    add_slide_closing(prs)
     buf = io.BytesIO()
     prs.save(buf)
     return embed_fonts(buf.getvalue())

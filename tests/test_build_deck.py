@@ -66,7 +66,7 @@ def test_build_deck_has_10_slides_with_client_name():
     data = sx.build_deck(_df(), client_name="Acme Co", period_label="Jun 2026")
     assert isinstance(data, (bytes, bytearray)) and len(data) > 5000
     prs = Presentation(io.BytesIO(data))
-    assert len(prs.slides) == 10
+    assert len(prs.slides) == 12
     # client name appears on the title slide
     texts = [sh.text_frame.text for sh in prs.slides[0].shapes if sh.has_text_frame]
     assert any("Acme Co" in t for t in texts)
