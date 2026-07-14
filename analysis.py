@@ -188,9 +188,10 @@ def esp_analysis(df):
     agg_dict = {
         'Sent': 'sum',
         'Delivered': 'sum',
-        'Selected Conversions': 'sum' if 'Selected Conversions' in df_filtered.columns else 'Unique Conversions',
     }
-    if 'Selected Conversions' not in df_filtered.columns:
+    if 'Selected Conversions' in df_filtered.columns:
+        agg_dict['Selected Conversions'] = 'sum'
+    else:
         agg_dict['Unique Conversions'] = 'sum'
 
     if 'Total Conversions' in df_filtered.columns:

@@ -18,7 +18,7 @@ from slides_export import (
 from insights_engine import generate_executive_summary, generate_top_actions
 from dashboard.comparisons_logic import calculate_period_metrics, calculate_uplift_significance
 from analysis import (channel_analysis,
-                      time_series_analysis)
+                      time_series_analysis, esp_analysis, failed_reasons_analysis)
 import slides_narrative as sn
 
 
@@ -281,6 +281,38 @@ def add_slide_journeys(prs, df, period_label):
     add_morph(slide)
 
 
+def deliverability_data(df):
+    esp_df = esp_analysis(df)
+    failed_df = failed_reasons_analysis(df)
+    esp_rows = None
+    if not esp_df.empty:
+        esp_df = esp_df.copy()
+        esp_df["Delivery Rate"] = np.where(esp_df["Sent"] > 0, esp_df["Delivered"] / esp_df["Sent"], 0)
+        top_esp = esp_df.nlargest(5, "Sent")
+        esp_rows = [(r["ESP/SSP/WSP/RSP name"], f"{r['Sent']:,.0f}", f"{r['Delivery Rate']:.1%}")
+                    for _, r in top_esp.iterrows()]
+    failed_rows = None
+    if not failed_df.empty and failed_df["Count"].sum() > 0:
+        top_failed = failed_df.nlargest(5, "Count")
+        failed_rows = [(str(r["Reason"]).replace("Failed ", ""), f"{r['Count']:,.0f}")
+                       for _, r in top_failed.iterrows()]
+    if esp_rows is None and failed_rows is None:
+        return None
+    return {"esp_rows": esp_rows, "failed_rows": failed_rows}
+
+
+def add_slide_deliverability(prs, data, period_label):
+    slide = blank_slide(prs)
+    rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
+    _header(slide, "DELIVERABILITY", "ESP Performance & Failure Reasons", period_label)
+    if data["esp_rows"]:
+        styled_table(slide, 0.55, 1.7, 7.0, ["ESP / Provider", "Sent", "Delivery Rate"],
+                     data["esp_rows"], [3.4, 1.8, 1.8])
+    if data["failed_rows"]:
+        styled_table(slide, 7.85, 1.7, 4.95, ["Failure Reason", "Count"], data["failed_rows"], [3.4, 1.55])
+    add_morph(slide)
+
+
 def _add_findings_slide(prs, eyebrow, title, items, kind, period_label):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
@@ -359,6 +391,9 @@ def build_deck(df, client_name="", period_label=None, comparison_result=None, co
     if spotlight:
         add_slide_campaign_spotlight(prs, spotlight, period_label)
     add_slide_journeys(prs, df, period_label)
+    deliverability = deliverability_data(df)
+    if deliverability:
+        add_slide_deliverability(prs, deliverability, period_label)
     _add_findings_slide(prs, "WHAT'S WORKING", "Opportunities",
                         ni.get("opportunities", []), "opportunity", period_label)
     _add_findings_slide(prs, "WHAT'S AT RISK", "Performance Alerts",
