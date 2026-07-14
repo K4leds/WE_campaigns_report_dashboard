@@ -18,7 +18,8 @@ from slides_export import (
 from insights_engine import generate_executive_summary, generate_top_actions
 from dashboard.comparisons_logic import calculate_period_metrics, calculate_uplift_significance
 from analysis import (channel_analysis,
-                      time_series_analysis, esp_analysis, failed_reasons_analysis)
+                      time_series_analysis, esp_analysis, failed_reasons_analysis,
+                      attribution_analysis)
 import slides_narrative as sn
 
 
@@ -313,6 +314,26 @@ def add_slide_deliverability(prs, data, period_label):
     add_morph(slide)
 
 
+def attribution_rows(df):
+    required = {"Unique Conversions", "Unique Impression-Through Conversions", "Unique Click-Through Conversions"}
+    if not required.issubset(df.columns):
+        return None
+    attr = attribution_analysis(df)
+    total = attr["Conversions"].sum()
+    if attr.empty or total <= 0:
+        return None
+    return [(r["Source"], f"{r['Conversions']:,.0f}", f"{(r['Conversions'] / total):.1%}")
+            for _, r in attr.iterrows()]
+
+
+def add_slide_attribution(prs, rows, period_label):
+    slide = blank_slide(prs)
+    rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
+    _header(slide, "ATTRIBUTION", "How Conversions Were Won", period_label)
+    styled_table(slide, 0.55, 1.9, 7.0, ["Source", "Conversions", "Share"], rows, [3.4, 1.8, 1.8])
+    add_morph(slide)
+
+
 def _add_findings_slide(prs, eyebrow, title, items, kind, period_label):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
@@ -394,6 +415,9 @@ def build_deck(df, client_name="", period_label=None, comparison_result=None, co
     deliverability = deliverability_data(df)
     if deliverability:
         add_slide_deliverability(prs, deliverability, period_label)
+    attr_rows = attribution_rows(df)
+    if attr_rows:
+        add_slide_attribution(prs, attr_rows, period_label)
     _add_findings_slide(prs, "WHAT'S WORKING", "Opportunities",
                         ni.get("opportunities", []), "opportunity", period_label)
     _add_findings_slide(prs, "WHAT'S AT RISK", "Performance Alerts",

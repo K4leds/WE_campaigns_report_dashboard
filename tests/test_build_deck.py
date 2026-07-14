@@ -141,9 +141,10 @@ def test_build_deck_adds_control_uplift_slide_when_data_present():
     data_full = sx.build_deck(_full_df(), client_name="Acme Co")
     n_minimal = len(Presentation(io.BytesIO(data_minimal)).slides)
     n_full = len(Presentation(io.BytesIO(data_full)).slides)
-    # _full_df() also has ESP/failed-reason columns, so it now triggers the
-    # deliverability slide (Task 12) in addition to the control-uplift slide.
-    assert n_full == n_minimal + 2
+    # _full_df() also has ESP/failed-reason columns and attribution columns,
+    # so it now triggers the deliverability slide (Task 12) and the
+    # attribution slide (Task 13) in addition to the control-uplift slide.
+    assert n_full == n_minimal + 3
 
 
 def test_top_campaigns_table_has_cvr_and_aov_columns():
@@ -181,6 +182,23 @@ def test_deliverability_data_present_with_esp_and_failed_columns():
 
 
 def test_build_deck_adds_deliverability_slide_when_data_present():
+    data_minimal = sx.build_deck(_df(), client_name="Acme Co")
+    data_full = sx.build_deck(_full_df(), client_name="Acme Co")
+    n_minimal = len(Presentation(io.BytesIO(data_minimal)).slides)
+    n_full = len(Presentation(io.BytesIO(data_full)).slides)
+    assert n_full > n_minimal
+
+
+def test_attribution_rows_none_without_attribution_columns():
+    assert sx.attribution_rows(_df()) is None
+
+
+def test_attribution_rows_present_with_attribution_columns():
+    rows = sx.attribution_rows(_full_df())
+    assert rows is not None and len(rows) == 3  # Click-Through, Impression-Only, Send-Only
+
+
+def test_build_deck_adds_attribution_slide_when_data_present():
     data_minimal = sx.build_deck(_df(), client_name="Acme Co")
     data_full = sx.build_deck(_full_df(), client_name="Acme Co")
     n_minimal = len(Presentation(io.BytesIO(data_minimal)).slides)
