@@ -26,6 +26,42 @@ from analysis import (channel_analysis,
 import slides_narrative as sn
 
 
+def _build_storylines(summary, chan_rows, monthly_rows, spotlight, comparison_label):
+    """One computed sentence per slide, so the deck reads as a chain of
+    findings rather than a stack of independent reports. Every sentence is
+    built from numbers the caller already computed for that slide (or the
+    slide immediately before it) -- no new analysis, just narrative framing."""
+    m = summary.get("headline_metrics", {})
+    total_revenue = m.get("total_revenue", 0)
+    total_conversions = m.get("total_conversions", 0)
+    n_months = max(len(monthly_rows) - 1, 0)  # exclude the synthetic Total row
+
+    channel_cards_story = None
+    if chan_rows and total_revenue:
+        top = chan_rows[0]
+        share = top["revenue"] / total_revenue
+        channel_cards_story = f"{top['channel']} alone drove {share:.0%} of the SAR {total_revenue:,.0f} total below."
+
+    spotlight_story = None
+    if spotlight:
+        spotlight_story = f"'{spotlight['name']}' was the single best-performing campaign this period."
+
+    return {
+        "monthly_kpi": f"SAR {total_revenue:,.0f} came in across {n_months} month(s) — here's the monthly split.",
+        "trend": "Here's the day-by-day shape behind that total.",
+        "channel_cards": channel_cards_story,
+        "channel_metrics": "The full metric set behind those channels.",
+        "campaigns": "Here's which individual campaigns drove those channel numbers.",
+        "spotlight": spotlight_story,
+        "journeys": "Beyond one-off campaigns, here's how automated journeys performed.",
+        "deliverability": "None of this works if messages don't land — a deliverability check.",
+        "attribution": f"How the {total_conversions:,.0f} conversions above split between click-driven and impression-driven.",
+        "qoq_scorecard": f"Compared to {comparison_label or 'the prior period'}, here's what moved.",
+        "recommendations": "Turning those findings into next steps.",
+        "action_plan": "Prioritized and ready to execute.",
+    }
+
+
 def add_slide_title(prs, client_name, period_label):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=BRAND)
@@ -37,10 +73,10 @@ def add_slide_title(prs, client_name, period_label):
     add_morph(slide)
 
 
-def add_slide_agenda(prs, period_label):
+def add_slide_agenda(prs, period_label, story=None):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
-    _header(slide, "AGENDA", "What's in This Review", period_label)
+    _header(slide, "AGENDA", "What's in This Review", period_label, story=story)
     items = [
         "Performance Snapshot & Executive Summary",
         "Monthly KPI Trend",
@@ -74,20 +110,20 @@ def monthly_kpi_rows(df):
     return rows
 
 
-def add_slide_monthly_kpi(prs, df, period_label):
+def add_slide_monthly_kpi(prs, df, period_label, story=None):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
-    _header(slide, "KPI OVERVIEW", "Revenue & Conversions by Month", period_label)
+    _header(slide, "KPI OVERVIEW", "Revenue & Conversions by Month", period_label, story=story)
     rows = monthly_kpi_rows(df)
     styled_table(slide, 0.55, 1.9, 8.5, ["Month", "Revenue (SAR)", "Conversions", "Sent"],
                  rows, [2.6, 2.2, 1.9, 1.8])
     add_morph(slide)
 
 
-def add_slide_exec_summary(prs, summary, period_label, metric_changes=None, comparison_label=None):
+def add_slide_exec_summary(prs, summary, period_label, metric_changes=None, comparison_label=None, story=None):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
-    _header(slide, "EXECUTIVE SUMMARY", "Performance at a Glance", period_label)
+    _header(slide, "EXECUTIVE SUMMARY", "Performance at a Glance", period_label, story=story)
     m = summary.get("headline_metrics", {})
     tile_specs = [
         ("REVENUE", f"SAR {m.get('total_revenue', 0):,.0f}", "selected_revenue", None),
@@ -108,10 +144,10 @@ def add_slide_exec_summary(prs, summary, period_label, metric_changes=None, comp
     add_morph(slide)
 
 
-def add_slide_trend(prs, df, period_label):
+def add_slide_trend(prs, df, period_label, story=None):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
-    _header(slide, "PERFORMANCE TREND", "Conversions Over Time", period_label)
+    _header(slide, "PERFORMANCE TREND", "Conversions Over Time", period_label, story=story)
     ts = time_series_analysis(df, "Unique Conversions")
     if not _put_chart(slide, chart_trend(ts, "Unique Conversions"), 0.7, 1.7, 4.9):
         text(slide, 0.76, 3.0, 11, 0.5, ("Trend chart unavailable.", 14, MUTED, F_REG, False, None))
@@ -143,10 +179,10 @@ def channel_card_rows(df, comparison_df=None):
     return rows
 
 
-def add_slide_channel_cards(prs, df, period_label, comparison_df=None):
+def add_slide_channel_cards(prs, df, period_label, comparison_df=None, story=None):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
-    _header(slide, "CHANNEL PERFORMANCE", "Where Revenue Comes From", period_label)
+    _header(slide, "CHANNEL PERFORMANCE", "Where Revenue Comes From", period_label, story=story)
     rows = channel_card_rows(df, comparison_df)[:6]
     cols, card_w, card_h, gap_x, gap_y = 3, 3.95, 2.35, 0.19, 0.2
     ox, oy = 0.55, 1.7
@@ -208,10 +244,10 @@ def channel_metrics_rows(df):
     return {"engagement_rows": engagement_rows, "revenue_rows": revenue_rows, "revenue_headers": revenue_headers}
 
 
-def add_slide_channel_metrics(prs, data, period_label):
+def add_slide_channel_metrics(prs, data, period_label, story=None):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
-    _header(slide, "CHANNEL PERFORMANCE", "Full Channel Metrics", period_label)
+    _header(slide, "CHANNEL PERFORMANCE", "Full Channel Metrics", period_label, story=story)
     styled_table(slide, 0.55, 1.85, 11.4,
                  ["Channel", "Sent", "Delivered", "Delivery Rate", "Clicks", "CTR"],
                  data["engagement_rows"], [2.2, 1.9, 1.9, 1.9, 1.7, 1.8])
@@ -242,10 +278,10 @@ def control_group_uplift_summary(df, conversion_attribution="Total"):
     return {"uplift_pct": uplift, "reliability": reliability, "is_significant": is_significant}
 
 
-def add_slide_control_uplift(prs, summary, period_label):
+def add_slide_control_uplift(prs, summary, period_label, story=None):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
-    _header(slide, "CAMPAIGN EFFICIENCY", "Control Group vs. Target Group Uplift", period_label)
+    _header(slide, "CAMPAIGN EFFICIENCY", "Control Group vs. Target Group Uplift", period_label, story=story)
     text(slide, 0.55, 2.0, 8, 0.6,
          ("The control group measures how much WebEngage-targeted campaigns "
           "outperform an untouched baseline audience.", 13, INK, F_REG, False, None))
@@ -255,10 +291,10 @@ def add_slide_control_uplift(prs, summary, period_label):
     add_morph(slide)
 
 
-def add_slide_campaigns(prs, df, period_label):
+def add_slide_campaigns(prs, df, period_label, story=None):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
-    _header(slide, "TOP CAMPAIGNS", "Highest-Converting Campaigns", period_label)
+    _header(slide, "TOP CAMPAIGNS", "Highest-Converting Campaigns", period_label, story=story)
     conv_col = "Selected Conversions" if "Selected Conversions" in df.columns else "Unique Conversions"
     rev_col = "Selected Revenue (SAR)" if "Selected Revenue (SAR)" in df.columns else "Revenue (SAR)"
     agg = df.groupby("Campaign Name").agg(
@@ -291,10 +327,10 @@ def top_campaign_spotlight(df):
     }
 
 
-def add_slide_campaign_spotlight(prs, spotlight, period_label):
+def add_slide_campaign_spotlight(prs, spotlight, period_label, story=None):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
-    _header(slide, "CAMPAIGN SPOTLIGHT", spotlight["name"], period_label)
+    _header(slide, "CAMPAIGN SPOTLIGHT", spotlight["name"], period_label, story=story)
     rect(slide, 9.55, 0.45, 3.05, 0.5, fill=BRAND, shape=MSO_SHAPE.ROUNDED_RECTANGLE)
     text(slide, 9.55, 0.45, 3.05, 0.5, (spotlight["channel"], 12, WHITE, F_BOLD, True, None),
          align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
@@ -313,10 +349,10 @@ def add_slide_campaign_spotlight(prs, spotlight, period_label):
     add_morph(slide)
 
 
-def add_slide_journeys(prs, df, period_label):
+def add_slide_journeys(prs, df, period_label, story=None):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
-    _header(slide, "JOURNEY HEALTH", "Top Journey & Its Flow", period_label)
+    _header(slide, "JOURNEY HEALTH", "Top Journey & Its Flow", period_label, story=story)
     conv_col = "Selected Conversions" if "Selected Conversions" in df.columns else "Unique Conversions"
     rev_col = "Selected Revenue (SAR)" if "Selected Revenue (SAR)" in df.columns else "Revenue (SAR)"
     jdf = df[df["Journey Name"].notna() & (df["Journey Name"] != "nan") & (df["Journey Name"] != "")]
@@ -355,10 +391,10 @@ def deliverability_data(df):
     return {"esp_rows": esp_rows, "failed_rows": failed_rows}
 
 
-def add_slide_deliverability(prs, data, period_label):
+def add_slide_deliverability(prs, data, period_label, story=None):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
-    _header(slide, "DELIVERABILITY", "ESP Performance & Failure Reasons", period_label)
+    _header(slide, "DELIVERABILITY", "ESP Performance & Failure Reasons", period_label, story=story)
     if data["esp_rows"]:
         styled_table(slide, 0.55, 1.7, 7.0, ["ESP / Provider", "Sent", "Delivery Rate"],
                      data["esp_rows"], [3.4, 1.8, 1.8])
@@ -379,10 +415,10 @@ def attribution_rows(df):
             for _, r in attr.iterrows()]
 
 
-def add_slide_attribution(prs, rows, period_label):
+def add_slide_attribution(prs, rows, period_label, story=None):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
-    _header(slide, "ATTRIBUTION", "How Conversions Were Won", period_label)
+    _header(slide, "ATTRIBUTION", "How Conversions Were Won", period_label, story=story)
     styled_table(slide, 0.55, 1.9, 7.0, ["Source", "Conversions", "Share"], rows, [3.4, 1.8, 1.8])
     add_morph(slide)
 
@@ -418,19 +454,19 @@ def qoq_scorecard_rows(metric_changes):
     return rows
 
 
-def add_slide_qoq_scorecard(prs, rows, current_label, comparison_label, period_label):
+def add_slide_qoq_scorecard(prs, rows, current_label, comparison_label, period_label, story=None):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
-    _header(slide, "QUARTER OVER QUARTER", "Performance Scorecard", period_label)
+    _header(slide, "QUARTER OVER QUARTER", "Performance Scorecard", period_label, story=story)
     headers = ["Metric", comparison_label or "Prior Period", current_label or "This Period", "Change %"]
     styled_table(slide, 0.55, 1.9, 11.4, headers, rows, [3.4, 2.6, 2.6, 2.8])
     add_morph(slide)
 
 
-def _add_findings_slide(prs, eyebrow, title, items, kind, period_label):
+def _add_findings_slide(prs, eyebrow, title, items, kind, period_label, story=None):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
-    _header(slide, eyebrow, title, period_label)
+    _header(slide, eyebrow, title, period_label, story=story)
     lines = sn.narrate_findings(items, kind)
     y = 1.7
     for line in lines[:4]:
@@ -442,10 +478,10 @@ def _add_findings_slide(prs, eyebrow, title, items, kind, period_label):
     add_morph(slide)
 
 
-def add_slide_recommendations(prs, actions, period_label):
+def add_slide_recommendations(prs, actions, period_label, story=None):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
-    _header(slide, "RECOMMENDATIONS", "What To Do & Which Feature", period_label)
+    _header(slide, "RECOMMENDATIONS", "What To Do & Which Feature", period_label, story=story)
     y = 1.7
     for action in actions[:3]:
         sentence, feature = sn.narrate_recommendation(action)
@@ -461,10 +497,10 @@ def add_slide_recommendations(prs, actions, period_label):
     add_morph(slide)
 
 
-def add_slide_action_plan(prs, actions, period_label):
+def add_slide_action_plan(prs, actions, period_label, story=None):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
-    _header(slide, "ACTION PLAN", "Priorities for Next Period", period_label)
+    _header(slide, "ACTION PLAN", "Priorities for Next Period", period_label, story=story)
     y = 1.7
     for i, action in enumerate(actions[:5], start=1):
         rect(slide, 0.6, y, 0.5, 0.5, fill=BRAND, shape=MSO_SHAPE.OVAL)
@@ -500,49 +536,57 @@ def build_deck(df, client_name="", period_label=None, comparison_result=None, co
         current_label = comparison_result.get("current_label")
         comparison_label = comparison_result.get("comparison_label")
 
+    chan_rows_for_story = channel_card_rows(df)
+    monthly_rows_for_story = monthly_kpi_rows(df)
+    spotlight_for_story = top_campaign_spotlight(df)
+    stories = _build_storylines(summary, chan_rows_for_story, monthly_rows_for_story,
+                                 spotlight_for_story, comparison_label)
+
     prs = new_deck()
     add_slide_title(prs, client_name, period_label)
     add_slide_agenda(prs, period_label)
     add_slide_exec_summary(prs, summary, period_label, metric_changes, comparison_label)
-    add_slide_monthly_kpi(prs, df, period_label)
-    add_slide_trend(prs, df, period_label)
+    add_slide_monthly_kpi(prs, df, period_label, story=stories.get("monthly_kpi"))
+    add_slide_trend(prs, df, period_label, story=stories.get("trend"))
     add_slide_channel_cards(
         prs, df, period_label,
         comparison_df=comparison_result["comparison_data"] if comparison_result else None,
+        story=stories.get("channel_cards"),
     )
-    add_slide_channel_metrics(prs, channel_metrics_rows(df), period_label)
+    add_slide_channel_metrics(prs, channel_metrics_rows(df), period_label, story=stories.get("channel_metrics"))
 
     uplift_summary = control_group_uplift_summary(df, conversion_attribution)
     if uplift_summary:
-        add_slide_control_uplift(prs, uplift_summary, period_label)
+        add_slide_control_uplift(prs, uplift_summary, period_label, story=None)
 
-    add_slide_campaigns(prs, df, period_label)
+    add_slide_campaigns(prs, df, period_label, story=stories.get("campaigns"))
 
     spotlight = top_campaign_spotlight(df)
     if spotlight:
-        add_slide_campaign_spotlight(prs, spotlight, period_label)
+        add_slide_campaign_spotlight(prs, spotlight, period_label, story=stories.get("spotlight"))
 
-    add_slide_journeys(prs, df, period_label)
+    add_slide_journeys(prs, df, period_label, story=stories.get("journeys"))
 
     deliverability = deliverability_data(df)
     if deliverability:
-        add_slide_deliverability(prs, deliverability, period_label)
+        add_slide_deliverability(prs, deliverability, period_label, story=stories.get("deliverability"))
 
     attr_rows = attribution_rows(df)
     if attr_rows:
-        add_slide_attribution(prs, attr_rows, period_label)
+        add_slide_attribution(prs, attr_rows, period_label, story=stories.get("attribution"))
 
     if metric_changes:
         qoq_rows = qoq_scorecard_rows(metric_changes)
         if qoq_rows:
-            add_slide_qoq_scorecard(prs, qoq_rows, current_label, comparison_label, period_label)
+            add_slide_qoq_scorecard(prs, qoq_rows, current_label, comparison_label, period_label,
+                                     story=stories.get("qoq_scorecard"))
 
     _add_findings_slide(prs, "WHAT'S WORKING", "Opportunities",
                         ni.get("opportunities", []), "opportunity", period_label)
     _add_findings_slide(prs, "WHAT'S AT RISK", "Performance Alerts",
                         ni.get("performance_alerts", []), "alert", period_label)
-    add_slide_recommendations(prs, actions, period_label)
-    add_slide_action_plan(prs, actions, period_label)
+    add_slide_recommendations(prs, actions, period_label, story=stories.get("recommendations"))
+    add_slide_action_plan(prs, actions, period_label, story=stories.get("action_plan"))
     add_slide_closing(prs)
 
     buf = io.BytesIO()

@@ -47,3 +47,12 @@ def test_status_pill_draws_without_error():
     slide = sx.blank_slide(prs)
     width = sx.status_pill(slide, 0.5, 0.5, "ACTIVE", sx.GREEN)
     assert width > 0
+
+
+def test_header_renders_story_line_when_given():
+    prs = sx.new_deck()
+    slide = sx.blank_slide(prs)
+    sx._header(slide, "TREND", "Conversions Over Time", "Jun 2026", story="Here's the shape behind that total.")
+    texts = " ".join(sh.text_frame.text for sh in prs.slides[0].shapes if sh.has_text_frame) if False else \
+            " ".join(sh.text_frame.text for sh in slide.shapes if sh.has_text_frame)
+    assert "Here's the shape behind that total." in texts

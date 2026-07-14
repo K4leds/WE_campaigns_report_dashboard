@@ -264,3 +264,24 @@ def test_build_deck_full_fixture_with_comparison_reaches_max_slide_count():
     # (Top Segments would have added a 5th conditional slide here, but that
     # slide was cancelled during execution — see Task 10.)
     assert len(prs.slides) == 19
+
+
+def test_build_storylines_references_top_channel_and_totals():
+    from insights_engine import generate_executive_summary
+    df = _full_df()
+    summary = generate_executive_summary(df)
+    chan_rows = sx.channel_card_rows(df)
+    monthly_rows = sx.monthly_kpi_rows(df)
+    spotlight = sx.top_campaign_spotlight(df)
+    stories = sx._build_storylines(summary, chan_rows, monthly_rows, spotlight, comparison_label=None)
+    assert stories["channel_cards"] is not None and chan_rows[0]["channel"] in stories["channel_cards"]
+    assert stories["spotlight"] is not None and spotlight["name"] in stories["spotlight"]
+
+
+def test_build_deck_channel_cards_slide_has_story_text():
+    data = sx.build_deck(_full_df(), client_name="Acme Co", period_label="Jun 2026")
+    prs = Presentation(io.BytesIO(data))
+    # slide order: title, agenda, exec, monthly kpi, trend, channel cards, channel metrics, ...
+    channel_cards_slide = prs.slides[5]
+    texts = " ".join(sh.text_frame.text for sh in channel_cards_slide.shapes if sh.has_text_frame)
+    assert "drove" in texts  # from the "{channel} alone drove {share:.0%}..." template

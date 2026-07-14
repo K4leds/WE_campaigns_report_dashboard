@@ -263,10 +263,12 @@ def chart_journey_sankey(stages):
     return fig
 
 
-def _header(slide, eyebrow, title, period_label):
+def _header(slide, eyebrow, title, period_label, story=None):
     rect(slide, 0.55, 0.42, 0.10, 0.62, fill=BRAND)
     text(slide, 0.78, 0.40, 8.5, 0.3, (eyebrow, 10.5, BRAND, F_MED, True, 2.2))
     text(slide, 0.76, 0.62, 9.5, 0.5, (title, 24, INK, F_BOLD, True, None))
+    if story:
+        text(slide, 0.78, 1.06, 9.5, 0.25, (story, 11, MUTED, F_REG, False, None))
     if period_label:
         text(slide, 9.2, 0.52, 3.6, 0.5,
              [[("Reporting period  ", 10.5, MUTED, F_REG, False, None)],
