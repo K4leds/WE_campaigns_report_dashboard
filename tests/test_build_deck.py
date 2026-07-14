@@ -189,6 +189,30 @@ def test_build_deck_adds_deliverability_slide_when_data_present():
     assert n_full > n_minimal
 
 
+def test_qoq_scorecard_rows_has_expected_metrics():
+    from dashboard.comparisons_logic import calculate_period_metrics, calculate_metric_changes
+    df = _full_df()
+    cr = _comparison_result(df)
+    current_m = calculate_period_metrics(cr["current_data"], cr["current_days"], "Total")
+    comp_m = calculate_period_metrics(cr["comparison_data"], cr["comparison_days"], "Total")
+    changes = calculate_metric_changes(current_m, comp_m)
+    rows = sx.qoq_scorecard_rows(changes)
+    labels = [r[0] for r in rows]
+    assert any(l.startswith("Revenue") for l in labels)
+    roas_label = next(l for l in labels if l.startswith("ROAS"))
+    assert "good ≥" in roas_label
+
+
+def test_build_deck_adds_qoq_scorecard_when_comparison_result_given():
+    df = _full_df()
+    cr = _comparison_result(df)
+    data_no_comparison = sx.build_deck(df, client_name="Acme Co")
+    data_with_comparison = sx.build_deck(df, client_name="Acme Co", comparison_result=cr)
+    n_plain = len(Presentation(io.BytesIO(data_no_comparison)).slides)
+    n_compared = len(Presentation(io.BytesIO(data_with_comparison)).slides)
+    assert n_compared == n_plain + 1
+
+
 def test_attribution_rows_none_without_attribution_columns():
     assert sx.attribution_rows(_df()) is None
 

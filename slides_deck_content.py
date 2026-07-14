@@ -14,9 +14,12 @@ from slides_export import (
     chart_trend, chart_journey_sankey, embed_fonts, channel_status, status_pill,
     BRAND, BRAND_D, TBL_HDR, INK, MUTED, LINE, WHITE, INSIGHT, GREEN, RED,
     PILL_LBL, F_REG, F_MED, F_BOLD, qoq_delta_text, BENCHMARK_DELIVERY_RATE,
+    BENCHMARK_ROAS_GOOD,
 )
 from insights_engine import generate_executive_summary, generate_top_actions
-from dashboard.comparisons_logic import calculate_period_metrics, calculate_uplift_significance
+from dashboard.comparisons_logic import (
+    calculate_period_metrics, calculate_uplift_significance, calculate_metric_changes,
+)
 from analysis import (channel_analysis,
                       time_series_analysis, esp_analysis, failed_reasons_analysis,
                       attribution_analysis)
@@ -334,6 +337,46 @@ def add_slide_attribution(prs, rows, period_label):
     add_morph(slide)
 
 
+def qoq_scorecard_rows(metric_changes):
+    # Benchmark label appended for the two metrics insights_engine/comparisons
+    # already treat as having a fixed target (see slides_export.py's
+    # BENCHMARK_* constants) -- None for metrics judged only relative to
+    # their own prior period.
+    metric_specs = [
+        ("selected_revenue", "Revenue", "SAR", None),
+        ("selected_conversions", "Conversions", "", None),
+        ("ctr", "Click-Through Rate", "%", None),
+        ("delivery_rate", "Delivery Rate", "%", f"target ≥{BENCHMARK_DELIVERY_RATE:.0%}"),
+        ("aov", "Average Order Value", "SAR", None),
+        ("roas", "ROAS", "x", f"good ≥{BENCHMARK_ROAS_GOOD:.0f}x"),
+    ]
+    rows = []
+    for key, label, unit, benchmark in metric_specs:
+        if key not in metric_changes:
+            continue
+        c = metric_changes[key]
+        if unit == "%":
+            cur, comp = f"{c['current']:.1%}", f"{c['comparison']:.1%}"
+        elif unit == "SAR":
+            cur, comp = f"SAR {c['current']:,.0f}", f"SAR {c['comparison']:,.0f}"
+        elif unit == "x":
+            cur, comp = f"{c['current']:.2f}x", f"{c['comparison']:.2f}x"
+        else:
+            cur, comp = f"{c['current']:,.0f}", f"{c['comparison']:,.0f}"
+        label_with_benchmark = f"{label} ({benchmark})" if benchmark else label
+        rows.append((label_with_benchmark, comp, cur, f"{c['pct_change']:+.1f}%"))
+    return rows
+
+
+def add_slide_qoq_scorecard(prs, rows, current_label, comparison_label, period_label):
+    slide = blank_slide(prs)
+    rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
+    _header(slide, "QUARTER OVER QUARTER", "Performance Scorecard", period_label)
+    headers = ["Metric", comparison_label or "Prior Period", current_label or "This Period", "Change %"]
+    styled_table(slide, 0.55, 1.9, 11.4, headers, rows, [3.4, 2.6, 2.6, 2.8])
+    add_morph(slide)
+
+
 def _add_findings_slide(prs, eyebrow, title, items, kind, period_label):
     slide = blank_slide(prs)
     rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
@@ -394,30 +437,53 @@ def build_deck(df, client_name="", period_label=None, comparison_result=None, co
     period_label = period_label or summary.get("period")
     actions = summary.get("top_actions") or generate_top_actions(df, max_actions=5)
     ni = summary.get("narrative_insights", {}) or {}
+
+    metric_changes, current_label, comparison_label = None, None, None
+    if comparison_result:
+        current_m = calculate_period_metrics(
+            comparison_result["current_data"], comparison_result["current_days"], conversion_attribution)
+        comp_m = calculate_period_metrics(
+            comparison_result["comparison_data"], comparison_result["comparison_days"], conversion_attribution)
+        metric_changes = calculate_metric_changes(current_m, comp_m)
+        current_label = comparison_result.get("current_label")
+        comparison_label = comparison_result.get("comparison_label")
+
     prs = new_deck()
     add_slide_title(prs, client_name, period_label)
     add_slide_agenda(prs, period_label)
-    add_slide_exec_summary(prs, summary, period_label)
+    add_slide_exec_summary(prs, summary, period_label, metric_changes, comparison_label)
     add_slide_monthly_kpi(prs, df, period_label)
     add_slide_trend(prs, df, period_label)
     add_slide_channel_cards(
         prs, df, period_label,
         comparison_df=comparison_result["comparison_data"] if comparison_result else None,
     )
+
     uplift_summary = control_group_uplift_summary(df, conversion_attribution)
     if uplift_summary:
         add_slide_control_uplift(prs, uplift_summary, period_label)
+
     add_slide_campaigns(prs, df, period_label)
+
     spotlight = top_campaign_spotlight(df)
     if spotlight:
         add_slide_campaign_spotlight(prs, spotlight, period_label)
+
     add_slide_journeys(prs, df, period_label)
+
     deliverability = deliverability_data(df)
     if deliverability:
         add_slide_deliverability(prs, deliverability, period_label)
+
     attr_rows = attribution_rows(df)
     if attr_rows:
         add_slide_attribution(prs, attr_rows, period_label)
+
+    if metric_changes:
+        qoq_rows = qoq_scorecard_rows(metric_changes)
+        if qoq_rows:
+            add_slide_qoq_scorecard(prs, qoq_rows, current_label, comparison_label, period_label)
+
     _add_findings_slide(prs, "WHAT'S WORKING", "Opportunities",
                         ni.get("opportunities", []), "opportunity", period_label)
     _add_findings_slide(prs, "WHAT'S AT RISK", "Performance Alerts",
@@ -425,6 +491,7 @@ def build_deck(df, client_name="", period_label=None, comparison_result=None, co
     add_slide_recommendations(prs, actions, period_label)
     add_slide_action_plan(prs, actions, period_label)
     add_slide_closing(prs)
+
     buf = io.BytesIO()
     prs.save(buf)
     return embed_fonts(buf.getvalue())
