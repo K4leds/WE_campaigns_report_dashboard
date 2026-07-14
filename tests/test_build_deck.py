@@ -228,3 +228,14 @@ def test_build_deck_adds_attribution_slide_when_data_present():
     n_minimal = len(Presentation(io.BytesIO(data_minimal)).slides)
     n_full = len(Presentation(io.BytesIO(data_full)).slides)
     assert n_full > n_minimal
+
+
+def test_recommendations_slide_shows_expected_impact():
+    prs = sx.new_deck()
+    actions = [{
+        "title": "Fix Delivery Issues", "action": "Improve delivery rate",
+        "expected_impact": "+5.2K SAR in recovered revenue", "priority": "HIGH",
+    }]
+    sx.add_slide_recommendations(prs, actions, "Jun 2026")
+    texts = " ".join(sh.text_frame.text for sh in prs.slides[0].shapes if sh.has_text_frame)
+    assert "+5.2K SAR in recovered revenue" in texts

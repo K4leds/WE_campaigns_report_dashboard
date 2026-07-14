@@ -399,7 +399,9 @@ def add_slide_recommendations(prs, actions, period_label):
     y = 1.7
     for action in actions[:3]:
         sentence, feature = sn.narrate_recommendation(action)
-        insight_box(slide, 0.55, y, 9.0, 1.5, action.get("title", "Recommendation").upper(), sentence)
+        impact = action.get("expected_impact")
+        body = f"{sentence}  ({impact})" if impact else sentence
+        insight_box(slide, 0.55, y, 9.0, 1.5, action.get("title", "Recommendation").upper(), body)
         rect(slide, 9.8, y + 0.5, 2.9, 0.5, fill=BRAND, shape=MSO_SHAPE.ROUNDED_RECTANGLE)
         text(slide, 9.8, y + 0.5, 2.9, 0.5,
              [[("WEBENGAGE", 8.5, PILL_LBL, F_MED, True, 1.0)],
