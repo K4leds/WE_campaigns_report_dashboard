@@ -16,23 +16,31 @@ st.subheader("Client Review Deck (PowerPoint)")
 client_name = st.text_input("Client / brand name", value="", key="deck_client")
 
 
-def _deck_signature(df, name):
+def _deck_signature(df, name, comparison_result):
     # Cheap fingerprint of the inputs so a previously-generated deck isn't offered
-    # for download after the user changes filters or the client name (which would
-    # otherwise silently serve a deck built from stale data).
+    # for download after the user changes filters, the client name, or the
+    # comparison-mode selection (any of which would otherwise silently serve a
+    # deck built from stale data).
     if df is None or df.empty:
         return None
-    return (df.shape, float(df.select_dtypes("number").fillna(0).to_numpy().sum()), name)
+    comp_sig = None
+    if comparison_result:
+        comp_sig = (comparison_result.get("comparison_label"), comparison_result.get("current_label"))
+    return (df.shape, float(df.select_dtypes("number").fillna(0).to_numpy().sum()), name, comp_sig)
 
 
-cur_sig = _deck_signature(filtered_df, client_name)
+cur_sig = _deck_signature(filtered_df, client_name, ctx.comparison_result)
 if st.button("Generate Client Review Deck"):
     if filtered_df is None or filtered_df.empty:
         st.warning("No data for the current filters — adjust filters and try again.")
     else:
         with st.spinner("Building deck (rendering charts)…"):
             try:
-                st.session_state["deck_bytes"] = slides_deck_content.build_deck(filtered_df, client_name=client_name)
+                st.session_state["deck_bytes"] = slides_deck_content.build_deck(
+                    filtered_df, client_name=client_name,
+                    comparison_result=ctx.comparison_result,
+                    conversion_attribution=ctx.conversion_attribution,
+                )
                 st.session_state["deck_sig"] = cur_sig
             except Exception as e:
                 st.error(f"Could not build the deck: {e}")

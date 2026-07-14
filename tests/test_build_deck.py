@@ -239,3 +239,16 @@ def test_recommendations_slide_shows_expected_impact():
     sx.add_slide_recommendations(prs, actions, "Jun 2026")
     texts = " ".join(sh.text_frame.text for sh in prs.slides[0].shapes if sh.has_text_frame)
     assert "+5.2K SAR in recovered revenue" in texts
+
+
+def test_build_deck_full_fixture_with_comparison_reaches_max_slide_count():
+    df = _full_df()
+    cr = _comparison_result(df)
+    data = sx.build_deck(df, client_name="Acme Co", comparison_result=cr, conversion_attribution="Total")
+    prs = Presentation(io.BytesIO(data))
+    # 14 base (Task 9) + control uplift + deliverability + attribution + qoq scorecard
+    # (Top Segments would have added a 5th conditional slide here, but that
+    # slide was cancelled during execution — see Task 10.)
+    # NOTE: Task 17 (added after this task in the plan) inserts one more
+    # unconditional slide and bumps this assertion to 19 — see Task 17 Step 1.
+    assert len(prs.slides) == 18
