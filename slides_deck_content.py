@@ -170,6 +170,56 @@ def add_slide_channel_cards(prs, df, period_label, comparison_df=None):
     add_morph(slide)
 
 
+def channel_metrics_rows(df):
+    chan = channel_analysis(df)
+    rev_col = "Selected Revenue (SAR)" if "Selected Revenue (SAR)" in chan.columns else "Revenue (SAR)"
+    conv_col = "Selected Conversions" if "Selected Conversions" in chan.columns else "Unique Conversions"
+    chan = chan.sort_values(rev_col, ascending=False).copy()
+    chan["Delivery Rate"] = np.where(chan["Sent"] > 0, chan["Delivered"] / chan["Sent"], 0)
+    chan["CTR"] = np.where(chan["Unique Impressions"] > 0, chan["Unique Clicks"] / chan["Unique Impressions"], 0)
+    chan["Conv Rate"] = np.where(chan["Unique Clicks"] > 0, chan[conv_col] / chan["Unique Clicks"], 0)
+    chan["AOV"] = np.where(chan[conv_col] > 0, chan[rev_col] / chan[conv_col], 0)
+
+    engagement_rows = [
+        (r["Channel"], f"{r['Sent']:,.0f}", f"{r['Delivered']:,.0f}",
+         f"{r['Delivery Rate']:.1%}", f"{r['Unique Clicks']:,.0f}", f"{r['CTR']:.2%}")
+        for _, r in chan.iterrows()
+    ]
+
+    has_cost = "Campaign Cost" in df.columns
+    if has_cost:
+        cost_by_channel = df.groupby("Channel")["Campaign Cost"].sum()
+        chan["Cost"] = chan["Channel"].map(cost_by_channel).fillna(0)
+        chan["ROAS"] = np.where(chan["Cost"] > 0, chan[rev_col] / chan["Cost"], 0)
+        revenue_headers = ["Channel", "Conversions", "Conv Rate", "Revenue", "AOV", "ROAS"]
+        revenue_rows = [
+            (r["Channel"], f"{r[conv_col]:,.0f}", f"{r['Conv Rate']:.1%}",
+             f"SAR {r[rev_col]:,.0f}", f"SAR {r['AOV']:,.0f}", f"{r['ROAS']:.2f}x")
+            for _, r in chan.iterrows()
+        ]
+    else:
+        revenue_headers = ["Channel", "Conversions", "Conv Rate", "Revenue", "AOV"]
+        revenue_rows = [
+            (r["Channel"], f"{r[conv_col]:,.0f}", f"{r['Conv Rate']:.1%}",
+             f"SAR {r[rev_col]:,.0f}", f"SAR {r['AOV']:,.0f}")
+            for _, r in chan.iterrows()
+        ]
+
+    return {"engagement_rows": engagement_rows, "revenue_rows": revenue_rows, "revenue_headers": revenue_headers}
+
+
+def add_slide_channel_metrics(prs, data, period_label):
+    slide = blank_slide(prs)
+    rect(slide, 0, 0, 13.333, 7.5, fill=WHITE)
+    _header(slide, "CHANNEL PERFORMANCE", "Full Channel Metrics", period_label)
+    styled_table(slide, 0.55, 1.85, 11.4,
+                 ["Channel", "Sent", "Delivered", "Delivery Rate", "Clicks", "CTR"],
+                 data["engagement_rows"], [2.2, 1.9, 1.9, 1.9, 1.7, 1.8])
+    revenue_widths = [2.2, 1.9, 1.9, 2.3, 1.7, 1.4] if len(data["revenue_headers"]) == 6 else [2.5, 2.5, 2.5, 2.5, 2.4]
+    styled_table(slide, 0.55, 4.35, 11.4, data["revenue_headers"], data["revenue_rows"], revenue_widths)
+    add_morph(slide)
+
+
 def control_group_uplift_summary(df, conversion_attribution="Total"):
     if "Total in Control Group" not in df.columns or "Unique Control Group Conversions" not in df.columns:
         return None
@@ -460,6 +510,7 @@ def build_deck(df, client_name="", period_label=None, comparison_result=None, co
         prs, df, period_label,
         comparison_df=comparison_result["comparison_data"] if comparison_result else None,
     )
+    add_slide_channel_metrics(prs, channel_metrics_rows(df), period_label)
 
     uplift_summary = control_group_uplift_summary(df, conversion_attribution)
     if uplift_summary:

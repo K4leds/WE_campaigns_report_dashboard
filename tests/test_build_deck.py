@@ -91,11 +91,25 @@ def test_monthly_kpi_rows_includes_total_row():
     assert len(rows) == 2  # 1 month of data (all June) + Total
 
 
+def test_channel_metrics_rows_has_engagement_and_revenue_tables():
+    data = sx.channel_metrics_rows(_df())
+    assert len(data["engagement_rows"]) == 3  # Email, Web Push, SMS
+    assert len(data["revenue_rows"]) == 3
+    assert data["revenue_headers"] == ["Channel", "Conversions", "Conv Rate", "Revenue", "AOV"]
+
+
+def test_channel_metrics_rows_adds_roas_column_when_cost_present():
+    df = _df().copy()
+    df["Campaign Cost"] = [100, 90, 80, 50, 40, 30]
+    data = sx.channel_metrics_rows(df)
+    assert data["revenue_headers"] == ["Channel", "Conversions", "Conv Rate", "Revenue", "AOV", "ROAS"]
+
+
 def test_build_deck_has_10_slides_with_client_name():
     data = sx.build_deck(_df(), client_name="Acme Co", period_label="Jun 2026")
     assert isinstance(data, (bytes, bytearray)) and len(data) > 5000
     prs = Presentation(io.BytesIO(data))
-    assert len(prs.slides) == 14
+    assert len(prs.slides) == 15
     # client name appears on the title slide
     texts = [sh.text_frame.text for sh in prs.slides[0].shapes if sh.has_text_frame]
     assert any("Acme Co" in t for t in texts)
@@ -249,6 +263,4 @@ def test_build_deck_full_fixture_with_comparison_reaches_max_slide_count():
     # 14 base (Task 9) + control uplift + deliverability + attribution + qoq scorecard
     # (Top Segments would have added a 5th conditional slide here, but that
     # slide was cancelled during execution — see Task 10.)
-    # NOTE: Task 17 (added after this task in the plan) inserts one more
-    # unconditional slide and bumps this assertion to 19 — see Task 17 Step 1.
-    assert len(prs.slides) == 18
+    assert len(prs.slides) == 19
