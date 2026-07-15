@@ -442,6 +442,7 @@ def render_table(
         # ujson can hit "Maximum recursion level reached" on complex objects
         # like pd.Period — catch that gracefully.
         small = pd.concat([df.head(min(3, n_rows)), df.tail(min(2, n_rows))])
+        small = small.reset_index(drop=True)
         try:
             sample = small.to_json()
         except (OverflowError, ValueError, TypeError):
