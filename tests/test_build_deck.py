@@ -126,7 +126,7 @@ def test_exec_summary_shows_qoq_delta_when_comparison_given():
     prs = sx.new_deck()
     from insights_engine import generate_executive_summary
     summary = generate_executive_summary(df)
-    sx.add_slide_exec_summary(prs, summary, "Jun 2026", changes, "Jun 1")
+    sx.add_slide_exec_summary(prs, summary, df, "Jun 2026", changes, "Jun 1")
     texts = " ".join(sh.text_frame.text for sh in prs.slides[0].shapes if sh.has_text_frame)
     assert "vs Jun 1" in texts
 
@@ -134,8 +134,9 @@ def test_exec_summary_shows_qoq_delta_when_comparison_given():
 def test_exec_summary_delivery_tile_shows_benchmark():
     prs = sx.new_deck()
     from insights_engine import generate_executive_summary
-    summary = generate_executive_summary(_df())
-    sx.add_slide_exec_summary(prs, summary, "Jun 2026")
+    df = _df()
+    summary = generate_executive_summary(df)
+    sx.add_slide_exec_summary(prs, summary, df, "Jun 2026")
     texts = " ".join(sh.text_frame.text for sh in prs.slides[0].shapes if sh.has_text_frame)
     assert "target" in texts.lower() and "90%" in texts
 
@@ -232,8 +233,9 @@ def test_attribution_rows_none_without_attribution_columns():
 
 
 def test_attribution_rows_present_with_attribution_columns():
-    rows = sx.attribution_rows(_full_df())
-    assert rows is not None and len(rows) == 3  # Click-Through, Impression-Only, Send-Only
+    data = sx.attribution_rows(_full_df())
+    assert data is not None and len(data["rows"]) == 3  # Click-Through, Impression-Only, Send-Only
+    assert data["headline"] and len(data["values"]) == 3
 
 
 def test_build_deck_adds_attribution_slide_when_data_present():

@@ -96,7 +96,20 @@ def stat_tile(slide, x, y, w, h, label, value, delta, delta_color):
              (delta, 9.5, delta_color, F_MED, True, None))
 
 
-def styled_table(slide, x, y, w, headers, rows, col_widths=None):
+def styled_table(slide, x, y, w, headers, rows, col_widths=None,
+                 conditional_cols=None, data_bar_col=None, banded=True):
+    """Draw a styled table with optional conditional formatting and data bars.
+
+    v2 upgrades (BCG/McKinsey consulting-grade):
+    - banded: alternating row colors for readability (default True).
+    - conditional_cols: dict of {col_index: {"benchmark": value, "below": color, "above": color}}
+      to color-code cells against a benchmark (e.g., delivery rate < 90% → red).
+    - data_bar_col: column index to render an in-cell horizontal data bar,
+      encoding the relative magnitude of each row's value in that column.
+
+    Tables are the #1 data display in consulting decks — these small visual
+    cues lift them from "spreadsheet dump" to "analyst-grade deliverable."
+    """
     n = len(rows) + 1
     tbl = slide.shapes.add_table(n, len(headers), Inches(x), Inches(y),
                                  Inches(w), Inches(0.35 * n)).table
@@ -105,23 +118,81 @@ def styled_table(slide, x, y, w, headers, rows, col_widths=None):
         for i, cw in enumerate(col_widths):
             tbl.columns[i].width = Inches(cw)
 
-    def _cell(cell, s, color, font, bold, align, fill):
-        cell.fill.solid(); cell.fill.fore_color.rgb = fill
+    BAND_A = WHITE
+    BAND_B = RGBColor(0xF6, 0xF9, 0xFB)  # 2% tint of brand blue — subtle
+
+    def _cell(cell, s, color, font, bold, align, fill, row_idx=-1, col_idx=-1):
+        # Apply conditional formatting if this column has rules
+        cell_fill = fill
+        cell_color = color
+        if conditional_cols and col_idx in conditional_cols:
+            rules = conditional_cols[col_idx]
+            try:
+                val = float(str(s).replace("SAR ", "").replace("%", "").replace("x", "").replace(",", ""))
+                benchmark = rules.get("benchmark", 0)
+                if val < benchmark:
+                    cell_color = rules.get("below", RED)
+                elif val > benchmark:
+                    cell_color = rules.get("above", GREEN)
+            except (ValueError, TypeError):
+                pass
+
+        cell.fill.solid(); cell.fill.fore_color.rgb = cell_fill
         cell.vertical_anchor = MSO_ANCHOR.MIDDLE
         cell.margin_left = Inches(0.12); cell.margin_right = Inches(0.12)
         cell.margin_top = Inches(0.04); cell.margin_bottom = Inches(0.04)
         p = cell.text_frame.paragraphs[0]; p.alignment = align
         r = p.add_run(); r.text = str(s)
-        r.font.size = Pt(11.5); r.font.color.rgb = color
+        r.font.size = Pt(11.5); r.font.color.rgb = cell_color
         r.font.name = font; r.font.bold = bold
 
+    # Header row
     for c, s in enumerate(headers):
         _cell(tbl.cell(0, c), s, WHITE, F_MED, True,
               PP_ALIGN.LEFT if c == 0 else PP_ALIGN.RIGHT, TBL_HDR)
+
+    # Data rows
     for ri, row in enumerate(rows, start=1):
+        row_fill = BAND_A if not banded or ri % 2 == 1 else BAND_B
         for c, s in enumerate(row):
             _cell(tbl.cell(ri, c), s, INK, F_REG, False,
-                  PP_ALIGN.LEFT if c == 0 else PP_ALIGN.RIGHT, WHITE)
+                  PP_ALIGN.LEFT if c == 0 else PP_ALIGN.RIGHT,
+                  row_fill, row_idx=ri - 1, col_idx=c)
+
+    # Data bars — overlay a thin rectangle inside the cell
+    if data_bar_col is not None and rows:
+        # Find max value in that column for scaling
+        try:
+            vals = []
+            for row in rows:
+                raw = str(row[data_bar_col]).replace("SAR ", "").replace(",", "").replace("%", "").replace("x", "")
+                try:
+                    vals.append(float(raw))
+                except ValueError:
+                    vals.append(0)
+            max_val = max(vals) if vals else 1
+            if max_val > 0:
+                for ri, row in enumerate(rows, start=1):
+                    try:
+                        raw = str(row[data_bar_col]).replace("SAR ", "").replace(",", "").replace("%", "").replace("x", "")
+                        val = float(raw)
+                    except ValueError:
+                        val = 0
+                    ratio = val / max_val if max_val > 0 else 0
+                    cell = tbl.cell(ri, data_bar_col)
+                    cell_x = Inches(x) + sum(Inches(cw) for cw in (col_widths or [])[:data_bar_col])
+                    cell_w = Inches(col_widths[data_bar_col]) if col_widths else Inches(w / len(headers))
+                    bar_w = cell_w * 0.55 * ratio
+                    bar_y = Inches(y) + Inches(0.35 * ri) + Inches(0.28)
+                    bar_h = Inches(0.04)
+                    rect(slide,
+                         cell_x.inches + 0.12, bar_y.inches,
+                         bar_w.inches, bar_h.inches,
+                         fill=BRAND if ratio > 0.5 else BRAND_D,
+                         line=None)
+        except Exception:
+            pass  # Data bars are cosmetic — never block the table
+
     return tbl
 
 
@@ -263,10 +334,164 @@ def chart_journey_sankey(stages):
     return fig
 
 
-def _header(slide, eyebrow, title, period_label, story=None):
+# ── v2: BCG-style horizontal bar chart — the #1 consulting chart type ──
+def chart_bar_horizontal(labels, values, title="", sort_desc=True,
+                         value_prefix="SAR ", highlight_idx=None):
+    """Horizontal bar chart — BCG's preferred format for rankings.
+    Bars are easier to read left-to-right than vertical bars, and labels
+    sit naturally alongside without rotation.
+
+    highlight_idx: if set, color that bar differently (e.g., the top performer).
+    """
+    pairs = list(zip(labels, values))
+    if sort_desc:
+        pairs.sort(key=lambda x: x[1], reverse=True)
+    labels_sorted = [p[0] for p in pairs]
+    values_sorted = [p[1] for p in pairs]
+
+    colors = ["#006FA2"] * len(labels_sorted)
+    if highlight_idx is not None and 0 <= highlight_idx < len(colors):
+        colors[highlight_idx] = "#1E9E62"  # green for highlighted bar
+
+    fig = go.Figure(go.Bar(
+        y=labels_sorted, x=values_sorted, orientation="h",
+        marker=dict(color=colors, line=dict(width=0)),
+        text=[f"{value_prefix}{v:,.0f}" for v in values_sorted],
+        textposition="outside", textfont=dict(family="DM Sans", size=13, color="#1B2A32"),
+        hovertemplate=f"{value_prefix}%{{x:,.0f}}<extra></extra>",
+    ))
+    fig.update_layout(
+        font=_PLOTLY_FONT, paper_bgcolor="white", plot_bgcolor="white",
+        margin=dict(l=10, r=120, t=20 if title else 10, b=10),
+        width=1120, height=380,
+        xaxis=dict(showgrid=True, gridcolor="#EEF2F4", zeroline=False,
+                   showticklabels=False, showline=False),
+        yaxis=dict(showgrid=False, showline=False, tickfont=dict(size=13),
+                   categoryorder="total ascending" if sort_desc else None),
+        title=dict(text=title, font=dict(size=13, color="#6C7A82")) if title else None,
+    )
+    return fig
+
+
+# ── v2: Donut chart — for channel share, attribution split ──
+def chart_donut(labels, values, center_text="", hole=0.55):
+    """Donut chart for part-to-whole relationships (channel share, attribution).
+    Consulting-grade: muted palette, center label, no legend clutter."""
+    colors = ["#006FA2", "#1685B3", "#3FA0C6", "#66B6D6", "#1E9E62",
+              "#C9D4DA", "#9BB8C9", "#4472C4", "#005379", "#A8C5D6"]
+    fig = go.Figure(go.Pie(
+        labels=labels, values=values, hole=hole,
+        marker=dict(colors=colors[:len(labels)], line=dict(color="white", width=2)),
+        textinfo="label+percent", textfont=dict(family="DM Sans", size=12, color="#1B2A32"),
+        direction="clockwise", sort=True,
+    ))
+    if center_text:
+        fig.add_annotation(text=center_text, x=0.5, y=0.5, showarrow=False,
+                          font=dict(family="DM Sans", size=18, color="#1B2A32"))
+    fig.update_layout(
+        font=_PLOTLY_FONT, paper_bgcolor="white", plot_bgcolor="white",
+        margin=dict(l=20, r=20, t=20, b=20), width=600, height=400,
+        showlegend=False,
+    )
+    return fig
+
+
+# ── v2: KPI progress ring — for benchmark vs actual (delivery rate, ROAS) ──
+def chart_kpi_ring(actual, benchmark, label="", suffix="%", color=None):
+    """A single-value progress/donut ring showing actual vs benchmark.
+    The ring fills proportionally to actual/benchmark. Green if >= benchmark,
+    amber if within 10%, red if below.
+
+    Perfect for delivery rate, conversion rate, or ROAS benchmarks on exec summary.
+
+    Note: color can be a CSS hex string or a python-pptx RGBColor — both are
+    converted to hex strings for Plotly compatibility.
+    """
+    pct = min(actual / benchmark, 1.0) if benchmark > 0 else 1.0
+    remaining = 1.0 - pct
+
+    if color is None:
+        if actual >= benchmark:
+            color = "#1E9E62"  # GREEN
+        elif actual >= benchmark * 0.9:
+            color = "#C97A1E"  # AMBER
+        else:
+            color = "#C03A2B"  # RED
+    # Normalize RGBColor → hex string for Plotly
+    if hasattr(color, '__iter__') and not isinstance(color, str):
+        color = f"#{color[0]:02X}{color[1]:02X}{color[2]:02X}"
+
+    fig = go.Figure(go.Pie(
+        values=[pct, remaining], hole=0.72,
+        marker=dict(colors=[color, "#EEF2F4"], line=dict(width=0)),
+        textinfo="none", sort=False,
+    ))
+    # avg_delivery_rate / avg_conversion_rate arrive as fractions (0.87), so a
+    # "%" ring must scale to 0-100 for display — otherwise 0.87 prints as "0.9%".
+    display_val = f"{actual * 100:.1f}%" if suffix == "%" else f"{actual:.1f}{suffix}"
+    fig.add_annotation(
+        text=f"<b>{display_val}</b><br><span style='font-size:10px;color:#6C7A82'>{label}</span>",
+        x=0.5, y=0.5, showarrow=False,
+        font=dict(family="DM Sans", size=22, color="#1B2A32"),
+    )
+    fig.update_layout(
+        paper_bgcolor="white", plot_bgcolor="white",
+        margin=dict(l=0, r=0, t=0, b=0), width=160, height=160,
+        showlegend=False,
+    )
+    return fig
+
+
+# ── v2: Chart callout — overlay a key insight directly on the chart ──
+def _put_chart_with_callout(slide, fig, x, y, height, callout_text=""):
+    """Render chart + place a styled callout box with the key takeaway.
+    BCG/McKinsey signature: every chart has a callout that answers 'so what?'"""
+    try:
+        png = fig_to_png(fig)
+    except Exception:
+        return False
+    slide.shapes.add_picture(io.BytesIO(png), Inches(x), Inches(y), height=Inches(height))
+    if callout_text:
+        # Callout box: bottom-right of the chart area, semi-transparent
+        callout_w = 3.8
+        callout_h = 0.55
+        callout_x = x + 6.5  # right side
+        callout_y = y + height - callout_h - 0.15
+        rect(slide, callout_x, callout_y, callout_w, callout_h,
+             fill=RGBColor(0xFF, 0xFF, 0xFF), line=BRAND, line_w=1.2)
+        rect(slide, callout_x, callout_y, 0.06, callout_h, fill=BRAND)
+        text(slide, callout_x + 0.18, callout_y + 0.08, callout_w - 0.3, callout_h - 0.16,
+             (callout_text, 10, INK, F_MED, False, None))
+    return True
+
+
+_SLIDE_NUMBER = [0]  # mutable counter so each slide gets a unique number
+
+
+def _header(slide, eyebrow, title, period_label, story=None, action_title=None):
+    """Slide header with BCG-style action titles and consulting-grade layout.
+
+    v2 upgrades:
+    - action_title: when provided, replaces the static title with a punchy,
+      assertion-style headline (BCG/McKinsey standard). The old 'title' becomes
+      the eyebrow. Example: instead of "CHANNEL PERFORMANCE / Where Revenue
+      Comes From", you get "EMAIL DROVE 62% OF ALL REVENUE THIS PERIOD" with
+      "CHANNEL PERFORMANCE" as the small eyebrow above it.
+    - Slide number rendered bottom-right.
+    - Footer line with client branding.
+    """
+    _SLIDE_NUMBER[0] += 1
+
     rect(slide, 0.55, 0.42, 0.10, 0.62, fill=BRAND)
     text(slide, 0.78, 0.40, 8.5, 0.3, (eyebrow, 10.5, BRAND, F_MED, True, 2.2))
-    text(slide, 0.76, 0.62, 9.5, 0.5, (title, 24, INK, F_BOLD, True, None))
+
+    if action_title:
+        # Action title: larger, assertion-style, full slide width
+        text(slide, 0.76, 0.60, 12.0, 0.55,
+             (action_title, 20, INK, F_BOLD, True, None))
+    else:
+        text(slide, 0.76, 0.62, 9.5, 0.5, (title, 24, INK, F_BOLD, True, None))
+
     if story:
         text(slide, 0.78, 1.06, 9.5, 0.25, (story, 11, MUTED, F_REG, False, None))
     if period_label:
@@ -274,6 +499,16 @@ def _header(slide, eyebrow, title, period_label, story=None):
              [[("Reporting period  ", 10.5, MUTED, F_REG, False, None)],
               [(period_label, 13, INK, F_MED, True, None)]], align=PP_ALIGN.RIGHT)
     rect(slide, 0.55, 1.28, 12.23, 0.02, fill=LINE)
+
+    # Slide number — bottom-right, subtle
+    text(slide, 12.30, 7.10, 0.70, 0.25,
+         (str(_SLIDE_NUMBER[0]), 8.5, MUTED, F_REG, False, None),
+         align=PP_ALIGN.RIGHT)
+
+    # Footer line — subtle separator with brand accent
+    rect(slide, 0.55, 7.05, 12.23, 0.008, fill=LINE)
+    text(slide, 0.60, 7.10, 4.0, 0.20,
+         ("WebEngage  ·  Confidential", 7.5, MUTED, F_REG, False, None))
 
 
 def _put_chart(slide, fig, x, y, height):

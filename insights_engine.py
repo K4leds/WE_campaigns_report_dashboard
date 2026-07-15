@@ -20,6 +20,12 @@ logger = logging.getLogger(__name__)
 # actions -- avoids flagging noise on a client's low-volume test channel.
 CHANNEL_MIN_SENT = 200
 
+# A channel returning more than this many SAR per SAR spent almost certainly has
+# missing/partial cost data (e.g. a token default cost), not a real result.
+# Above this we treat ROAS as unreliable rather than print an absurd figure on a
+# client slide.
+ROAS_SANITY_CEILING = 50.0
+
 
 def _approx_ramadan_month(year):
     """
@@ -935,6 +941,12 @@ def generate_top_actions(df, journey_name=None, max_actions=5):
 
             if len(paid_channels) >= 2:
                 paid_channels['ROAS'] = paid_channels['Revenue (SAR)'] / paid_channels['Campaign Cost']
+                # Drop channels whose ROAS is implausibly high -- that's a cost-data
+                # gap, not a real return, and it would otherwise dominate the ranking
+                # and inflate the projected impact on a client slide.
+                paid_channels = paid_channels[paid_channels['ROAS'] <= ROAS_SANITY_CEILING]
+
+            if len(paid_channels) >= 2:
                 best = paid_channels.nlargest(1, 'ROAS').iloc[0]
                 worst = paid_channels.nsmallest(1, 'ROAS').iloc[0]
 
