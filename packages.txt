@@ -1,13 +1,1 @@
-# apt packages for Streamlit Community Cloud.
-# chromium = baseline system browser for kaleido v1 (Plotly -> PNG); kaleido no
-# longer bundles Chromium and searches PATH + OS default locations.
-#
-# VERIFIED 2026-07 (plotly.py docs via Context7 + plotly/Kaleido #373/#401,
-# discuss.streamlit.io): apt `chromium` on Streamlit Cloud's unprivileged
-# Debian-slim image is UNRELIABLE (binary-missing / exit-127 reports). The
-# maintainer-sanctioned fix is to let kaleido download its own pinned
-# Chrome-for-Testing build at runtime instead:
-#     import plotly.io as pio; pio.get_chrome()   # or CLI: plotly_get_chrome
-# Call it once per container (guard with @st.cache_resource) before write_image.
-# Fallback override if you install Chrome elsewhere: env var BROWSER_PATH=<binary>.
 chromium
