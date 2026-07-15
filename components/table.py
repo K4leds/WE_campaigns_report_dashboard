@@ -438,7 +438,15 @@ def render_table(
     # fresh component when filter changes don't rename columns but change data.
     n_rows = len(df)
     if n_rows > 0:
-        sample = df.head(min(3, n_rows)).to_json() + df.tail(min(2, n_rows)).to_json()
+        # Window the DataFrame first (smaller), then attempt JSON serialization.
+        # ujson can hit "Maximum recursion level reached" on complex objects
+        # like pd.Period — catch that gracefully.
+        small = pd.concat([df.head(min(3, n_rows)), df.tail(min(2, n_rows))])
+        try:
+            sample = small.to_json()
+        except (OverflowError, ValueError, TypeError):
+            # Fallback: convert every cell to str so serialisation always works.
+            sample = small.astype(str).to_json()
     else:
         sample = ""
     data_fp = hashlib.md5(f"{n_rows}|{sample}".encode()).hexdigest()[:8]

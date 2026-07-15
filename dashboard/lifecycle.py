@@ -775,6 +775,11 @@ def create_cohort_analysis(df, cohort_period='week'):
             if metric in cohort_data.columns:
                 cohort_data[f'{metric}_growth'] = cohort_data.groupby('Journey Name')[metric].pct_change() * 100
 
+        # Drop the Period column — it contains pd.Period objects that ujson
+        # cannot serialize (OverflowError: Maximum recursion level reached).
+        # cohort_str is the display-ready string version.
+        cohort_data = cohort_data.drop(columns=['cohort'], errors='ignore')
+
         return cohort_data
 
     except Exception as e:
