@@ -323,6 +323,106 @@ def _build_grid_options(
     return display_df, gb.build()
 
 
+# Cycled while the (blocking) LLM call runs. The rotation is pure CSS running in
+# the browser, so it keeps moving even though the Python thread is blocked waiting
+# on DeepSeek -- st.spinner shows one static string, which felt frozen on the
+# 15-20s thinking-mode calls.
+_THINKING_MESSAGES = [
+    "Reading the numbers…",
+    "Spotting the outliers…",
+    "Comparing against benchmarks…",
+    "Ranking what actually matters…",
+    "Sanity-checking the math…",
+    "Writing it up…",
+]
+
+
+def _thinking_html(messages: list[str]) -> str:
+    n = len(messages)
+    per = 2.4  # seconds each message is on screen
+    total = n * per
+    slice_pct = 100 / n
+    spans = "".join(
+        f'<span class="we-think-msg" style="animation-delay:{i * per:.2f}s">{m}</span>'
+        for i, m in enumerate(messages)
+    )
+    return f"""
+<style>
+.we-think {{ display:flex; align-items:center; gap:.6rem; color:var(--text-color,#6B7280);
+            font-size:.9rem; min-height:1.6rem; }}
+.we-think-spin {{ width:15px; height:15px; border-radius:50%; flex:0 0 auto;
+            border:2px solid rgba(99,102,241,.25); border-top-color:#6366F1;
+            animation:weThinkSpin .8s linear infinite; }}
+.we-think-stack {{ position:relative; flex:1 1 auto; height:1.4rem; }}
+.we-think-msg {{ position:absolute; left:0; top:0; white-space:nowrap; opacity:0;
+            animation:weThinkFade {total:.1f}s infinite; }}
+@keyframes weThinkSpin {{ to {{ transform:rotate(360deg); }} }}
+@keyframes weThinkFade {{
+    0% {{ opacity:0; transform:translateY(4px); }}
+    {2:.1f}% {{ opacity:1; transform:translateY(0); }}
+    {slice_pct - 2:.1f}% {{ opacity:1; transform:translateY(0); }}
+    {slice_pct:.1f}% {{ opacity:0; transform:translateY(-4px); }}
+    100% {{ opacity:0; }}
+}}
+</style>
+<div class="we-think"><span class="we-think-spin"></span><span class="we-think-stack">{spans}</span></div>
+"""
+
+
+def _render_static_table(df: pd.DataFrame, hide_index: bool = True) -> None:
+    """Render `df` as a plain HTML table inside a scroll box.
+
+    Used for the "data behind this chart" popover instead of st.dataframe: glide's
+    canvas grid re-measures itself as the popover animates open, revealing columns
+    one-by-one over several seconds on wide tables. A static <table> paints once.
+    Chart-source frames are small (aggregates), so plain HTML is the right tool.
+    """
+    html = df.to_html(
+        index=not hide_index,
+        border=0,
+        classes="we-dt",
+        na_rep="",
+        float_format=lambda x: f"{x:,.2f}",
+    )
+    st.markdown(
+        f'<div class="we-dt-box">{html}</div>'
+        """
+<style>
+.we-dt-box { max-height:60vh; overflow:auto; }
+.we-dt { border-collapse:collapse; font-size:.85rem; white-space:nowrap; }
+.we-dt th, .we-dt td { padding:.3rem .6rem; border-bottom:1px solid rgba(128,128,128,.2); text-align:right; }
+.we-dt th { position:sticky; top:0; background:var(--background-color,#fff);
+            color:var(--text-color,#6B7280); font-weight:600; }
+.we-dt td:first-child, .we-dt th:first-child { text-align:left; }
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def _inject_action_bar_css() -> None:
+    """Once-per-session style that pulls the data/AI icon bar tight to the chart or
+    table below it and strips the tertiary-button chrome, so the icons read as part
+    of the viz instead of floating a full block-gap above it. Targets every action
+    bar via the shared `weactions-` container key prefix.
+
+    The two offsets below are the tuning knobs — nudge them if the spacing looks off.
+    """
+    if st.session_state.get("_action_bar_css"):
+        return
+    st.session_state["_action_bar_css"] = True
+    st.markdown(
+        """
+<style>
+[class*="st-key-weactions-"] { margin-top:-.5rem; margin-bottom:-1rem; gap:0 !important; }
+[class*="st-key-weactions-"] button { padding:.1rem .35rem !important; min-height:0 !important; }
+[class*="st-key-weactions-"] [data-testid="stMarkdownContainer"] p { font-size:1.15rem; line-height:1; }
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def render_ai_explain(df: pd.DataFrame, key: str, ai_label: str | None = None, help_text: str = "Explain this with AI") -> None:
     """Small, tertiary "explain" popover, lazily evaluated: the DeepSeek call only
     fires once the popover is actually opened (on_change="rerun" + .open), so it
@@ -341,7 +441,7 @@ def render_ai_explain(df: pd.DataFrame, key: str, ai_label: str | None = None, h
 
     label = ai_label or key
     pop = st.popover(
-        "✨",
+        ":material/auto_awesome:",
         help=help_text,
         type="tertiary",
         on_change="rerun",
@@ -349,13 +449,14 @@ def render_ai_explain(df: pd.DataFrame, key: str, ai_label: str | None = None, h
     )
     if pop.open:
         with pop:
-            with st.spinner("Thinking through the numbers..."):
-                fact_sheet = llm_narrative.build_table_fact_sheet(df, label)
-                insights = llm_narrative.explain_table_data(fact_sheet, label)
+            status = st.empty()
+            status.markdown(_thinking_html(_THINKING_MESSAGES), unsafe_allow_html=True)
+            fact_sheet = llm_narrative.build_table_fact_sheet(df, label)
+            insights = llm_narrative.explain_table_data(fact_sheet, label)
             if insights:
-                st.markdown(insights)
+                status.markdown(insights)
             else:
-                st.caption("AI insights aren't available right now.")
+                status.caption("AI insights aren't available right now.")
 
 
 def render_chart(fig, df: pd.DataFrame, key: str, ai_label: str | None = None, **plotly_kwargs) -> None:
@@ -366,11 +467,17 @@ def render_chart(fig, df: pd.DataFrame, key: str, ai_label: str | None = None, *
     was passed to px.bar/px.line/etc.), never the figure itself --
     explain_table_data() reasons over those already-computed numbers, not pixels.
     """
-    _, data_col, explain_col = st.columns([10, 1, 1])
-    with data_col:
-        with st.popover("📋", help="View the data behind this chart", type="tertiary"):
-            st.dataframe(df, hide_index=True)
-    with explain_col:
+    _inject_action_bar_css()
+    with st.container(horizontal=True, horizontal_alignment="right", key=f"weactions-{key}"):
+        # Rendered eagerly (no on_change="rerun"): the static HTML table is cheap, so
+        # unlike the AI popover we don't need to defer it. Eager render means opening
+        # or closing the popover is pure client-side CSS -- no script rerun, so the
+        # chart behind it never flashes the stale-content overlay.
+        with st.popover(
+            ":material/table_chart:", help="View the data behind this chart",
+            type="tertiary", key=f"{key}__data_popover",
+        ):
+            _render_static_table(df, hide_index=True)
         render_ai_explain(df, key, ai_label, help_text="Explain this chart with AI")
     st.plotly_chart(fig, **plotly_kwargs)
 
@@ -419,8 +526,8 @@ def render_table(
             key the popover. Defaults to `key`.
     """
     if enable_ai_explain:
-        _, explain_col = st.columns([8, 1])
-        with explain_col:
+        _inject_action_bar_css()
+        with st.container(horizontal=True, horizontal_alignment="right", key=f"weactions-{key or ai_label or 'table'}"):
             render_ai_explain(df, key or ai_label or "this table", ai_label, help_text="Explain this table with AI")
 
     display_df, grid_options = _build_grid_options(
