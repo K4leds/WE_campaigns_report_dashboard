@@ -125,7 +125,8 @@
       "Bash(sed -i 's/- Task 5: build_deck orchestration — pending/- Task 5: complete \\(commits f738da6..8ffcaf5, review clean\\)/' .superpowers/sdd/progress.md)",
       "Bash(printf -- '- Minor \\(Task 5\\): unused imports pandas/format_sar in slides_export.py — delete at final cleanup.\\\\n- Minor \\(Task 5\\): no test forces _put_chart to return False \\(chart-skip degradation unverified by a test\\).\\\\n')",
       "Bash(bash __TRACKED_VAR__/scripts/task-brief docs/superpowers/plans/2026-07-13-slides-report-export.md 6)",
-      "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe test_kpi_ring_display.py)"
+      "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe test_kpi_ring_display.py)",
+      "Bash(git check-ignore *)"
     ]
   }
 }

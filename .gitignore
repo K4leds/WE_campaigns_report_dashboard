@@ -10,3 +10,4 @@ validate_november.py
 .streamlit/secrets.toml
 .env
 .playwright-mcp/*.worktrees/
+.claude/settings.local.json
