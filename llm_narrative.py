@@ -374,7 +374,11 @@ _EXPLAIN_SYSTEM_PROMPT = (
     "sentences of plain-English explanation, e.g. \"**Web Push is carrying the "
     "portfolio.** ...\". Every insight must cite specific values or names straight "
     "from the fact sheet. No headers, no numbered list, no code block, no JSON, no "
-    "preamble or closing remark -- just the insights."
+    "preamble or closing remark -- just the insights.\n\n"
+    "COVERAGE: spread insights across at least 3 different rows/channels rather "
+    "than spending two or more insights on the same row -- unless one row is so "
+    "dominant or broken that a second angle on it is genuinely the most useful "
+    "thing to tell the reader."
 )
 
 
@@ -467,5 +471,6 @@ def explain_table_data(fact_sheet: dict, label: str) -> str | None:
             timeout=60.0,
         )
         return resp.choices[0].message.content
-    except Exception:
+    except Exception as e:
+        import traceback; print("EXPLAIN_TABLE_DATA FAILED:", repr(e)); traceback.print_exc()
         return None

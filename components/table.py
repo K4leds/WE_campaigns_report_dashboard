@@ -326,12 +326,15 @@ def _build_grid_options(
 # Cycled while the (blocking) LLM call runs. The rotation is pure CSS running in
 # the browser, so it keeps moving even though the Python thread is blocked waiting
 # on DeepSeek -- st.spinner shows one static string, which felt frozen on the
-# 15-20s thinking-mode calls.
+# 15-20s thinking-mode calls. Mostly straight, with a wink at the end -- same
+# move Claude/ChatGPT loading states use: work the joke in, don't lead with it.
 _THINKING_MESSAGES = [
     "Reading the numbers…",
     "Spotting the outliers…",
+    "Judging your click-through rate…",
     "Comparing against benchmarks…",
     "Ranking what actually matters…",
+    "Blaming Q3 on external factors…",
     "Sanity-checking the math…",
     "Writing it up…",
 ]
@@ -417,6 +420,8 @@ def _inject_action_bar_css() -> None:
 [class*="st-key-weactions-"] { margin-top:-.5rem; margin-bottom:-1rem; gap:0 !important; }
 [class*="st-key-weactions-"] button { padding:.1rem .35rem !important; min-height:0 !important; }
 [class*="st-key-weactions-"] [data-testid="stMarkdownContainer"] p { font-size:1.15rem; line-height:1; }
+[data-testid="stPopoverBody"] [data-testid="stMarkdownContainer"] p { margin-bottom:.75rem; line-height:1.55; }
+[data-testid="stPopoverBody"] [data-testid="stMarkdownContainer"] p:last-child { margin-bottom:0; }
 </style>
 """,
         unsafe_allow_html=True,
@@ -439,6 +444,7 @@ def render_ai_explain(df: pd.DataFrame, key: str, ai_label: str | None = None, h
     if not llm_narrative.is_configured():
         return
 
+    _inject_action_bar_css()
     label = ai_label or key
     pop = st.popover(
         ":material/auto_awesome:",
@@ -446,9 +452,11 @@ def render_ai_explain(df: pd.DataFrame, key: str, ai_label: str | None = None, h
         type="tertiary",
         on_change="rerun",
         key=f"{key}__ai_explain_popover",
+        width=420,
     )
     if pop.open:
         with pop:
+            st.caption(":material/auto_awesome: AI insights")
             status = st.empty()
             status.markdown(_thinking_html(_THINKING_MESSAGES), unsafe_allow_html=True)
             fact_sheet = llm_narrative.build_table_fact_sheet(df, label)
@@ -475,7 +483,7 @@ def render_chart(fig, df: pd.DataFrame, key: str, ai_label: str | None = None, *
         # chart behind it never flashes the stale-content overlay.
         with st.popover(
             ":material/table_chart:", help="View the data behind this chart",
-            type="tertiary", key=f"{key}__data_popover",
+            type="tertiary", key=f"{key}__data_popover", width=420,
         ):
             _render_static_table(df, hide_index=True)
         render_ai_explain(df, key, ai_label, help_text="Explain this chart with AI")
