@@ -6,8 +6,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
-from utils import format_metric, read_cached_json
+from utils import format_metric, read_cached_json, render_kpi_card
 from components.table import render_table, render_chart, render_ai_explain
+from components.channel_cards import render_channel_card, render_insight_chips, icon, channel_icon
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_attribution_display_label, get_selected_revenue_display_name, get_selected_conversion_display_name
 from analysis import channel_analysis, esp_analysis, failed_reasons_analysis
@@ -22,6 +23,7 @@ selected_rev_label = ctx.selected_rev_label
 selected_conv_label = ctx.selected_conv_label
 date_range = ctx.date_range
 comparison_mode = ctx.comparison_mode
+channel_costs = ctx.channel_costs
 
 # Display-friendly rename map for attribution-selected columns (mirrors app.py prelude)
 attribution_rename = {'Selected Revenue (SAR)': selected_rev_label, 'Selected Conversions': selected_conv_label}
@@ -66,6 +68,20 @@ def _cached_channel_type_breakdown(filtered_df_json):
 
 
 @st.cache_data
+def _cached_channel_weekly(filtered_df_json):
+    """Cache weekly Revenue + Conversions per channel, used by the card sparklines
+    and the Channel Spotlight trend chart."""
+    _df = read_cached_json(filtered_df_json)
+    rev_col = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in _df.columns else 'Revenue (SAR)'
+    conv_col = 'Selected Conversions' if 'Selected Conversions' in _df.columns else 'Unique Conversions'
+    weekly = _df.groupby([pd.Grouper(key='Reporting Period Start Date', freq='W'), 'Channel']).agg(
+        {rev_col: 'sum', conv_col: 'sum'}
+    ).reset_index()
+    weekly.columns = ['Week', 'Channel', 'Revenue', 'Conversions']
+    return weekly
+
+
+@st.cache_data
 def _cached_failed_by_channel(filtered_df_json):
     """Cache the groupby Channel for failed delivery reasons."""
     _df = read_cached_json(filtered_df_json)
@@ -77,7 +93,7 @@ def _cached_failed_by_channel(filtered_df_json):
 
 st.header("Channels & Delivery Analysis")
 
-tab1, tab2 = st.tabs(["📡 Channels", "❌ Failed Reasons"])
+tab1, tab2 = st.tabs([":material/cell_tower: Channels", ":material/error: Failed Reasons"])
 
 with tab1:
     chan_df = _cached_channel_analysis(filtered_df.to_json())
@@ -95,6 +111,211 @@ with tab1:
             np.minimum((chan_df[conv_rate_numerator_col] / chan_df['Unique Clicks']) * 100, 100.0),
             0
         )
+
+    # =====================================================================
+    # TOP DASHBOARD: everything about channel performance at a glance, no
+    # sidebar filtering required. The existing table/charts below remain
+    # untouched as the "scroll down for analysis" deep-dive layer.
+    # =====================================================================
+    rev_col = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in chan_df.columns else 'Revenue (SAR)'
+    conv_col = 'Selected Conversions' if 'Selected Conversions' in chan_df.columns else 'Unique Conversions'
+    rev_display_name_top = get_selected_revenue_display_name(revenue_attribution)
+    conv_display_name_top = get_selected_conversion_display_name(conversion_attribution)
+
+    chan_cards_df = chan_df.copy()
+    chan_cards_df['Delivery Rate'] = np.where(
+        chan_cards_df['Sent'] > 0, chan_cards_df['Delivered'] / chan_cards_df['Sent'] * 100, 0
+    )
+    chan_cards_df['CTR'] = np.where(
+        chan_cards_df['Unique Impressions'] > 0,
+        chan_cards_df['Unique Clicks'] / chan_cards_df['Unique Impressions'] * 100, 0
+    )
+    chan_cards_df = chan_cards_df.sort_values(rev_col, ascending=False)
+
+    chan_comp_df = None
+    if comparison_result:
+        chan_comp_df = _cached_channel_analysis(comparison_result['comparison_data'].to_json())
+
+    weekly_df = _cached_channel_weekly(filtered_df.to_json())
+
+    # --- Headline strip ---
+    total_revenue_top = chan_cards_df[rev_col].sum()
+    total_conv_top = chan_cards_df[conv_col].sum()
+    total_sent_top = chan_cards_df['Sent'].sum()
+    total_delivered_top = chan_cards_df['Delivered'].sum()
+    total_impr_top = chan_cards_df['Unique Impressions'].sum()
+    total_clicks_top = chan_cards_df['Unique Clicks'].sum()
+    active_channels_top = int((chan_cards_df['Sent'] > 0).sum())
+    delivery_rate_top = (total_delivered_top / total_sent_top * 100) if total_sent_top > 0 else 0
+    ctr_top = (total_clicks_top / total_impr_top * 100) if total_impr_top > 0 else 0
+
+    comp_deltas = {}
+    if chan_comp_df is not None:
+        comp_rev_col = rev_col if rev_col in chan_comp_df.columns else 'Revenue (SAR)'
+        comp_conv_col = conv_col if conv_col in chan_comp_df.columns else 'Unique Conversions'
+        comp_sent = chan_comp_df['Sent'].sum()
+        comp_delivered = chan_comp_df['Delivered'].sum()
+        comp_impr = chan_comp_df['Unique Impressions'].sum()
+        comp_clicks = chan_comp_df['Unique Clicks'].sum()
+        comp_rev = chan_comp_df[comp_rev_col].sum() if comp_rev_col in chan_comp_df.columns else 0
+        comp_conv = chan_comp_df[comp_conv_col].sum() if comp_conv_col in chan_comp_df.columns else 0
+        comp_delivery_rate = (comp_delivered / comp_sent * 100) if comp_sent > 0 else 0
+        comp_ctr = (comp_clicks / comp_impr * 100) if comp_impr > 0 else 0
+
+        def _pct(cur, comp):
+            return f"{'+' if cur >= comp else ''}{((cur - comp) / comp * 100):.1f}%" if comp else None
+
+        comp_deltas = {
+            'revenue': _pct(total_revenue_top, comp_rev),
+            'conv': _pct(total_conv_top, comp_conv),
+            'delivery': _pct(delivery_rate_top, comp_delivery_rate),
+            'ctr': _pct(ctr_top, comp_ctr),
+        }
+
+    st.markdown(f"#### {icon('rocket', size=18)} Channels at a Glance", unsafe_allow_html=True)
+    h1, h2, h3, h4, h5 = st.columns(5)
+    with h1:
+        render_kpi_card(rev_display_name_top, format_metric(total_revenue_top, "SAR"),
+                         delta=comp_deltas.get('revenue'), icon=icon('cash_coin', size=22))
+    with h2:
+        render_kpi_card(conv_display_name_top, format_metric(total_conv_top),
+                         delta=comp_deltas.get('conv'), icon=icon('bullseye', size=22))
+    with h3:
+        render_kpi_card("Active Channels", f"{active_channels_top}/{len(chan_cards_df)}", icon=icon('broadcast', size=22))
+    with h4:
+        render_kpi_card("Delivery Rate", f"{delivery_rate_top:.1f}%",
+                         delta=comp_deltas.get('delivery'), icon=icon('inbox', size=22))
+    with h5:
+        render_kpi_card("CTR", f"{ctr_top:.1f}%", delta=comp_deltas.get('ctr'), icon=icon('cursor', size=22))
+
+    # --- Channel cards grid ---
+    st.markdown(f"#### {icon('broadcast', size=18)} Channel Performance", unsafe_allow_html=True)
+    cols_per_row_cards = 4
+    channels_list = chan_cards_df['Channel'].tolist()
+    for row_start in range(0, len(channels_list), cols_per_row_cards):
+        row_channels = channels_list[row_start:row_start + cols_per_row_cards]
+        cols = st.columns(cols_per_row_cards)
+        for col, channel_name in zip(cols, row_channels):
+            with col:
+                row = chan_cards_df[chan_cards_df['Channel'] == channel_name].iloc[0]
+                comp_row = None
+                if chan_comp_df is not None and channel_name in chan_comp_df['Channel'].values:
+                    comp_row = chan_comp_df[chan_comp_df['Channel'] == channel_name].iloc[0]
+                sparkline = weekly_df[weekly_df['Channel'] == channel_name]['Revenue']
+                render_channel_card(
+                    row, channel_costs=channel_costs, revenue_col=rev_col, conv_col=conv_col,
+                    revenue_label=rev_display_name_top, conv_label=conv_display_name_top,
+                    comparison_row=comp_row, sparkline_weekly=sparkline, key=f"chandash_{channel_name}",
+                )
+
+    # --- Insight strip ---
+    insights = []
+    active_only = chan_cards_df[chan_cards_df['Sent'] > 0]
+    if not active_only.empty:
+        top_rev_channel = active_only.iloc[0]
+        insights.append({'icon': channel_icon(top_rev_channel['Channel'], color=COLORS['success']),
+                          'text': f"Top Revenue: {top_rev_channel['Channel']} ({format_metric(top_rev_channel[rev_col], 'SAR')})",
+                          'level': 'good'})
+        best_cvr = active_only.loc[active_only['Conversion Rate'].idxmax()]
+        insights.append({'icon': 'bullseye', 'text': f"Best Conversion Rate: {best_cvr['Channel']} ({best_cvr['Conversion Rate']:.1f}%)",
+                          'level': 'good'})
+        engagement_candidates = active_only[active_only['Unique Impressions'] > 0]
+        if not engagement_candidates.empty:
+            best_ctr_ch = engagement_candidates.loc[engagement_candidates['CTR'].idxmax()]
+            insights.append({'icon': 'thumbs_up', 'text': f"Best Engagement: {best_ctr_ch['Channel']} ({best_ctr_ch['CTR']:.1f}% CTR)",
+                              'level': 'good'})
+    inactive_names = chan_cards_df[chan_cards_df['Sent'] == 0]['Channel'].tolist()
+    if inactive_names:
+        insights.append({'icon': 'slash_circle', 'text': f"Inactive: {', '.join(inactive_names)}", 'level': 'warning'})
+    low_delivery = active_only[active_only['Delivery Rate'] < 85]
+    for _, r in low_delivery.iterrows():
+        insights.append({'icon': 'warning', 'text': f"{r['Channel']}: Low delivery rate ({r['Delivery Rate']:.1f}%)", 'level': 'critical'})
+    render_insight_chips(insights)
+
+    # --- Channel Spotlight: local drill-down, no sidebar filtering needed ---
+    st.markdown(f"#### {icon('search', size=18)} Channel Spotlight", unsafe_allow_html=True)
+    spotlight_channel = st.selectbox(
+        "Drill into a channel", ["All Channels"] + channels_list, key="channel_spotlight_select"
+    )
+    if spotlight_channel != "All Channels":
+        spot_row = chan_cards_df[chan_cards_df['Channel'] == spotlight_channel].iloc[0]
+        spot_comp_row = None
+        if chan_comp_df is not None and spotlight_channel in chan_comp_df['Channel'].values:
+            spot_comp_row = chan_comp_df[chan_comp_df['Channel'] == spotlight_channel].iloc[0]
+
+        sp1, sp2, sp3 = st.columns(3)
+        with sp1:
+            render_kpi_card(rev_display_name_top, format_metric(spot_row[rev_col], "SAR"),
+                             delta=(_pct(spot_row[rev_col], spot_comp_row[rev_col]) if spot_comp_row is not None else None),
+                             icon=channel_icon(spotlight_channel, size=22))
+        with sp2:
+            render_kpi_card(conv_display_name_top, format_metric(spot_row[conv_col]),
+                             delta=(_pct(spot_row[conv_col], spot_comp_row[conv_col]) if spot_comp_row is not None else None),
+                             icon=icon('bullseye', size=22))
+        with sp3:
+            render_kpi_card("Conversion Rate", f"{spot_row['Conversion Rate']:.1f}%", icon=icon('check_circle', size=22))
+
+        spot_slice = filtered_df[filtered_df['Channel'] == spotlight_channel]
+        top_journey_html = "*No journeys this period*"
+        top_onetime_html = "*No one-time campaigns this period*"
+        if 'Type of Campaign' in spot_slice.columns and 'Campaign Name' in spot_slice.columns:
+            by_campaign = spot_slice.groupby(['Campaign Name', 'Type of Campaign'], dropna=False).agg(
+                {rev_col: 'sum', conv_col: 'sum'}
+            ).reset_index()
+            journeys = by_campaign[by_campaign['Type of Campaign'].astype(str).str.contains('journey', case=False, na=False)]
+            onetime = by_campaign[by_campaign['Type of Campaign'].astype(str).str.contains('one-time', case=False, na=False)]
+            if not journeys.empty:
+                top_j = journeys.sort_values(rev_col, ascending=False).iloc[0]
+                top_journey_html = f"**{top_j['Campaign Name']}**<br>{format_metric(top_j[rev_col], 'SAR')} · {format_metric(top_j[conv_col])} conversions"
+            if not onetime.empty:
+                top_o = onetime.sort_values(rev_col, ascending=False).iloc[0]
+                top_onetime_html = f"**{top_o['Campaign Name']}**<br>{format_metric(top_o[rev_col], 'SAR')} · {format_metric(top_o[conv_col])} conversions"
+
+        spot_j_col, spot_o_col = st.columns(2)
+        with spot_j_col:
+            st.markdown(
+                f'<div style="border:1px solid {COLORS["muted"]}44;border-radius:8px;padding:14px;">'
+                f'<div style="font-size:13px;color:{COLORS["muted"]};">{icon("compass")} Top Journey</div>'
+                f'<div style="margin-top:6px;">{top_journey_html}</div></div>',
+                unsafe_allow_html=True,
+            )
+        with spot_o_col:
+            st.markdown(
+                f'<div style="border:1px solid {COLORS["muted"]}44;border-radius:8px;padding:14px;">'
+                f'<div style="font-size:13px;color:{COLORS["muted"]};">{icon("send")} Top One-Time Campaign</div>'
+                f'<div style="margin-top:6px;">{top_onetime_html}</div></div>',
+                unsafe_allow_html=True,
+            )
+
+        spot_weekly = weekly_df[weekly_df['Channel'] == spotlight_channel]
+        if not spot_weekly.empty:
+            trend_col1, trend_col2 = st.columns(2)
+            with trend_col1:
+                fig_spot_rev = px.area(spot_weekly, x='Week', y='Revenue',
+                                        title=f"{spotlight_channel} — Weekly {rev_display_name_top}",
+                                        color_discrete_sequence=[CHANNEL_COLORS.get(spotlight_channel, COLORS['primary'])])
+                render_chart(fig_spot_rev, spot_weekly, key="spotlight_revenue_trend", ai_label=f"{spotlight_channel} Weekly Revenue")
+            with trend_col2:
+                fig_spot_conv = px.bar(spot_weekly, x='Week', y='Conversions',
+                                        title=f"{spotlight_channel} — Weekly {conv_display_name_top}",
+                                        color_discrete_sequence=[CHANNEL_COLORS.get(spotlight_channel, COLORS['primary'])])
+                render_chart(fig_spot_conv, spot_weekly, key="spotlight_conv_trend", ai_label=f"{spotlight_channel} Weekly Conversions")
+
+        spot_failed_cols = [c for c in spot_slice.columns if 'Failed' in c and c != 'Failed']
+        if spot_failed_cols:
+            spot_failed = spot_slice[spot_failed_cols].sum()
+            spot_failed = spot_failed[spot_failed > 0].sort_values()
+            if not spot_failed.empty:
+                spot_failed_df = spot_failed.reset_index()
+                spot_failed_df.columns = ['Reason', 'Count']
+                fig_spot_failed = px.bar(spot_failed_df, x='Count', y='Reason', orientation='h',
+                                          title=f"{spotlight_channel} — Failed Reasons",
+                                          color_discrete_sequence=[COLORS['danger']])
+                render_chart(fig_spot_failed, spot_failed_df, key="spotlight_failed_reasons", ai_label=f"{spotlight_channel} Failed Reasons")
+
+    st.markdown("---")
+    st.subheader(":material/bar_chart: Detailed Analysis")
+    st.caption("Full breakdown, tables, and charts across all channels — scroll for the deep dive.")
 
     # Create display version for table - keep selected attribution columns visible
     chan_df_display = chan_df.copy()
