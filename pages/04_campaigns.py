@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
 from utils import format_metric, read_cached_json
-from components.table import render_table, render_chart, render_ai_explain
+from components.table import render_table, render_chart, render_ai_explain_bar
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_attribution_display_label, get_selected_revenue_display_name, get_selected_conversion_display_name
 from analysis import top_campaigns, attribution_analysis
@@ -402,9 +402,7 @@ if 'Type of Campaign' in filtered_df.columns:
 
     # Side-by-side charts
     type_chart_data = type_breakdown
-    _, type_explain_col = st.columns([8, 1])
-    with type_explain_col:
-        render_ai_explain(type_chart_data, key="campaign_type_charts", ai_label="Performance by Campaign Type",
+    render_ai_explain_bar(type_chart_data, key="campaign_type_charts", ai_label="Performance by Campaign Type",
                            help_text="Explain these campaign type charts with AI")
     type_col1, type_col2 = st.columns(2)
     rev_col_for_type = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in type_chart_data.columns else 'Revenue (SAR)'

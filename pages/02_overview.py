@@ -12,7 +12,7 @@ from analysis import failed_reasons_analysis
 from dashboard.comparisons_logic import (
     calculate_period_metrics, calculate_metric_changes, calculate_uplift_significance,
 )
-from components.table import render_ai_explain, render_chart, render_table
+from components.table import render_ai_explain_bar, render_chart, render_table
 
 # ---------------------------------------------------------------------------
 # Cached data-computation helpers
@@ -772,9 +772,7 @@ if 'Channel' in filtered_df.columns:
                      column_config=overview_cc_renamed, height=300)
 
         # Channel performance charts
-        _, explain_col = st.columns([8, 1])
-        with explain_col:
-            render_ai_explain(channel_display, key="overview_channel_charts", ai_label="Channel Performance",
+        render_ai_explain_bar(channel_display, key="overview_channel_charts", ai_label="Channel Performance",
                                help_text="Explain these channel charts with AI")
         col1, col2 = st.columns(2)
         

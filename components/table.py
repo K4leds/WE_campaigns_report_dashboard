@@ -329,14 +329,15 @@ def _build_grid_options(
 # 15-20s thinking-mode calls. Mostly straight, with a wink at the end -- same
 # move Claude/ChatGPT loading states use: work the joke in, don't lead with it.
 _THINKING_MESSAGES = [
-    "Reading the numbers…",
-    "Spotting the outliers…",
-    "Judging your click-through rate…",
-    "Comparing against benchmarks…",
-    "Ranking what actually matters…",
-    "Blaming Q3 on external factors…",
-    "Sanity-checking the math…",
-    "Writing it up…",
+    "Looking for plot twists…",
+    "Finding the usual suspects…",
+    "Putting clicks on trial…",
+    "Checking the industry gossip…",
+    "Sorting signal from glitter…",
+    "Consulting last quarter’s ghost…",
+    "Making sure numbers behave…",
+    "Choosing the safest headline…",
+    "Making it sound intentional…",
 ]
 
 
@@ -422,18 +423,30 @@ def _inject_action_bar_css() -> None:
 [class*="st-key-weactions-"] [data-testid="stMarkdownContainer"] p { font-size:1.15rem; line-height:1; }
 [data-testid="stPopoverBody"] [data-testid="stMarkdownContainer"] p { margin-bottom:.75rem; line-height:1.55; }
 [data-testid="stPopoverBody"] [data-testid="stMarkdownContainer"] p:last-child { margin-bottom:0; }
+/* Fixed panel width for every AI-explain / data popover so it doesn't
+   shrink-wrap to whatever's shortest (the "AI insights" caption) or balloon
+   to the longest insight paragraph -- same box size everywhere. Popovers
+   default their trigger button (and therefore the panel's min-width) to
+   fit-content, so without this the panel size drifts per popover. */
+[class*="__ai_explain_popover"] [data-testid="stPopoverBody"] { width:380px; max-width:90vw; }
+[class*="__data_popover"] [data-testid="stPopoverBody"] { width:420px; max-width:90vw; }
 </style>
 """,
         unsafe_allow_html=True,
     )
 
 
+@st.fragment
 def render_ai_explain(df: pd.DataFrame, key: str, ai_label: str | None = None, help_text: str = "Explain this with AI") -> None:
     """Small, tertiary "explain" popover, lazily evaluated: the DeepSeek call only
     fires once the popover is actually opened (on_change="rerun" + .open), so it
     costs nothing until a user deliberately asks for it, and is cached per
     table/chart content afterward. Renders nothing if no DEEPSEEK_API_KEY is
     configured.
+
+    Wrapped in @st.fragment so opening the popover and waiting on the LLM call
+    only reruns this fragment, not the whole page -- the rest of the dashboard
+    stays interactive instead of dimming behind the full-script rerun overlay.
 
     Reused both internally by render_table() and directly by pages that want the
     same affordance next to a chart -- always pass the chart's *source* DataFrame
@@ -452,7 +465,6 @@ def render_ai_explain(df: pd.DataFrame, key: str, ai_label: str | None = None, h
         type="tertiary",
         on_change="rerun",
         key=f"{key}__ai_explain_popover",
-        width=420,
     )
     if pop.open:
         with pop:
@@ -460,11 +472,27 @@ def render_ai_explain(df: pd.DataFrame, key: str, ai_label: str | None = None, h
             status = st.empty()
             status.markdown(_thinking_html(_THINKING_MESSAGES), unsafe_allow_html=True)
             fact_sheet = llm_narrative.build_table_fact_sheet(df, label)
-            insights = llm_narrative.explain_table_data(fact_sheet, label)
+            try:
+                insights = llm_narrative.explain_table_data(fact_sheet, label)
+            except Exception:
+                insights = None
             if insights:
                 status.markdown(insights)
             else:
                 status.caption("AI insights aren't available right now.")
+
+
+def render_ai_explain_bar(df: pd.DataFrame, key: str, ai_label: str | None = None, help_text: str = "Explain this with AI") -> None:
+    """Right-aligned "✨ Explain" bar for a section covering multiple charts/tables
+    that don't have one single chart to peg the icon to (e.g. a subheader followed
+    by a row of 2-3 related charts). Uses the same action-bar container as
+    render_chart()/render_table() so the icon lands in the same spot -- flush
+    top-right of the section -- everywhere in the app, instead of pages hand-rolling
+    st.columns([8, 1]) placements that drift out of alignment with each other.
+    """
+    _inject_action_bar_css()
+    with st.container(horizontal=True, horizontal_alignment="right", key=f"weactions-{key}"):
+        render_ai_explain(df, key, ai_label, help_text)
 
 
 def render_chart(fig, df: pd.DataFrame, key: str, ai_label: str | None = None, **plotly_kwargs) -> None:
@@ -483,7 +511,7 @@ def render_chart(fig, df: pd.DataFrame, key: str, ai_label: str | None = None, *
         # chart behind it never flashes the stale-content overlay.
         with st.popover(
             ":material/table_chart:", help="View the data behind this chart",
-            type="tertiary", key=f"{key}__data_popover", width=420,
+            type="tertiary", key=f"{key}__data_popover",
         ):
             _render_static_table(df, hide_index=True)
         render_ai_explain(df, key, ai_label, help_text="Explain this chart with AI")

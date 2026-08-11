@@ -442,35 +442,47 @@ def _build_explain_prompt(fact_sheet: dict) -> str:
 @st.cache_data(ttl=3600, show_spinner=False)
 def explain_table_data(fact_sheet: dict, label: str) -> str | None:
     """fact_sheet: output of build_table_fact_sheet(). Runs DeepSeek in thinking
-    mode (reasoning_effort="high") since this is an on-demand, user-triggered call
-    rather than one that fires on every page load -- worth the extra latency for a
-    more genuinely analytical read of the table.
+    mode (reasoning_effort="medium") since this is an on-demand, user-triggered
+    call rather than one that fires on every page load -- worth the extra latency
+    for a more genuinely analytical read of the table.
 
-    Returns 3-5 markdown insight bullets, or None if unavailable/failed. Caller
-    must treat None as "don't render this section" -- never show an error.
+    Returns 3-5 markdown insight bullets, or None if unconfigured. Raises on a
+    failed API call instead of returning None -- st.cache_data only memoizes
+    a *returned* value, so raising keeps transient failures (timeout, rate
+    limit) from being cached as a permanent "unavailable" for the ttl, letting
+    the user's next click retry for real. Caller must catch and treat both
+    None and an exception as "don't render this section" -- never show a
+    raw error.
     """
     client = _get_client()
     if client is None:
         return None
 
     prompt = _build_explain_prompt(fact_sheet)
-    try:
-        resp = client.chat.completions.create(
-            model=_DEEPSEEK_MODEL,
-            messages=[
-                {"role": "system", "content": _EXPLAIN_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=4000,
-            reasoning_effort="high",
-            extra_body={"thinking": {"type": "enabled"}},
-            # Thinking mode routinely takes 15-20s; the client's default 20s
-            # timeout (tuned for the non-thinking exec-summary call) was cutting
-            # this off intermittently. This is an explicit, on-demand click, so
-            # the extra headroom is worth it.
-            timeout=60.0,
-        )
-        return resp.choices[0].message.content
-    except Exception as e:
-        import traceback; print("EXPLAIN_TABLE_DATA FAILED:", repr(e)); traceback.print_exc()
-        return None
+    resp = client.chat.completions.create(
+        model=_DEEPSEEK_MODEL,
+        messages=[
+            {"role": "system", "content": _EXPLAIN_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        # 16K ceiling, not the model's 384K output cap -- max_tokens only bounds
+        # how much it's ALLOWED to generate (billed on actual usage), so this is
+        # pure headroom against the empty-response truncation bug, not a cost knob.
+        max_tokens=16000,
+        reasoning_effort="medium",
+        extra_body={"thinking": {"type": "enabled"}},
+        # Thinking mode routinely takes 15-20s; the client's default 20s
+        # timeout (tuned for the non-thinking exec-summary call) was cutting
+        # this off intermittently. This is an explicit, on-demand click, so
+        # the extra headroom is worth it.
+        timeout=60.0,
+    )
+    content = resp.choices[0].message.content
+    if not content:
+        # A successful call can still come back empty -- e.g. the reasoning
+        # trace ate the whole max_tokens budget before writing the answer.
+        # An empty string is a valid *return value*, so unlike an exception
+        # it WOULD get cached and replayed on every retry. Raise instead so
+        # the next click actually retries the call.
+        raise RuntimeError("DeepSeek returned empty content")
+    return content

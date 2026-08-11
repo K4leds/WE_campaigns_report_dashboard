@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
 from utils import format_metric
-from components.table import render_table, render_ai_explain, render_chart
+from components.table import render_table, render_chart
 from config import COLORS, COLOR_SEQUENCE
 from attribution import get_attribution_display_label
 from analysis import time_series_analysis

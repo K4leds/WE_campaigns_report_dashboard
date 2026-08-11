@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
 from utils import format_metric, read_cached_json, render_kpi_card
-from components.table import render_table, render_chart, render_ai_explain
+from components.table import render_table, render_chart, render_ai_explain_bar
 from components.channel_cards import render_channel_card, render_insight_chips, icon, channel_icon
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_attribution_display_label, get_selected_revenue_display_name, get_selected_conversion_display_name
@@ -489,9 +489,7 @@ with tab1:
 
     # Revenue + Conversions by Channel (using selected attribution)
     st.subheader("Revenue & Conversions Comparison")
-    _, rev_conv_explain_col = st.columns([8, 1])
-    with rev_conv_explain_col:
-        render_ai_explain(chan_df, key="channel_rev_conv_charts", ai_label="Revenue & Conversions Comparison",
+    render_ai_explain_bar(chan_df, key="channel_rev_conv_charts", ai_label="Revenue & Conversions Comparison",
                            help_text="Explain these charts with AI")
     rev_conv_col1, rev_conv_col2 = st.columns(2)
     with rev_conv_col1:
@@ -535,9 +533,7 @@ with tab1:
 
     # Charts: Delivery Rate + CTR + Conversion Rate
     st.subheader("Engagement & Delivery Rates")
-    _, rates_explain_col = st.columns([8, 1])
-    with rates_explain_col:
-        render_ai_explain(chan_rates, key="channel_rates_charts", ai_label="Engagement & Delivery Rates",
+    render_ai_explain_bar(chan_rates, key="channel_rates_charts", ai_label="Engagement & Delivery Rates",
                            help_text="Explain these charts with AI")
     ch_col1, ch_col2, ch_col3 = st.columns(3)
     with ch_col1:
@@ -631,9 +627,7 @@ with tab1:
             render_table(type_chan_display, key="chan_type", column_config=type_chan_cc)
 
             # Stacked bar: Revenue by Channel, stacked by Campaign Type
-            _, type_chan_explain_col = st.columns([8, 1])
-            with type_chan_explain_col:
-                render_ai_explain(type_chan_df, key="channel_type_charts", ai_label="Revenue & Conversions by Channel & Campaign Type",
+            render_ai_explain_bar(type_chan_df, key="channel_type_charts", ai_label="Revenue & Conversions by Channel & Campaign Type",
                                    help_text="Explain these charts with AI")
             type_chan_col1, type_chan_col2 = st.columns(2)
             with type_chan_col1:
@@ -700,9 +694,7 @@ with tab1:
                 esp_cc[col] = st.column_config.NumberColumn(label=col, format='compact')
         render_table(esp_df_display, key="esp", column_config=esp_cc)
 
-        _, esp_explain_col = st.columns([8, 1])
-        with esp_explain_col:
-            render_ai_explain(esp_df, key="esp_charts", ai_label="ESP/SSP Analysis", help_text="Explain these charts with AI")
+        render_ai_explain_bar(esp_df, key="esp_charts", ai_label="ESP/SSP Analysis", help_text="Explain these charts with AI")
         esp_col1, esp_col2 = st.columns(2)
         with esp_col1:
             fig_esp = px.bar(esp_df, x='ESP/SSP/WSP/RSP name', y='Delivered',
