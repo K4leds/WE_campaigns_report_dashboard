@@ -7,7 +7,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
-from utils import format_metric, read_cached_json
+from utils import format_metric, read_cached_json, render_kpi_card
 from components.table import render_table, render_chart, render_ai_explain_bar
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_attribution_display_label, get_selected_revenue_display_name, get_selected_conversion_display_name
@@ -263,6 +263,20 @@ def _attribution_display(col_name):
 
 
 st.header("Campaign Analysis")
+
+# --- Glance row: the overall picture before ranking by any one metric ---
+rev_col_glance = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in filtered_df.columns else 'Revenue (SAR)'
+conv_col_glance = 'Selected Conversions' if 'Selected Conversions' in filtered_df.columns else 'Unique Conversions'
+n_campaigns_glance = filtered_df['Campaign Name'].dropna().nunique()
+total_rev_glance = filtered_df[rev_col_glance].sum() if rev_col_glance in filtered_df.columns else 0
+total_conv_glance = filtered_df[conv_col_glance].sum() if conv_col_glance in filtered_df.columns else 0
+g1, g2, g3 = st.columns(3)
+with g1:
+    render_kpi_card("Campaigns", format_metric(n_campaigns_glance), icon="🚀")
+with g2:
+    render_kpi_card(selected_rev_label, format_metric(total_rev_glance, "SAR"), icon="💰")
+with g3:
+    render_kpi_card(selected_conv_label, format_metric(total_conv_glance), icon="🎯")
 
 # Show comparison summary if enabled
 if comparison_result:
@@ -614,20 +628,21 @@ if 'Type of Campaign' in filtered_df.columns:
                 if col in monthly_campaigns.columns:
                     monthly_cc[col] = st.column_config.NumberColumn(label=col, format='%.2f')
 
-            render_table(monthly_campaigns, key="monthly_onetime", column_config=monthly_cc)
+            # Chart first (the "what happened" signal); table is the opt-in
+            # drill-down to verify exact numbers, not the default view.
+            chart_data = monthly_campaigns.sort_values('Month')
+            fig_monthly = px.bar(chart_data, x='Month', y='Unique Campaigns',
+                               title="Unique One-Time Campaigns per Month",
+                               color_discrete_sequence=[COLORS['primary']])
+            fig_monthly.update_layout(
+                xaxis_title="Month",
+                yaxis_title="Number of Campaigns",
+                xaxis=dict(type='category')
+            )
+            render_chart(fig_monthly, chart_data, key="onetime_monthly_trend", ai_label="One-Time Campaigns per Month")
 
-            # Optional chart
-            if st.checkbox("Show Monthly Trend Chart", key='monthly_onetime_chart'):
-                chart_data = monthly_campaigns.sort_values('Month')
-                fig_monthly = px.bar(chart_data, x='Month', y='Unique Campaigns',
-                                   title="Unique One-Time Campaigns per Month",
-                                   color_discrete_sequence=[COLORS['primary']])
-                fig_monthly.update_layout(
-                    xaxis_title="Month",
-                    yaxis_title="Number of Campaigns",
-                    xaxis=dict(type='category')
-                )
-                render_chart(fig_monthly, chart_data, key="onetime_monthly_trend", ai_label="One-Time Campaigns per Month")
+            with st.expander("View Monthly Details Table", expanded=False):
+                render_table(monthly_campaigns, key="monthly_onetime", column_config=monthly_cc)
 
 # Campaign Drill-Down
 st.subheader("Campaign Drill-Down")

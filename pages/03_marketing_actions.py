@@ -24,6 +24,15 @@ def _cvr_numerator_col(df):
         return 'Unique Click-Through Conversions'
     return 'Selected Conversions' if 'Selected Conversions' in df.columns else 'Unique Conversions'
 
+
+def _safe_cvr_pct(numerator, denominator):
+    """CVR as a percentage, clamped to [0, 100]. A click-through conversion rate can
+    never legitimately exceed 100% -- a low-click-volume campaign (e.g. a single
+    Recurring campaign with a handful of clicks) can otherwise divide by a tiny
+    denominator and produce nonsense like "1650%". Matches the clamp already used
+    for Conversion Rate on the Channels page."""
+    return np.where(denominator > 0, np.minimum((numerator / denominator) * 100, 100.0), 0)
+
 @st.cache_data
 def _cached_channel_efficiency(filtered_df_json):
     """Section 1: Channel groupby with RPS, RPC, CVR, CTR, AOV."""
@@ -43,7 +52,7 @@ def _cached_channel_efficiency(filtered_df_json):
 
     chan_eff['Revenue Per Send'] = np.where(chan_eff['Total_Sent'] > 0, chan_eff['Total_Revenue'] / chan_eff['Total_Sent'], 0)
     chan_eff['Revenue Per Click'] = np.where(chan_eff['Total_Clicks'] > 0, chan_eff['Total_Revenue'] / chan_eff['Total_Clicks'], 0)
-    chan_eff['CVR (%)'] = np.where(chan_eff['Total_Clicks'] > 0, (chan_eff['CT_Conversions'] / chan_eff['Total_Clicks']) * 100, 0)
+    chan_eff['CVR (%)'] = _safe_cvr_pct(chan_eff['CT_Conversions'], chan_eff['Total_Clicks'])
     chan_eff['CTR (%)'] = np.where(chan_eff['Total_Impressions'] > 0, (chan_eff['Total_Clicks'] / chan_eff['Total_Impressions']) * 100, 0)
     chan_eff['AOV (SAR)'] = np.where(chan_eff['Total_Conversions'] > 0, chan_eff['Total_Revenue'] / chan_eff['Total_Conversions'], 0)
 
@@ -69,7 +78,7 @@ def _cached_type_comparison(filtered_df_json):
     ).reset_index()
 
     type_comparison['Rev/Send'] = np.where(type_comparison['Total_Sent'] > 0, type_comparison['Total_Revenue'] / type_comparison['Total_Sent'], 0)
-    type_comparison['CVR (%)'] = np.where(type_comparison['Total_Clicks'] > 0, (type_comparison['CT_Conversions'] / type_comparison['Total_Clicks']) * 100, 0)
+    type_comparison['CVR (%)'] = _safe_cvr_pct(type_comparison['CT_Conversions'], type_comparison['Total_Clicks'])
     type_comparison['CTR (%)'] = np.where(type_comparison['Total_Sent'] > 0, (type_comparison['Total_Clicks'] / type_comparison['Total_Sent']) * 100, 0)
 
     return type_comparison
@@ -98,7 +107,7 @@ def _cached_day_of_week(filtered_df_json):
 
     dow_agg['Avg Revenue/Day'] = dow_agg['Revenue'] / dow_agg['Days_Count']
     dow_agg['Avg Conversions/Day'] = dow_agg['Conversions'] / dow_agg['Days_Count']
-    dow_agg['CVR (%)'] = np.where(dow_agg['Clicks'] > 0, (dow_agg['CT_Conversions'] / dow_agg['Clicks']) * 100, 0)
+    dow_agg['CVR (%)'] = _safe_cvr_pct(dow_agg['CT_Conversions'], dow_agg['Clicks'])
 
     return dow_agg
 
@@ -130,7 +139,7 @@ def _cached_campaign_tags(filtered_df_json):
         Revenue=(rev_col, 'sum'),
     ).reset_index()
     tag_perf.rename(columns={'Tag_List': 'Tag'}, inplace=True)
-    tag_perf['CVR (%)'] = np.where(tag_perf['Clicks'] > 0, (tag_perf['CT_Conversions'] / tag_perf['Clicks']) * 100, 0)
+    tag_perf['CVR (%)'] = _safe_cvr_pct(tag_perf['CT_Conversions'], tag_perf['Clicks'])
     tag_perf['Rev/Send'] = np.where(tag_perf['Sends'] > 0, tag_perf['Revenue'] / tag_perf['Sends'], 0)
     tag_perf = tag_perf.sort_values('Revenue', ascending=False)
 
@@ -180,7 +189,7 @@ def _cached_segment_performance(filtered_df_json):
         CT_Conversions=(_cvr_numerator_col(filtered_df), 'sum'),
         Revenue=(rev_col, 'sum'),
     ).reset_index()
-    seg_perf['CVR (%)'] = np.where(seg_perf['Clicks'] > 0, (seg_perf['CT_Conversions'] / seg_perf['Clicks']) * 100, 0)
+    seg_perf['CVR (%)'] = _safe_cvr_pct(seg_perf['CT_Conversions'], seg_perf['Clicks'])
     seg_perf['Rev/Send'] = np.where(seg_perf['Sends'] > 0, seg_perf['Revenue'] / seg_perf['Sends'], 0)
     seg_perf = seg_perf.sort_values('Revenue', ascending=False)
 
@@ -211,7 +220,7 @@ def _cached_monthly_aggregation(filtered_df_json):
 
     monthly_agg['Month_str'] = monthly_agg['Month'].astype(str)
     monthly_agg['Rev/Send'] = np.where(monthly_agg['Sends'] > 0, monthly_agg['Revenue'] / monthly_agg['Sends'], 0)
-    monthly_agg['CVR (%)'] = np.where(monthly_agg['Clicks'] > 0, (monthly_agg['CT_Conversions'] / monthly_agg['Clicks']) * 100, 0)
+    monthly_agg['CVR (%)'] = _safe_cvr_pct(monthly_agg['CT_Conversions'], monthly_agg['Clicks'])
     monthly_agg['CTR (%)'] = np.where(monthly_agg['Impressions'] > 0, (monthly_agg['Clicks'] / monthly_agg['Impressions']) * 100, 0)
     monthly_agg['AOV (SAR)'] = np.where(monthly_agg['Conversions'] > 0, monthly_agg['Revenue'] / monthly_agg['Conversions'], 0)
 
@@ -666,11 +675,13 @@ if date_col_m in filtered_df.columns and not filtered_df.empty:
         st.markdown("**Monthly Revenue by Channel**")
         monthly_chan = _cached_monthly_channel(filtered_df.to_json())
 
-        fig_chan_monthly = px.bar(
+        # Stacked area rather than stacked bar: this is a trend question (is this
+        # channel growing or shrinking month over month?), which a stacked area
+        # shows as a trajectory. A stacked bar buries that in segment-height deltas.
+        fig_chan_monthly = px.area(
             monthly_chan, x='Month_str', y='Revenue', color='Channel',
             color_discrete_map=CHANNEL_COLORS,
             title="Revenue by Channel per Month",
-            barmode='stack'
         )
         fig_chan_monthly.update_layout(xaxis_title="Month", yaxis_title="Revenue (SAR)")
         render_chart(fig_chan_monthly, monthly_chan, key="marketing_actions_chan_monthly", ai_label="Revenue by Channel per Month")

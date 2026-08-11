@@ -6,7 +6,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from dashboard.state import get_ctx
-from utils import format_metric, read_cached_json
+from utils import format_metric, read_cached_json, render_kpi_card
 from components.table import render_table, render_chart
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_attribution_display_label, get_selected_conversion_display_name
@@ -211,6 +211,40 @@ def analyze_individual_journey(journey_name, filtered_df):
 
 st.header("Journey Analysis")
 
+# --- Glance row: same pattern as Channels/Campaigns/Segments/Attribution ---
+rev_col_glance = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in filtered_df.columns else 'Revenue (SAR)'
+conv_col_glance = 'Selected Conversions' if 'Selected Conversions' in filtered_df.columns else 'Unique Conversions'
+n_journeys_glance = filtered_df['Journey Name'].dropna().nunique()
+total_rev_glance = filtered_df[rev_col_glance].sum() if rev_col_glance in filtered_df.columns else 0
+total_conv_glance = filtered_df[conv_col_glance].sum() if conv_col_glance in filtered_df.columns else 0
+
+g1, g2, g3 = st.columns(3)
+with g1:
+    render_kpi_card("Journeys", format_metric(n_journeys_glance), icon="🧭")
+with g2:
+    render_kpi_card(selected_rev_label, format_metric(total_rev_glance, "SAR"), icon="💰")
+with g3:
+    render_kpi_card(selected_conv_label, format_metric(total_conv_glance), icon="🎯")
+
+# --- Glance row 2: top view of all journeys at once, ranked by revenue. Health
+# scores are computed here (rather than down at the Journey Health Dashboard
+# section) so this table and that section share the same cached result. ---
+journey_health_data = cached_journey_health_scores(filtered_df)
+if journey_health_data:
+    health_df = pd.DataFrame(journey_health_data)
+    glance_cols = [c for c in ['Journey Name', 'Health Score', 'Tier', 'Revenue (SAR)', 'Total Conversions'] if c in health_df.columns]
+    glance_table = health_df[glance_cols].sort_values('Revenue (SAR)', ascending=False).head(8).rename(
+        columns={'Revenue (SAR)': selected_rev_label, 'Total Conversions': selected_conv_label}
+    )
+    st.caption("All journeys at a glance, ranked by revenue:")
+    render_table(glance_table, key="journeys_glance_top", column_config={
+        'Health Score': st.column_config.NumberColumn(format='%.0f'),
+        selected_rev_label: st.column_config.NumberColumn(format='compact'),
+        selected_conv_label: st.column_config.NumberColumn(format='compact'),
+    })
+else:
+    health_df = None
+
 # Show comparison summary if enabled
 if comparison_result:
     st.info(f"📊 Period Comparison Active: {comparison_result['current_label']} vs {comparison_result['comparison_label']}")
@@ -241,41 +275,8 @@ if comparison_result:
 
     st.markdown("---")
 
-# Revenue Type Selection - Revenue Attribution Models
-st.markdown("**💰 Revenue Attribution Model Selection**")
-st.markdown("*Choose the attribution model for revenue analysis:*")
-
-available_revenue_cols = [col for col in df.columns if 'Revenue' in col]
-if available_revenue_cols:
-    # Create user-friendly labels for attribution models
-    revenue_labels = {}
-    for col in available_revenue_cols:
-        if col == 'Revenue (SAR)':
-            revenue_labels[col] = "📊 Total Revenue (Send-Through Attribution)"
-        elif col == 'Click-Through Revenue (SAR)':
-            revenue_labels[col] = "🖱️ Click-Through Revenue Attribution"
-        elif col == 'Impression-Through Revenue (SAR)':
-            revenue_labels[col] = "👁️ Impression-Through Revenue Attribution"
-        else:
-            revenue_labels[col] = col
-
-    # Default to total revenue (send-through)
-    default_revenue = 'Revenue (SAR)' if 'Revenue (SAR)' in available_revenue_cols else available_revenue_cols[0]
-
-    selected_label = st.selectbox(
-        "Select Revenue Attribution Model",
-        [revenue_labels[col] for col in available_revenue_cols],
-        index=[revenue_labels[col] for col in available_revenue_cols].index(revenue_labels[default_revenue]),
-        key='revenue_type'
-    )
-
-    # Map back to actual column name
-    selected_revenue = [col for col, label in revenue_labels.items() if label == selected_label][0]
-else:
-    selected_revenue = 'Revenue (SAR)'  # Fallback
-    st.warning("⚠️ No revenue columns found in data")
-
-# Journey Health Score Analysis
+# Journey Health Score Analysis -- glance row first, config/detail below (matches
+# the Channels page pattern: KPI summary before any dropdown or methodology detail).
 st.subheader("🏥 Journey Health Dashboard")
 
 # Professional Methodology Explanation for Executives
@@ -307,11 +308,7 @@ with st.expander("📊 Scoring Methodology (Click to View)", expanded=False):
     """)
 
 
-# Calculate health scores for all journeys
-journey_health_data = cached_journey_health_scores(filtered_df)
-
 if journey_health_data:
-    health_df = pd.DataFrame(journey_health_data)
     selected_journey_health = render_health_dashboard(health_df, 'Journey Name', 'Journey', 'journey')
 
     if selected_journey_health:
@@ -480,6 +477,42 @@ if journey_health_data:
             st.markdown("**💡 Action Items for this Journey:**")
             for rec in individual_analysis['score_result']['recommendations']:
                 st.info(rec)
+
+# Revenue Type Selection - Revenue Attribution Models (only used by the Lost Revenue
+# Estimation section further down; kept here rather than at the top of the page so
+# it doesn't push the health glance row below the fold).
+st.markdown("**💰 Revenue Attribution Model Selection**")
+st.markdown("*Choose the attribution model used for the lost-revenue estimate below:*")
+
+available_revenue_cols = [col for col in df.columns if 'Revenue' in col]
+if available_revenue_cols:
+    # Create user-friendly labels for attribution models
+    revenue_labels = {}
+    for col in available_revenue_cols:
+        if col == 'Revenue (SAR)':
+            revenue_labels[col] = "📊 Total Revenue (Send-Through Attribution)"
+        elif col == 'Click-Through Revenue (SAR)':
+            revenue_labels[col] = "🖱️ Click-Through Revenue Attribution"
+        elif col == 'Impression-Through Revenue (SAR)':
+            revenue_labels[col] = "👁️ Impression-Through Revenue Attribution"
+        else:
+            revenue_labels[col] = col
+
+    # Default to total revenue (send-through)
+    default_revenue = 'Revenue (SAR)' if 'Revenue (SAR)' in available_revenue_cols else available_revenue_cols[0]
+
+    selected_label = st.selectbox(
+        "Select Revenue Attribution Model",
+        [revenue_labels[col] for col in available_revenue_cols],
+        index=[revenue_labels[col] for col in available_revenue_cols].index(revenue_labels[default_revenue]),
+        key='revenue_type'
+    )
+
+    # Map back to actual column name
+    selected_revenue = [col for col, label in revenue_labels.items() if label == selected_label][0]
+else:
+    selected_revenue = 'Revenue (SAR)'  # Fallback
+    st.warning("⚠️ No revenue columns found in data")
 
 # Advanced Funnel Analysis
 st.subheader("🎯 Advanced Conversion Funnel Analysis")

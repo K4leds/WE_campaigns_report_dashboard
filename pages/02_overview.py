@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 from dashboard.state import get_ctx
 from utils import format_metric, read_cached_json
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
+from insights_engine import ROAS_SANITY_CEILING
 from attribution import get_selected_revenue_display_name, get_selected_conversion_display_name
 from analysis import failed_reasons_analysis
 from dashboard.comparisons_logic import (
@@ -712,8 +713,13 @@ if 'Channel' in filtered_df.columns:
                             # Show cost efficiency (highlight for paid channels)
                             if cost_val > 0:
                                 st.markdown(f"<small>💵 Cost: {format_metric(cost_val, 'SAR')}</small>", unsafe_allow_html=True)
-                                # ROAS color coding with tooltip
-                                if roas_val >= 4:
+                                # ROAS color coding with tooltip. Above the sanity ceiling means the
+                                # built-in per-message cost estimate is too low to trust, not a real
+                                # return -- show "--" rather than a number like "6741.2x" that would
+                                # otherwise land in front of a client. See ROAS_SANITY_CEILING.
+                                if roas_val > ROAS_SANITY_CEILING:
+                                    st.markdown(f"<small>📈 <span title='Cost estimate too low relative to revenue to produce a trustworthy ROAS -- set an accurate rate in the Channel Costs sidebar' style='cursor: help;'>ROAS</span>: — (check channel cost)</small>", unsafe_allow_html=True)
+                                elif roas_val >= 4:
                                     st.markdown(f"<small>📈 <span title='Return on Ad Spend - Revenue earned per SAR spent (4x = 4 SAR revenue per 1 SAR cost)' style='cursor: help;'>ROAS</span>: **{roas_val:.1f}x** 🟢</small>", unsafe_allow_html=True)
                                 elif roas_val >= 2:
                                     st.markdown(f"<small>📈 <span title='Return on Ad Spend - Revenue earned per SAR spent (4x = 4 SAR revenue per 1 SAR cost)' style='cursor: help;'>ROAS</span>: **{roas_val:.1f}x** 🟡</small>", unsafe_allow_html=True)

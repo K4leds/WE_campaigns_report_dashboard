@@ -319,11 +319,14 @@ def detect_performance_alerts(df, recent_df):
                     'action': 'A/B test landing page elements, review offer relevance'
                 })
         
-        # Engagement alert
-        if 'Unique Clicks' in recent_df.columns and 'Unique Impressions' in recent_df.columns:
-            recent_ctr = recent_df['Unique Clicks'].sum() / max(recent_df['Unique Impressions'].sum(), 1)
-            overall_ctr = df['Unique Clicks'].sum() / max(df['Unique Impressions'].sum(), 1)
-            
+        # Engagement alert. Guard on actual impressions (not maxed to 1): channels
+        # without impression tracking (e.g. SMS) would otherwise divide clicks by a
+        # floored denominator of 1, producing nonsense rates like "94900%".
+        if ('Unique Clicks' in recent_df.columns and 'Unique Impressions' in recent_df.columns
+                and recent_df['Unique Impressions'].sum() > 0 and df['Unique Impressions'].sum() > 0):
+            recent_ctr = recent_df['Unique Clicks'].sum() / recent_df['Unique Impressions'].sum()
+            overall_ctr = df['Unique Clicks'].sum() / df['Unique Impressions'].sum()
+
             if recent_ctr < overall_ctr * 0.6:
                 alerts.append({
                     'emoji': '📉',
@@ -390,10 +393,13 @@ def detect_channel_performance_alerts(df, recent_df):
                         'channel': channel,
                     })
 
-            # Engagement alert
-            if 'Unique Clicks' in chan_recent.columns and 'Unique Impressions' in chan_recent.columns:
-                recent_ctr = chan_recent['Unique Clicks'].sum() / max(chan_recent['Unique Impressions'].sum(), 1)
-                overall_ctr = chan_all['Unique Clicks'].sum() / max(chan_all['Unique Impressions'].sum(), 1)
+            # Engagement alert. Guard on actual impressions (not maxed to 1): channels
+            # without impression tracking (e.g. SMS) would otherwise divide clicks by a
+            # floored denominator of 1, producing nonsense rates like "94900%".
+            if ('Unique Clicks' in chan_recent.columns and 'Unique Impressions' in chan_recent.columns
+                    and chan_recent['Unique Impressions'].sum() > 0 and chan_all['Unique Impressions'].sum() > 0):
+                recent_ctr = chan_recent['Unique Clicks'].sum() / chan_recent['Unique Impressions'].sum()
+                overall_ctr = chan_all['Unique Clicks'].sum() / chan_all['Unique Impressions'].sum()
 
                 if overall_ctr > 0 and recent_ctr < overall_ctr * 0.6:
                     alerts.append({

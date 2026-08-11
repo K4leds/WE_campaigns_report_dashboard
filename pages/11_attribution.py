@@ -9,6 +9,7 @@ from components.table import render_table, render_chart
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_attribution_display_label, get_selected_revenue_display_name, get_selected_conversion_display_name
 from analysis import attribution_analysis
+from utils import render_kpi_card, format_metric
 
 ctx = get_ctx()
 df = ctx.df
@@ -28,8 +29,23 @@ def _attribution_display(col_name):
 
 st.header("Attribution Analysis")
 attr_df = attribution_analysis(filtered_df)
+
+# --- Glance row ---
+total_conv_attr = attr_df['Conversions'].sum()
+if not attr_df.empty and total_conv_attr > 0:
+    top_source_row = attr_df.loc[attr_df['Conversions'].idxmax()]
+    top_source_share = top_source_row['Conversions'] / total_conv_attr * 100
+    g1, g2, g3 = st.columns(3)
+    with g1:
+        render_kpi_card("Total Conversions", format_metric(total_conv_attr), icon="🎯")
+    with g2:
+        render_kpi_card("Top Source", top_source_row['Source'], icon="🏆")
+    with g3:
+        render_kpi_card("Top Source Share", f"{top_source_share:.1f}%", icon="📊")
+
 attr_df_display = attr_df.copy().rename(columns=attribution_rename)
 col_config = {"Conversions": st.column_config.NumberColumn(label="Conversions", format="%.0f")}
+st.subheader("Attribution Breakdown")
 render_table(attr_df_display, key="attribution", column_config=col_config)
 
 # Create chart with original numeric values

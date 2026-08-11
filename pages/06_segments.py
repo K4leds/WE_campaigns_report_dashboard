@@ -9,6 +9,7 @@ from components.table import render_table, render_chart
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_attribution_display_label, get_selected_revenue_display_name, get_selected_conversion_display_name
 from analysis import top_segments
+from utils import render_kpi_card, format_metric
 
 ctx = get_ctx()
 df = ctx.df
@@ -30,7 +31,30 @@ def _attribution_display(col_name):
     return get_attribution_display_label(col_name, revenue_attribution, conversion_attribution)
 
 
-st.header("Top Segments")
+st.header("Segments")
+
+# --- Glance row: the overall picture before picking a metric to rank by ---
+rev_col_glance = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in filtered_df.columns else 'Revenue (SAR)'
+conv_col_glance = 'Selected Conversions' if 'Selected Conversions' in filtered_df.columns else 'Unique Conversions'
+if 'Segment Name' in filtered_df.columns:
+    # 'nan' is a literal placeholder string for "no segment assigned" (same
+    # convention as the sidebar segment filter in app.py), not real data --
+    # exclude it so it can't win "Top Segment".
+    named_segments = filtered_df[filtered_df['Segment Name'].astype(str) != 'nan']
+    n_segments = named_segments['Segment Name'].dropna().nunique()
+    seg_totals = named_segments.groupby('Segment Name')[rev_col_glance].sum() if rev_col_glance in named_segments.columns else None
+    top_seg_name = seg_totals.idxmax() if seg_totals is not None and not seg_totals.empty else "—"
+    top_seg_rev = seg_totals.max() if seg_totals is not None and not seg_totals.empty else 0
+
+    g1, g2, g3 = st.columns(3)
+    with g1:
+        render_kpi_card("Segments", format_metric(n_segments), icon="👥")
+    with g2:
+        render_kpi_card("Top Segment", top_seg_name, icon="🏆")
+    with g3:
+        render_kpi_card("Top Segment Revenue", format_metric(top_seg_rev, "SAR"), icon="💰")
+
+st.subheader("Top Segments")
 # Safe column selection - only use columns that exist in both reports
 safe_revenue_cols = ['Revenue (SAR)', 'Impression-Through Revenue (SAR)', 'Click-Through Revenue (SAR)']
 if 'Selected Revenue (SAR)' in filtered_df.columns:

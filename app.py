@@ -262,10 +262,22 @@ def _inject_global_styles():
 
 _inject_global_styles()
 
-st.title("WebEngage CSV Dashboard")
+# The title + uploader used to render full-size at the top of every page, even
+# once a file was already loaded -- eating roughly half the first screen on
+# every navigation. Once a file is loaded, collapse it to a one-line status
+# in the sidebar and tuck the re-upload control into a collapsed expander.
+_have_file = st.session_state.get("csv_uploader") is not None
 
-# Upload CSV
-uploaded_file = st.file_uploader("Upload WebEngage CSV", type="csv")
+if not _have_file:
+    st.title("WebEngage CSV Dashboard")
+    uploaded_file = st.file_uploader("Upload WebEngage CSV", type="csv", key="csv_uploader")
+else:
+    with st.sidebar:
+        st.caption(f"📄 {st.session_state['csv_uploader'].name}")
+        with st.expander("Change file", expanded=False):
+            st.file_uploader("Upload a different WebEngage CSV", type="csv", key="csv_uploader")
+        st.markdown("---")
+    uploaded_file = st.session_state["csv_uploader"]
 
 # Test-only fallback: set DASHBOARD_TEST_CSV to a local path to skip manual
 # upload during automated/browser testing. Never active otherwise.
@@ -310,8 +322,6 @@ if uploaded_file is not None:
     missing_recommended = [col for col in recommended_cols if col not in df.columns]
     if missing_recommended:
         st.warning(f"**Optional columns missing** (some features will be limited): {', '.join(missing_recommended)}")
-
-    st.success("Data cleaned and normalized!")
 
     # Compute filter option lists once per uploaded file and store them
     _file_id = uploaded_file.file_id if hasattr(uploaded_file, 'file_id') else getattr(uploaded_file, 'name', uploaded_file)
