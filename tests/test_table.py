@@ -62,6 +62,21 @@ class TestBuildGridOptions:
         pinned = grid_options["pinnedBottomRowData"][0]
         assert type(pinned["Sent"]) is float
 
+    def test_exact_value_tooltip_is_wired_up(self):
+        """Compact cells ("10.34M") must expose the exact number on hover.
+
+        The tooltip lives in defaultColDef so it covers every column of every
+        table; the number-vs-string guard is inside the JS itself.
+        """
+        df = pd.DataFrame({"Channel": ["Email"], "Revenue (SAR)": [10342881.0]})
+        _, grid_options = _build_grid_options(df, None, None, None, 400, None, None)
+        getter = grid_options["defaultColDef"]["tooltipValueGetter"]
+        js = getattr(getter, "js_code", str(getter))
+        assert "toLocaleString" in js
+        assert "typeof params.value !== 'number'" in js  # no tooltips on text cells
+        assert "__comp" in js  # comparison columns also show the prior value
+        assert grid_options["enableBrowserTooltips"] is True
+
     def test_empty_dataframe_does_not_crash(self):
         df = pd.DataFrame()
         display_df, grid_options = _build_grid_options(df, None, None, None, 400, None, None)

@@ -173,6 +173,27 @@ def _column_config_to_aggrid(col_cfg: Any) -> dict:
     }
 
 
+# Exact-value tooltip. The compact formatters above render "10.34M", which is
+# unreadable when you need the real figure -- hovering any numeric cell shows it
+# in full. Reads params.value (always the raw number, never the formatted string),
+# so it works identically for compact, comparison, percent and printf columns.
+# Guarded on typeof number: this lives in defaultColDef and would otherwise put a
+# redundant tooltip on every campaign-name cell.
+_EXACT_VALUE_TOOLTIP_JS = JsCode("""
+function(params) {
+    if (typeof params.value !== 'number' || isNaN(params.value)) {
+        return null;
+    }
+    var txt = params.value.toLocaleString(undefined, {maximumFractionDigits: 2});
+    var comp = params.data ? params.data[params.colDef.field + '__comp'] : undefined;
+    if (typeof comp === 'number' && !isNaN(comp)) {
+        txt += '  (prev: ' + comp.toLocaleString(undefined, {maximumFractionDigits: 2}) + ')';
+    }
+    return txt;
+}
+""")
+
+
 _TOTAL_ROW_STYLE_JS = JsCode("""
 function(params) {
     if (params.node.rowPinned) {
@@ -236,6 +257,7 @@ def _build_grid_options(
     gb.configure_default_column(
         resizable=True, sortable=True, filter=True,
         minWidth=110, flex=1, wrapHeaderText=True,
+        tooltipValueGetter=_EXACT_VALUE_TOOLTIP_JS,
     )
 
     for col in df.columns:
@@ -302,6 +324,11 @@ def _build_grid_options(
     # Lets users click-drag to select and copy cell text like a normal table
     # (ag-Grid's own cell selection otherwise intercepts the mouse instead).
     grid_options_kwargs["enableCellTextSelection"] = True
+    # Native browser tooltips instead of ag-Grid's own: ag-Grid renders its tooltip
+    # as a div inside the component iframe, so on a bottom row it gets clipped by the
+    # fixed grid height. Browser tooltips paint above the iframe, and they ignore
+    # ag-Grid's 2s tooltipShowDelay.
+    grid_options_kwargs["enableBrowserTooltips"] = True
     grid_options_kwargs["ensureDomOrder"] = True
     # Multi-line headers: wrap long column names (e.g. "Impression-Through Revenue (SAR)")
     # instead of requiring wide columns. ag-Grid computes header height automatically.
