@@ -230,6 +230,36 @@ def _get_aggrid_theme() -> StAggridTheme:
     )
 
 
+def _get_aggrid_custom_css() -> dict:
+    """Theme the grid's scrollbars to match the dashboard.
+
+    The grid renders inside the component's iframe, so the app's own stylesheet can't
+    reach its scrollbars — they fall back to the chunky native OS ones. st_aggrid's
+    custom_css is injected as a <style> tag *inside* that iframe, which can.
+    """
+    is_dark = getattr(getattr(st.context, "theme", None), "type", "dark") == "dark"
+    p = PALETTE["dark" if is_dark else "light"]
+    return {
+        # Firefox — colour only, for the same reason (scrollbar-width: thin would
+        # narrow the bar below the gutter ag-Grid reserved for it).
+        ".ag-root-wrapper": {"scrollbar-color": f"{p['border']} transparent"},
+        # WebKit/Blink. Bare pseudo-element selectors so every scrollable area inside
+        # the grid (body viewport, horizontal scroller, column panel) is covered.
+        #
+        # Deliberately no width/height: ag-Grid measures the browser's scrollbar width
+        # once and sizes its scroll gutter to that number. Declaring a different width
+        # here leaves the bar misaligned inside a gutter reserved for a different size,
+        # which is what clipped it. Recolour only, and the geometry stays ag-Grid's.
+        "::-webkit-scrollbar-track": {"background": "transparent"},
+        "::-webkit-scrollbar-thumb": {
+            "background": p["border"],
+            "border-radius": "8px",
+        },
+        "::-webkit-scrollbar-thumb:hover": {"background": p["text_muted"]},
+        "::-webkit-scrollbar-corner": {"background": "transparent"},
+    }
+
+
 def _build_grid_options(
     df: pd.DataFrame,
     column_config: dict | None,
@@ -256,7 +286,12 @@ def _build_grid_options(
     gb = GridOptionsBuilder.from_dataframe(display_df)
     gb.configure_default_column(
         resizable=True, sortable=True, filter=True,
-        minWidth=110, flex=1, wrapHeaderText=True,
+        # No flex: flex=1 splits the whole container width across the columns, so on a
+        # wide screen every column gets padded out and values drift far from their
+        # headers. autoSizeStrategy below sizes each column to its content instead.
+        # 90 not 110: widths are computed per column below, and this floor was
+        # padding out genuinely short columns ("Email", "Journey") above their content.
+        minWidth=90, wrapHeaderText=True,
         tooltipValueGetter=_EXACT_VALUE_TOOLTIP_JS,
     )
 
@@ -305,6 +340,25 @@ def _build_grid_options(
                 )
             else:
                 gb.configure_column(field=col, header_name=header_name, type=["numericColumn"])
+
+    # Explicit content-based widths. Without a width every column falls back to
+    # ag-Grid's 200px default, which is why short values ("Email", "Journey") sat in
+    # columns twice as wide as they need and the numbers drifted apart. Computed here
+    # rather than via ag-Grid's autoSizeStrategy so the result is deterministic and
+    # doesn't depend on client-side measurement running at the right moment.
+    CHAR_PX = 8            # ~8px per character at the grid's font size
+    CELL_PADDING_PX = 34   # cell padding + the sort/filter icon gutter
+    TEXT_MAXWIDTH = 320    # ceiling: one long campaign name can't blow out a column
+    NUMERIC_WIDTH = 120    # values render compact ("898.04K", "2.50M"), fixed slot is enough
+    COMPARISON_WIDTH = 150  # delta arrow + baseline value need the extra room
+    for col in df.columns:
+        if pd.api.types.is_numeric_dtype(df[col]):
+            width = COMPARISON_WIDTH if col in comp_lookup else NUMERIC_WIDTH
+        else:
+            # max() is NaN on an empty frame, so fill before casting.
+            longest = int(df[col].astype(str).str.len().max(skipna=True) or 0) if len(df) else 0
+            width = min(longest * CHAR_PX + CELL_PADDING_PX, TEXT_MAXWIDTH)
+        gb.configure_column(field=col, width=width)
 
     # Give columns with long header names more min-width to avoid 3-line wrapping.
     # autoHeaderHeight miscalculates when text wraps beyond 2 lines, cutting off content.
@@ -622,25 +676,40 @@ def render_table(
         sample = ""
     data_fp = hashlib.md5(f"{n_rows}|{sample}".encode()).hexdigest()[:8]
     stamped_key = f"{key}_c_{cols_fingerprint}_d_{data_fp}"
-    AgGrid(
-        display_df,
-        gridOptions=grid_options,
-        height=height,
-        allow_unsafe_jscode=True,
-        key=stamped_key,
-        # Forces st_aggrid's JSON serialization path instead of its default pyarrow/Arrow
-        # IPC path. With this pandas/pyarrow version, string columns serialize as Arrow's
-        # LargeUtf8 type, which the frontend's bundled arrow-js decoder doesn't recognize
-        # ("Unrecognized type: LargeUtf8 (20)") -- the grid iframe loads, then silently
-        # renders nothing. st_aggrid's own auto-fallback only catches *Python-side* pyarrow
-        # errors, not this client-side decode failure, so it must be forced explicitly.
-        use_json_serialization=True,
-        # update_mode=NO_UPDATE alone does nothing: st_aggrid's update_on defaults to
-        # ["cellValueChanged", "selectionChanged", "filterChanged", "sortChanged"] and the
-        # library only *adds* to that list for other update_mode values, never clears it for
-        # NO_UPDATE. Without update_on=[] here, every client-side sort/filter click still
-        # reports back to Streamlit and triggers a full script rerun.
-        update_mode=GridUpdateMode.NO_UPDATE,
-        update_on=[],
-        theme=_get_aggrid_theme(),
+
+    # The component always fills its Streamlit container, so a table whose columns add
+    # up to less than the page width leaves a wide empty strip to the right of the last
+    # column. Cap the container at the columns' own total width instead. max-width (not
+    # width) so a table wider than the viewport still shrinks and scrolls as before.
+    grid_width = sum(
+        c.get("width", 0) for c in grid_options["columnDefs"] if not c.get("hide")
+    ) + 22  # grid border + vertical scrollbar gutter
+    wrapper_key = f"wetbl-{stamped_key}"
+    st.markdown(
+        f'<style>[class*="st-key-{wrapper_key}"] {{ max-width:{grid_width}px; }}</style>',
+        unsafe_allow_html=True,
     )
+    with st.container(key=wrapper_key):
+        AgGrid(
+            display_df,
+            gridOptions=grid_options,
+            height=height,
+            allow_unsafe_jscode=True,
+            key=stamped_key,
+            # Forces st_aggrid's JSON serialization path instead of its default pyarrow/Arrow
+            # IPC path. With this pandas/pyarrow version, string columns serialize as Arrow's
+            # LargeUtf8 type, which the frontend's bundled arrow-js decoder doesn't recognize
+            # ("Unrecognized type: LargeUtf8 (20)") -- the grid iframe loads, then silently
+            # renders nothing. st_aggrid's own auto-fallback only catches *Python-side* pyarrow
+            # errors, not this client-side decode failure, so it must be forced explicitly.
+            use_json_serialization=True,
+            # update_mode=NO_UPDATE alone does nothing: st_aggrid's update_on defaults to
+            # ["cellValueChanged", "selectionChanged", "filterChanged", "sortChanged"] and the
+            # library only *adds* to that list for other update_mode values, never clears it for
+            # NO_UPDATE. Without update_on=[] here, every client-side sort/filter click still
+            # reports back to Streamlit and triggers a full script rerun.
+            update_mode=GridUpdateMode.NO_UPDATE,
+            update_on=[],
+            theme=_get_aggrid_theme(),
+            custom_css=_get_aggrid_custom_css(),
+        )

@@ -38,6 +38,24 @@ class TestBuildGridOptions:
         col_defs = {c["field"]: c for c in grid_options["columnDefs"]}
         assert "valueFormatter" in col_defs["Revenue (SAR)"]
 
+    def test_columns_size_to_content_not_to_an_equal_share_of_the_screen(self):
+        df = pd.DataFrame({"Program": ["Winback"], "Sent": [1000], "Revenue (SAR)": [50.0]})
+        _, grid_options = _build_grid_options(df, None, None, None, 400, None, None)
+        col_defs = {c["field"]: c for c in grid_options["columnDefs"]}
+        # flex would stretch every column to fill the container -- that's the bug.
+        assert "flex" not in grid_options["defaultColDef"]
+        # Numbers render compact, so they get a fixed slot rather than a screen share.
+        assert col_defs["Sent"]["width"] == 120
+        assert col_defs["Revenue (SAR)"]["width"] == 120
+        # Text sizes to its longest value ("Winback" = 7 chars), capped at 320.
+        assert col_defs["Program"]["width"] == 7 * 8 + 34
+
+    def test_long_text_column_width_is_capped(self):
+        df = pd.DataFrame({"Program": ["x" * 200]})
+        _, grid_options = _build_grid_options(df, None, None, None, 400, None, None)
+        col_defs = {c["field"]: c for c in grid_options["columnDefs"]}
+        assert col_defs["Program"]["width"] == 320
+
     def test_comparison_df_adds_hidden_shadow_column(self):
         df = pd.DataFrame({"Channel": ["Email"], "Revenue (SAR)": [1000.0]})
         comp_df = pd.DataFrame({"Channel": ["Email"], "Revenue (SAR)": [500.0]})

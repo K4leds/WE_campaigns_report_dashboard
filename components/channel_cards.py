@@ -213,12 +213,19 @@ def render_channel_card(
             chips.append(f'{icon("cursor")} CTR {row.get("CTR", 0):.1f}%')
         chips.append(f'{icon("bullseye")} CVR {row.get("Conversion Rate", 0):.1f}%')
 
+        # Card height varies only with how many lines the chips wrap onto: a channel
+        # whose 5 chips fit on one line (SMS) rendered visibly shorter than one that
+        # wrapped to two. Reserving two lines' worth of space levels the row.
+        # min-height (not height) so a narrow screen can still wrap to three.
+        CHIP_LINE_PX = 28  # 11px chip + padding + margin
         st.markdown(
-            ''.join(
+            f'<div style="min-height:{2 * CHIP_LINE_PX}px;">'
+            + ''.join(
                 f'<span style="display:inline-block;font-size:11px;background:{COLORS["muted"]}22;'
                 f'border-radius:10px;padding:2px 8px;margin:2px 4px 0 0;">{c}</span>'
                 for c in chips
-            ),
+            )
+            + '</div>',
             unsafe_allow_html=True,
         )
 
