@@ -37,6 +37,43 @@ def top_campaigns(df, metric='Unique Conversions', top_n=10):
     return df.groupby('Campaign Name')[metric].agg(agg).nlargest(top_n).reset_index()
 
 
+def top_senders(df, top_n=15):
+    """Rank journeys and one-time campaigns together by send volume, per channel.
+
+    'Top Campaigns'/'Top Journeys' each rank one program kind by one metric, so
+    "which journey or one-time campaign sent the most, and what did it earn?"
+    couldn't be answered from a single view. This groups both kinds under one
+    Program key (Journey Name for journey rows, Campaign Name otherwise) and
+    keeps volume, conversions, and revenue side by side.
+
+    Returns (DataFrame, revenue_col, conversion_col) or None if the data lacks
+    a Campaign Name column.
+    """
+    if 'Campaign Name' not in df.columns:
+        return None
+
+    # clean_data() casts object columns to str for Arrow, so a missing name
+    # arrives as the literal string 'nan' — blank those out before falling back.
+    def _named(col):
+        s = df[col].astype(str).str.strip()
+        return s.mask(s.str.lower().isin({'nan', 'none', ''}))
+
+    program = _named('Campaign Name')
+    if 'Journey Name' in df.columns:
+        journey = _named('Journey Name')
+        program = journey.fillna(program)
+    df = df.assign(Program=program.fillna('(unnamed)'))
+
+    rev_col = 'Selected Revenue (SAR)' if 'Selected Revenue (SAR)' in df.columns else 'Revenue (SAR)'
+    conv_col = 'Selected Conversions' if 'Selected Conversions' in df.columns else 'Unique Conversions'
+    agg = {c: 'sum' for c in ['Sent', 'Delivered', 'Unique Clicks', conv_col, rev_col] if c in df.columns}
+    # dropna=False so rows with a missing Type/Channel still count — the Sent
+    # column must reconcile with the channel totals shown above it.
+    keys = ['Program'] + [c for c in ['Type of Campaign', 'Channel'] if c in df.columns]
+    grouped = df.groupby(keys, dropna=False).agg(agg).reset_index()
+    return grouped.sort_values('Sent', ascending=False).head(top_n), rev_col, conv_col
+
+
 def get_top_journeys(df, metric='Delivered Rate', top_n=10):
     """
     Get top journeys by specified metric.

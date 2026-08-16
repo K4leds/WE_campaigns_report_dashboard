@@ -11,7 +11,7 @@ from components.table import render_table, render_chart, render_ai_explain_bar
 from components.channel_cards import render_channel_card, render_insight_chips, icon, channel_icon
 from config import COLORS, COLOR_SEQUENCE, CHANNEL_COLORS
 from attribution import get_attribution_display_label, get_selected_revenue_display_name, get_selected_conversion_display_name
-from analysis import channel_analysis, esp_analysis, failed_reasons_analysis
+from analysis import channel_analysis, esp_analysis, failed_reasons_analysis, top_senders
 
 ctx = get_ctx()
 df = ctx.df
@@ -32,6 +32,12 @@ attribution_rename = {'Selected Revenue (SAR)': selected_rev_label, 'Selected Co
 def _attribution_display(col_name):
     """Map internal 'Selected Revenue/Conversions' column names to the user-selected attribution label."""
     return get_attribution_display_label(col_name, revenue_attribution, conversion_attribution)
+
+
+@st.cache_data
+def _cached_top_senders(filtered_df_json):
+    """Cache wrapper for top_senders()."""
+    return top_senders(read_cached_json(filtered_df_json))
 
 
 @st.cache_data
@@ -574,6 +580,21 @@ with tab1:
         color_discrete_map={'Sent': COLORS['primary'], 'Delivered': COLORS['success']},
     )
     render_chart(fig_vol, volume_melt, key="channel_volume", ai_label="Sent vs Delivered by Channel")
+
+    # Drill-down for the volume above: which named program produced it, and what
+    # it earned. Journeys and one-time campaigns ranked in one list.
+    senders_result = _cached_top_senders(filtered_df.to_json())
+    if senders_result is not None:
+        senders_df, senders_rev_col, senders_conv_col = senders_result
+        st.subheader("Top Senders — Journeys & One-Time Campaigns")
+        st.caption("Ranked by messages sent, per channel. Use the sidebar Channel filter to scope to one channel.")
+        senders_cc = {}
+        for col in ['Sent', 'Delivered', 'Unique Clicks', senders_conv_col, senders_rev_col]:
+            if col in senders_df.columns:
+                label = attribution_rename.get(col, col)
+                senders_cc[label] = st.column_config.NumberColumn(label=label, format='compact')
+        render_table(senders_df.rename(columns=attribution_rename), key="channel_top_senders",
+                     column_config=senders_cc, ai_label="Top Senders by Volume")
 
     # Revenue Attribution Comparison (all three side-by-side)
     rev_compare_cols = [c for c in ['Revenue (SAR)', 'Click-Through Revenue (SAR)', 'Impression-Through Revenue (SAR)'] if c in chan_df.columns]
